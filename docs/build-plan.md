@@ -60,24 +60,29 @@ formatter フック (identity)、inbox はメモリ実装。**ここで「ロー
 - [ ] reply を呼ばず終わるケースで沈黙し、✅ だけ付く
 - [ ] YAML 編集 → 再起動なしで挙動が変わる (File watch は任意)
 
-## Step 4: 永続化と排他 (Firestore + GCS)
+## Step 4: 永続化と排他 (Store/Storage 抽象)
 
-作るもの: inbox / sessions / lease の Firestore 実装 ([design/session-model.md](design/session-model.md) §4)、
-dedupe (doc ID = event_id の create())、workdir の restore / flush ([design/session-runtime.md](design/session-runtime.md) §3)、
-compose.yaml (Firestore エミュレータ)。
-ローカルでは /data の代わりに普通のディレクトリで確認してよい。
+作るもの: `InboxStore` (drain/ack 分離) / `SessionStore` / `LeaseStore` の
+インタフェースと 3 実装 (InMemory / SQLite / Firestore)、runner への lease + linger
+組み込み、`WorkdirStorage` (restore/flush、実装はファイルコピー 1 つ)、
+compose.yaml (Firestore エミュレータ)。設計は [design/persistence.md](design/persistence.md)。
 
-Firestore は本物でなく **docker compose のエミュレータ**に対して開発・テストする。
-SDK は `FIRESTORE_EMULATOR_HOST` が立っていれば自動でそちらへ接続するため、
-store 実装にエミュレータ用の分岐は要らない。lease の txn 競合や dedupe の
-create() 衝突といった並行系テストも、実プロジェクト不要・課金ゼロで回せる。
+実装選択は env (`STORE_BACKEND=memory|sqlite|firestore`、`WORKDIR_ARCHIVE_DIR`)。
+ローカル開発の既定は InMemory で、エミュレータ無しで動く。永続化・排他込みの
+確認は SQLite で行い、Firestore 実装は **docker compose のエミュレータ**に対する
+コントラクトテストで検証する (SDK は `FIRESTORE_EMULATOR_HOST` が立っていれば
+自動でそちらへ接続するため、store 実装にエミュレータ用の分岐は要らない。
+ローカルで未起動ならテストは skip)。
 
-- [ ] `docker compose up` → `FIRESTORE_EMULATOR_HOST` 指定で store のテストが通る
-- [ ] lease 排他・dedupe の並行系テストがエミュレータ上で再現する
-- [ ] プロセス kill → 再起動 → 同スレッドの会話が再開する
+- [ ] 3 実装が共通コントラクトテスト (dedupe / drain-ack / lease 排他・期限切れ) を通る
+- [ ] `docker compose up` → Firestore 実装のコントラクトテストがエミュレータで通る
+- [ ] SQLite: プロセス kill → 再起動 → 同スレッドの会話が再開する
 - [ ] 2 プロセス同時起動で lease が排他し、負けた側は inbox 投入のみ
 - [ ] 同じ event_id の再送が二重処理されない
-- [ ] flush 前クラッシュ → 再起動後に同じ入力から再実行される
+- [ ] kick 失敗後に同じ入力で再 kick できる (ack しない限り inbox に残る)
+- [ ] agent_end 直後の追いメッセージが linger で拾われ、同一セッションで処理される
+- [ ] flush 前クラッシュ → 再起動後に同じ入力から再実行される (at-least-once)
+- [ ] `WORKDIR_ARCHIVE_DIR` 指定で restore/flush が働き、workdir 削除後も文脈が戻る
 
 ## Step 5: Cloud Run デプロイ (Events API)
 
