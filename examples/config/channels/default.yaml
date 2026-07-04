@@ -1,0 +1,11 @@
+# channel: "default" は予約値 — どの channels/*.yaml にも一致しないチャンネルの
+# フォールバック定義になる (このファイルが無ければ組み込み既定 = mention 起動のみ)。
+# セッションやメッセージの管理は常に実チャンネル ID で行われ、ここは振る舞い定義のみ。
+# 注意: passthrough を書くと bot がいる全チャンネルで全発言に反応するため、
+# フォールバックは mention 起動に留めるのが安全。
+channel: "default"
+systemPrompt: ./prompts/ask-ai.md
+trigger:
+  combinator: any
+  gates:
+    - kind: mention

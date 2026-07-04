@@ -1,0 +1,2 @@
+channel: "C0000000002"
+systemPrompt: ./prompts/does-not-exist.md

@@ -1,0 +1,7 @@
+# mention 起動の汎用アシスタント (docs/design/config.md §1 の #ask-ai に相当)
+channel: "C0000000001" # 自分のチャンネル ID に置き換える (他の example と重複させない)
+systemPrompt: ./prompts/ask-ai.md
+trigger:
+  combinator: any
+  gates:
+    - kind: mention

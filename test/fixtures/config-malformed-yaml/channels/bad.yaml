@@ -1,0 +1,4 @@
+channel: "C1"
+trigger: {
+  combinator: any
+  gates: [

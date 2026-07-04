@@ -1,0 +1,101 @@
+// Gate IF + registry + 合成 — docs/design/session-model.md §5
+//
+// 起動判定を差し替え可能な部品 (Gate) にし、複数を any/all で合成する。
+// channel 設定 (criteria/pattern 等) は各 Gate のコンストラクタ引数で渡すため、
+// GateContext には event/recent のみを持たせる (architecture.md §2 の ChannelDoc.trigger
+// が gates: Array<{kind, ...params}> を持ち、それをここで Gate インスタンスへ組み立てる)。
+
+import type { ChatEvent } from "../ingress/chat-event.js";
+import { KeywordGate } from "./gates/keyword.js";
+import { MentionGate } from "./gates/mention.js";
+import { PassthroughGate } from "./gates/passthrough.js";
+
+export interface GateContext {
+	event: ChatEvent;
+	recent: ChatEvent[];
+}
+
+export interface TriggerDecision {
+	trigger: boolean;
+	reason: string;
+}
+
+/** 起動判定の 1 単位。純粋関数に近い。副作用 (observed 記録等) は呼び出し側が持つ */
+export interface Gate {
+	readonly name: string;
+	decide(ctx: GateContext): Promise<TriggerDecision> | TriggerDecision;
+}
+
+export type GateCombinator = "any" | "all";
+
+/** ChannelDoc.trigger.gates の 1 要素 (YAML 由来)。kind ごとに要るパラメータだけ持つ。
+ * classifier/cooldown は初期スコープ外のため registry 未登録 (createGate はエラーを投げる)。 */
+export type GateSpec =
+	| { kind: "mention" }
+	| { kind: "keyword"; pattern: string }
+	| { kind: "passthrough" };
+
+/** GateSpec (YAML 由来のデータ) から Gate インスタンスを組み立てる registry */
+export function createGate(spec: GateSpec): Gate {
+	switch (spec.kind) {
+		case "mention":
+			return new MentionGate();
+		case "keyword":
+			return new KeywordGate(spec.pattern);
+		case "passthrough":
+			return new PassthroughGate();
+		default: {
+			const unknown: { kind: string } = spec;
+			throw new Error(`createGate: unknown gate kind "${unknown.kind}"`);
+		}
+	}
+}
+
+/** trigger 設定が無いチャンネルの既定 = mention のみ (session-model.md §5) */
+export function defaultGates(): Gate[] {
+	return [new MentionGate()];
+}
+
+/** 複数 Gate を combinator (any/all) で畳む。短絡評価する。
+ * reason には発火/非発火を決めた gate 名 (と各 gate の reason) を含める。
+ * gates が空の場合は any=false / all=true (畳み込みの単位元) を返す。 */
+export async function evaluateTrigger(
+	gates: Gate[],
+	combinator: GateCombinator,
+	ctx: GateContext,
+): Promise<TriggerDecision> {
+	if (gates.length === 0) {
+		const trigger = combinator === "all";
+		return {
+			trigger,
+			reason: `no gates configured (combinator=${combinator})`,
+		};
+	}
+
+	const decisions: { name: string; decision: TriggerDecision }[] = [];
+	for (const gate of gates) {
+		const decision = await gate.decide(ctx);
+		decisions.push({ name: gate.name, decision });
+
+		if (combinator === "any" && decision.trigger) {
+			return {
+				trigger: true,
+				reason: `any: ${gate.name} triggered (${decision.reason})`,
+			};
+		}
+		if (combinator === "all" && !decision.trigger) {
+			return {
+				trigger: false,
+				reason: `all: ${gate.name} did not trigger (${decision.reason})`,
+			};
+		}
+	}
+
+	if (combinator === "any") {
+		const names = decisions.map((d) => d.name).join(", ");
+		return { trigger: false, reason: `any: no gate triggered (${names})` };
+	}
+
+	const names = decisions.map((d) => d.name).join(", ");
+	return { trigger: true, reason: `all: every gate triggered (${names})` };
+}

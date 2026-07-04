@@ -1,0 +1,6 @@
+channel: "default"
+systemPrompt: default fallback prompt
+trigger:
+  combinator: any
+  gates:
+    - kind: mention

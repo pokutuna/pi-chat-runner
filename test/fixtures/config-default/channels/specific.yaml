@@ -1,0 +1,6 @@
+channel: "C0000000001"
+systemPrompt: specific channel prompt
+trigger:
+  combinator: any
+  gates:
+    - kind: mention
