@@ -58,6 +58,12 @@ export function buildPiArgs(
 		options.extensionPath,
 	];
 	if (options.provider) args.push("--provider", options.provider);
+	// google-vertex の認証可否判定は「ADC ファイルの存在チェック」なので、Cloud Run の
+	// メタデータサーバー ADC (ファイルを作らない) では "No API key found" になる。
+	// pi-ai が定義する marker 文字列を明示的に渡すとこのゲートを迂回でき、marker は
+	// provider 側 (resolveApiKey) で捨てられて ADC 経路で実認証される (secret ではない)
+	if (options.provider === "google-vertex")
+		args.push("--api-key", "gcp-vertex-credentials");
 	if (options.model) args.push("--model", options.model);
 	if (options.appendSystemPrompt)
 		args.push("--append-system-prompt", options.appendSystemPrompt);

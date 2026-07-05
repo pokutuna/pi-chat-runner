@@ -36,6 +36,24 @@ describe("buildPiArgs", () => {
 		expect(args[args.indexOf("--skill") + 1]).toBe("/app/skills");
 	});
 
+	it("passes the ADC marker as --api-key only for google-vertex", () => {
+		const vertex = buildPiArgs({
+			sessionPath: "/s.jsonl",
+			extensionPath: "/e.ts",
+			provider: "google-vertex",
+		});
+		expect(vertex[vertex.indexOf("--api-key") + 1]).toBe(
+			"gcp-vertex-credentials",
+		);
+
+		const other = buildPiArgs({
+			sessionPath: "/s.jsonl",
+			extensionPath: "/e.ts",
+			provider: "anthropic",
+		});
+		expect(other).not.toContain("--api-key");
+	});
+
 	it("omits optional args when not specified", () => {
 		const args = buildPiArgs({
 			sessionPath: "/s.jsonl",
