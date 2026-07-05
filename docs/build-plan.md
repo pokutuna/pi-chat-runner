@@ -89,10 +89,10 @@ compose.yaml (Firestore エミュレータ)。設計は [design/persistence.md](
 作るもの: `HttpEventSource` (署名検証 + 3s ACK)、service.yaml
 (secretKeyRef / env / GCS FUSE マウント)、Dockerfile での base image ビルド。
 
-- [ ] 本番 Slack の mention に応答する
-- [ ] min-instances=0 からのコールドスタートで取りこぼさない
-- [ ] インスタンスを跨いだスレッド再開 (デプロイし直して継続)
-- [ ] linger 中の追いメッセージが同一 workdir で処理される
+- [x] 本番 Slack の mention に応答する
+- [x] min-instances=0 からのコールドスタートで取りこぼさない
+- [x] インスタンスを跨いだスレッド再開 (デプロイし直して継続)
+- [x] linger 中の追いメッセージが同一 workdir で処理される
 
 ## Step 6: 仕上げ (初期版ゴール)
 

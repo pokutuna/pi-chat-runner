@@ -198,6 +198,10 @@ Mitigations:
 - Pros: 実行環境の隔離が強い
 - Cons: コールドスタートとコストが常時発生する。同一コンテナ内での spawn を採用し、隔離が要る場合の昇格パスだけ確保する ([session-runtime.md](session-runtime.md) §1, §6)
 
+#### pi を SDK (ライブラリ) として同一プロセスで動かす
+- Pros: pi は SDK を一級サポートしており (`createAgentSession` / `steer` / `followUp` / `subscribe`)、stdin/stdout の RPC codec が消え、reply の結線も型付き API で直接できる
+- Cons: Node に「プロセス内で pi だけ権限を絞る」手段が無い (vm / ShadowRealm は安全境界でなく、Permission Model はプロセス全体に効く)。bash はどのみち OS サブプロセスであり、境界はプロセスレベルに置くしかない。加えて「kill するだけ」の timeout 処置・障害の非波及・env 遮蔽・将来の別コンテナ kick への seam をすべて失う。spawn を維持し、SDK はテスト (SessionManager.inMemory) と将来の「SDK ループ + リモート Operations」構成の部品として使う
+
 #### イメージ manifest による能力宣言
 - Pros: チャンネルごとに使える skill/CLI の能力差を作れる
 - Cons: 初期版には過剰。イメージ内の固定パス規約 (`/app/skills/` 等) に降格し、能力差が必要になった段階で manifest 方式を検討する ([config.md](config.md))
