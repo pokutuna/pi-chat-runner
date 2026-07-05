@@ -128,7 +128,7 @@ export function toGateSpecs(
 			case "keyword":
 				// schema 上 pattern 必須だが、型の narrowing のため明示的に確認する
 				if (gate.pattern === undefined) {
-					warn(`[gate] keyword gate without pattern; skipped`);
+					warn("keyword gate without pattern; skipped");
 					break;
 				}
 				specs.push({ kind: "keyword", pattern: gate.pattern });
@@ -137,7 +137,7 @@ export function toGateSpecs(
 				specs.push({ kind: "passthrough" });
 				break;
 			default:
-				warn(`[gate] unsupported gate kind "${gate.kind}" (Step 3); skipped`);
+				warn(`unsupported gate kind "${gate.kind}"; skipped`);
 		}
 	}
 	return specs;
