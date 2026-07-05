@@ -1,0 +1,11 @@
+# Firestore エミュレータ (FirestoreStateStore のテスト専用。docs/design/persistence.md §1)
+#
+# 起動: docker compose up -d
+# テスト: FIRESTORE_EMULATOR_HOST=localhost:8080 pnpm test
+
+services:
+  firestore:
+    image: gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators
+    command: gcloud emulators firestore start --host-port=0.0.0.0:8080
+    ports:
+      - "8080:8080"
