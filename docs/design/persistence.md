@@ -31,7 +31,7 @@ inbox / セッション状態 / lease (DB 系) と workdir の退避先 (Storage
 interface InboxStore {
   /** 追加。同 id が既に見えていれば false (at-least-once の再送吸収) */
   enqueue(threadKey: string, item: InboxItem): Promise<boolean>;
-  /** 未処理分を取り出す。Step 4 以降は「取り出し=削除」ではなく ack 分離 (§4) */
+  /** 未 ack の item を全件返す (削除しない。同じ item が再度返りうる) */
   drain(threadKey: string): Promise<InboxItem[]>;
   /** 処理完了の確定。flush 成功後に呼ぶ (session-runtime.md §3 の順序) */
   ack(threadKey: string, itemIds: string[]): Promise<void>;
@@ -57,6 +57,11 @@ interface LeaseStore {
 
 - **enqueue の dedupe** — 同一 `item.id` (= event_id 由来) の 2 回目以降は false。
   「見たことがある」の記憶は ack 後も保持する (再送は処理後にも届く)。
+- **drain は削除しない** — 未 ack の item を全件返すだけ。lease により同一
+  thread_key を drain するのは常に 1 プロセスなので、「このターンで既に
+  プロンプト済みの item」の記憶と重複除外は呼び出し側 (runner) のインメモリ責務
+  とする。クラッシュするとその記憶が消え、未 ack 分が丸ごと再配達される
+  (= at-least-once。flush → ack の順序とあわせて入力を失わない)。
 - **lease** — `acquire` は「有効な lease が無いときだけ作る」原子的操作。
   Firestore は txn / create、SQLite は `INSERT ... ON CONFLICT` + 期限比較、
   InMemory は Map 操作で実現する。owner は `インスタンスID:PID` 程度でよい。
