@@ -69,6 +69,26 @@ function buildStateStore(): StateStore {
 	}
 }
 
+/** env PI_AGENT_UID / PI_AGENT_GID (session-runtime.md §6: UID 分離) を数値として
+ * パースする。どちらも省略時は無効 (現状動作 = pi は Runner と同一 uid で動く)。
+ * 片方だけ設定されているのは誤設定なので fail-loud にする */
+function parseAgentIds(): { uid?: number; gid?: number } {
+	const uidRaw = process.env.PI_AGENT_UID;
+	const gidRaw = process.env.PI_AGENT_GID;
+	if (uidRaw === undefined && gidRaw === undefined) return {};
+	if (uidRaw === undefined || gidRaw === undefined) {
+		throw new Error(
+			"PI_AGENT_UID and PI_AGENT_GID must be set together (or both omitted)",
+		);
+	}
+	const uid = Number.parseInt(uidRaw, 10);
+	const gid = Number.parseInt(gidRaw, 10);
+	if (Number.isNaN(uid) || Number.isNaN(gid)) {
+		throw new Error("PI_AGENT_UID and PI_AGENT_GID must be integers");
+	}
+	return { uid, gid };
+}
+
 function requireEnv(name: string): string {
 	const value = process.env[name];
 	if (value === undefined || value === "") {
@@ -97,6 +117,9 @@ function requireEnv(name: string): string {
 		);
 		console.error("  PI_MODEL            ChannelDoc.model 未指定時のモデル");
 		console.error("  PI_PROVIDER         pi の --provider");
+		console.error(
+			"  PI_AGENT_UID/GID    pi を落とす実行 uid/gid (session-runtime.md §6 の UID 分離。両方セットで有効)",
+		);
 		console.error(
 			"  PORT                events モードの listen ポート (既定 8080)",
 		);
@@ -145,6 +168,7 @@ async function main() {
 	const extraEnv = collectGcpEnv();
 	const store = buildStateStore();
 	const archiveDir = process.env.WORKDIR_ARCHIVE_DIR;
+	const agentIds = parseAgentIds();
 
 	const web = new WebClient(botToken);
 	const eventSource = buildEventSource(slackMode, botUserId);
@@ -178,6 +202,9 @@ async function main() {
 		...(archiveDir !== undefined && archiveDir !== ""
 			? { workdirStorage: new CopyWorkdirStorage(archiveDir) }
 			: {}),
+		// PI_AGENT_UID/GID 未設定なら UID 分離なし (現状動作)
+		...(agentIds.uid !== undefined ? { agentUid: agentIds.uid } : {}),
+		...(agentIds.gid !== undefined ? { agentGid: agentIds.gid } : {}),
 	});
 	logger.info(
 		{

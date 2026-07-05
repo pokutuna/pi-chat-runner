@@ -3,7 +3,7 @@
 // - Slack  → FakePoster / FakeReactionClient
 // - config → インメモリの ConfigSource
 // - store  → InMemoryStateStore (Step 4: lease / drain-ack / linger の検証もここで行う)
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -122,6 +122,9 @@ interface HarnessOptions {
 	leaseTtlMs?: number;
 	owner?: string;
 	piBinary?: string;
+	agentUid?: number;
+	agentGid?: number;
+	agentHome?: string;
 }
 
 async function harness(
@@ -157,6 +160,11 @@ async function harness(
 			? { leaseTtlMs: options.leaseTtlMs }
 			: {}),
 		...(options.owner !== undefined ? { owner: options.owner } : {}),
+		...(options.agentUid !== undefined ? { agentUid: options.agentUid } : {}),
+		...(options.agentGid !== undefined ? { agentGid: options.agentGid } : {}),
+		...(options.agentHome !== undefined
+			? { agentHome: options.agentHome }
+			: {}),
 	});
 	return {
 		runner,
@@ -421,6 +429,31 @@ describe("SessionRunner (fake-pi integration)", () => {
 
 		const env = await h.envSeen("C01", trigger.id);
 		expect(env.GOOGLE_CLOUD_PROJECT).toBe("my-project");
+	});
+
+	it("UID 分離が有効なとき HOME を agentHome に上書きし、workdir を chown/chmod する", async () => {
+		// root でなくても自分自身の uid/gid への chown は成功するため、実プロセスの
+		// uid/gid を使って「UID 分離が有効なコードパスを通す」ことをローカルで検証する
+		// (実際に別 uid へ落とす検証は Dockerfile 検証 (docker) で行う)
+		const uid = process.getuid?.();
+		const gid = process.getgid?.();
+		if (uid === undefined || gid === undefined) return; // Windows 等では skip
+		const h = await harness(
+			{},
+			{ agentUid: uid, agentGid: gid, agentHome: "/tmp/agent-home" },
+		);
+		const trigger = message({ mentionsBot: true, text: "uid isolated" });
+
+		await h.runner.handle(trigger);
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+		const env = await h.envSeen("C01", trigger.id);
+		expect(env.HOME).toBe("/tmp/agent-home");
+
+		const stats = await stat(join(h.workdirRoot, "C01", trigger.id));
+		expect(stats.uid).toBe(uid);
+		expect(stats.gid).toBe(gid);
+		expect(stats.mode & 0o777).toBe(0o700);
 	});
 });
 

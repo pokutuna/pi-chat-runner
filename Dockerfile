@@ -49,6 +49,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # ビルドごとに挙動が変わらないようにする
 RUN npm install -g @earendil-works/pi-coding-agent@0.79.9
 
+# UID 分離用の agent ユーザー (session-runtime.md §6)。コンテナ自体は root で
+# 起動し続け (Runner が root)、Runner が pi を spawn するときに { uid, gid } を
+# 落として agent として実行する。/home/agent は agent 所有で書き込み可能にし、
+# pi が ~/.pi 等を作れるようにする。/app は root 所有のまま (下記 WORKDIR 以降)
+# で agent に書き込み権限を与えない — Runner コード自体を書き換えさせない
+RUN groupadd --gid 1001 agent \
+  && useradd --uid 1001 --gid 1001 --create-home --shell /usr/sbin/nologin agent
+
 WORKDIR /app
 
 COPY --from=builder /app/node_modules ./node_modules

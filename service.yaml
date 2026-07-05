@@ -59,6 +59,12 @@ spec:
             # ディレクトリを作る (session-runtime.md §3)
             - name: WORKDIR_ARCHIVE_DIR
               value: /data
+            # UID 分離 (session-runtime.md §6)。base image の agent ユーザー
+            # (uid/gid 1001) で pi を実行し、Runner の environ / /data を読めなくする
+            - name: PI_AGENT_UID
+              value: "1001"
+            - name: PI_AGENT_GID
+              value: "1001"
             # REPLACE: bot の User ID (自己エコー除外・mention 判定に使う)
             - name: SLACK_BOT_USER_ID
               value: "U0000000000"

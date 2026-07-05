@@ -31,8 +31,14 @@ export interface PiProcessOptions {
 	skillPath?: string;
 	/** 子プロセスの cwd (workdir) */
 	cwd?: string;
-	/** allowlist (PATH, HOME) に追加で渡す env */
+	/** allowlist (PATH, HOME) に追加で渡す env。uid 分離時は HOME を
+	 * agent のホーム (例 /home/agent) に上書きするためここに HOME を含めて渡す
+	 * (Runner の HOME である /root を継承すると agent uid で書けない) */
 	extraEnv?: Record<string, string>;
+	/** 子プロセスの実行 uid (session-runtime.md §6: UID 分離)。省略時は継承 (現状動作) */
+	uid?: number;
+	/** 子プロセスの実行 gid。uid とセットで指定する想定 */
+	gid?: number;
 	/** stderr の各行を受けるロガー。省略時は console.error */
 	logger?: (line: string) => void;
 }
@@ -132,6 +138,12 @@ export class PiProcess extends EventEmitter<PiProcessEvents> {
 			cwd: this.options.cwd,
 			env: buildPiEnv(process.env, this.options.extraEnv),
 			stdio: ["pipe", "pipe", "pipe"],
+			// uid/gid はキー自体を省略すると現行プロセスの uid/gid を継承する
+			// (session-runtime.md §6: UID 分離。コンテナは root 起動、spawn 時に落とす)。
+			// キーを渡した上で値を undefined にすると Node の spawn は継承ではなく
+			// 明示的に「変更なし」と別扱いする実装差があるため、指定時のみキーを渡す
+			...(this.options.uid !== undefined ? { uid: this.options.uid } : {}),
+			...(this.options.gid !== undefined ? { gid: this.options.gid } : {}),
 		});
 		this.child = child;
 

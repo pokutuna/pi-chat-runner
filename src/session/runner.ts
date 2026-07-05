@@ -9,7 +9,7 @@
 // linger による追いメッセージ拾い直し、WorkdirStorage による境界退避 (未指定なら
 // Step 3 相当のローカル置きっぱなし)。turn timeout は Step 6。
 
-import { mkdir, stat } from "node:fs/promises";
+import { chmod, chown, lstat, mkdir, readdir, stat } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import {
@@ -64,6 +64,14 @@ export interface SessionRunnerOptions {
 	provider?: string;
 	/** allowlist (PATH/HOME) に追加で pi 子プロセスへ渡す env (session-runtime.md §2) */
 	extraEnv?: Record<string, string>;
+	/** pi 子プロセスの実行 uid/gid (session-runtime.md §6: UID 分離)。両方指定時のみ有効。
+	 * 有効な場合のみ workdir の chown/chmod を行う (無効時は現状動作を維持) */
+	agentUid?: number;
+	agentGid?: number;
+	/** uid 分離時に pi へ渡す HOME (既定 "/home/agent")。agent uid で書き込める
+	 * ホームが無いと pi が ~/.pi 等を作れないため、Runner の HOME (/root) とは
+	 * 別に明示指定する (session-runtime.md §6) */
+	agentHome?: string;
 	/** lease の TTL。既定 60_000ms。renew は ttl/3 間隔 */
 	leaseTtlMs?: number;
 	/** agent_end 後に追いメッセージを待つ時間。既定 3_000ms */
@@ -158,6 +166,38 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** dir 配下 (dir 自身含む) を再帰的に chown する。UID 分離時、restore で
+ * root 所有のままコピーされたファイルを agent 所有に揃えるための最小実装
+ * (エントリ数が少ない workdir 前提。fs.cp に uid/gid オプションは無いため
+ * コピー後にここで chown する)。
+ * シンボリックリンクは辿らずスキップする: pi が workdir 内に /data 等への
+ * リンクを仕込み、次の restore 後に root の Runner がリンク先を chown して
+ * 所有権を奪われる経路を防ぐ (リンク自体の所有者は挙動に影響しない) */
+async function chownRecursive(
+	dir: string,
+	uid: number,
+	gid: number,
+): Promise<void> {
+	await chown(dir, uid, gid);
+	let entries: string[];
+	try {
+		entries = await readdir(dir);
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw err;
+	}
+	for (const entry of entries) {
+		const path = join(dir, entry);
+		const info = await lstat(path).catch(() => null);
+		if (info === null || info.isSymbolicLink()) continue;
+		if (info.isDirectory()) {
+			await chownRecursive(path, uid, gid);
+		} else {
+			await chown(path, uid, gid);
+		}
+	}
+}
+
 export class SessionRunner {
 	private readonly sessions = new Map<string, SessionRecord>();
 	private readonly configSource: ConfigSource;
@@ -171,6 +211,9 @@ export class SessionRunner {
 	private readonly model: string | undefined;
 	private readonly provider: string | undefined;
 	private readonly extraEnv: Record<string, string> | undefined;
+	private readonly agentUid: number | undefined;
+	private readonly agentGid: number | undefined;
+	private readonly agentHome: string;
 	private readonly leaseTtlMs: number;
 	private readonly lingerMs: number;
 	private readonly owner: string;
@@ -188,6 +231,9 @@ export class SessionRunner {
 		this.model = options.model;
 		this.provider = options.provider;
 		this.extraEnv = options.extraEnv;
+		this.agentUid = options.agentUid;
+		this.agentGid = options.agentGid;
+		this.agentHome = options.agentHome ?? "/home/agent";
 		this.leaseTtlMs = options.leaseTtlMs ?? 60_000;
 		this.lingerMs = options.lingerMs ?? 3_000;
 		this.owner = options.owner ?? `${hostname()}:${process.pid}`;
@@ -337,10 +383,26 @@ export class SessionRunner {
 		if (this.workdirStorage !== undefined) {
 			await this.workdirStorage.restore(threadKey, workdir);
 		}
+		// UID 分離 (session-runtime.md §6) が有効なら、workdir を agent 所有 0700 に
+		// する。mkdir は Runner (root) 実行なので root 所有で作られ、restore で
+		// コピーされたファイルも root 所有になる — agent uid で書き込めるよう
+		// restore 後に再帰的に chown する (root だけが chown できるので、この処理は
+		// uid オプションが設定されているときだけ行う)
+		if (this.agentUid !== undefined && this.agentGid !== undefined) {
+			await chownRecursive(workdir, this.agentUid, this.agentGid);
+			await chmod(workdir, 0o700);
+		}
 		const sessionPath = join(workdir, "transcript.jsonl");
 		const resumed = await transcriptExists(sessionPath);
 
 		const model = doc?.model ?? this.model;
+		// uid 分離時は HOME を Runner の /root のまま継承すると agent uid が書けず
+		// pi が ~/.pi 等を作れない。extraEnv で HOME を上書きする (buildPiEnv は
+		// extraEnv が PATH/HOME を上書きできる実装になっている)
+		const extraEnv =
+			this.agentUid !== undefined && this.agentGid !== undefined
+				? { ...this.extraEnv, HOME: this.agentHome }
+				: this.extraEnv;
 		const proc = new PiProcess({
 			sessionPath,
 			extensionPath: this.extensionPath,
@@ -349,7 +411,9 @@ export class SessionRunner {
 			...(this.piBinary !== undefined ? { piBinary: this.piBinary } : {}),
 			...(model !== undefined ? { model } : {}),
 			...(this.provider !== undefined ? { provider: this.provider } : {}),
-			...(this.extraEnv !== undefined ? { extraEnv: this.extraEnv } : {}),
+			...(extraEnv !== undefined ? { extraEnv } : {}),
+			...(this.agentUid !== undefined ? { uid: this.agentUid } : {}),
+			...(this.agentGid !== undefined ? { gid: this.agentGid } : {}),
 			// pi は正常時にも stderr へ出すことがあるため warn ではなく debug
 			logger: (line) => this.logger.debug({ threadKey, line }, "pi stderr"),
 		});
