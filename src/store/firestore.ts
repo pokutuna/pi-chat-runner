@@ -10,7 +10,8 @@
 // - leases: `<prefix>-leases/{threadKey}`
 //
 // drain の順序保証: enqueue 時に `seq` フィールド (injected now() + 同 ms 単調化の
-// インスタンス内カウンタ) を書き、`where acked == false` + `orderBy seq` で取得する。
+// インスタンス内カウンタ) を書き、`where acked == false` で取得してクライアント側で
+// seq ソートする (orderBy を併用すると複合インデックスが必要になるため)。
 //
 // lease の期限判定は injected `now()` と数値 `expiresAtMs` の比較で行う (サーバ時刻は
 // 使わない)。acquire/renew/release は runTransaction で token/owner の一致を確認する
@@ -118,18 +119,25 @@ class FirestoreInboxStore implements InboxStore {
 	}
 
 	async drain(threadKey: string): Promise<InboxItem[]> {
+		// where + orderBy の組は複合インデックスが必要になり、利用者にインデックス
+		// 作成を強いる。thread ごとの未 ack は少件数なのでソートはクライアント側で行う
 		const snapshot = await this.itemsCollection(threadKey)
 			.where("acked", "==", false)
-			.orderBy("seq", "asc")
 			.get();
-		return snapshot.docs.map((docSnap) => {
-			const data = docSnap.data() as InboxItemDoc;
-			return {
-				id: docSnap.id,
-				event: parseInboundMessage(data.payload),
-				enqueuedAt: data.enqueuedAt.toDate(),
-			};
-		});
+		return snapshot.docs
+			.map((docSnap) => {
+				const data = docSnap.data() as InboxItemDoc;
+				return {
+					item: {
+						id: docSnap.id,
+						event: parseInboundMessage(data.payload),
+						enqueuedAt: data.enqueuedAt.toDate(),
+					},
+					seq: data.seq,
+				};
+			})
+			.sort((a, b) => a.seq - b.seq)
+			.map(({ item }) => item);
 	}
 
 	async ack(threadKey: string, itemIds: string[]): Promise<void> {
