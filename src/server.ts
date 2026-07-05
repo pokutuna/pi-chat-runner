@@ -1,9 +1,11 @@
-// エントリポイント (Step 4: 永続化と排他)
+// エントリポイント (Step 5: Cloud Run デプロイ / Events API)
 //
-// Socket Mode で受けたイベントをハードフィルタ (Layer 0) だけ通し、SessionRunner に渡す。
-// gate 評価・inbox・lease・pi の kick/steer はすべて SessionRunner の中 (src/session/runner.ts)。
-// Store/Storage の実装選択 (env) はここで行い、runner には漏らさない (persistence.md §1)。
-// docs/build-plan.md Step 4 / docs/design/architecture.md §1, §6。
+// EventSource (Socket Mode / Events API) で受けたイベントをハードフィルタ (Layer 0)
+// だけ通し、SessionRunner に渡す。入口の選択は SLACK_MODE (env) で行い、後段
+// (gate 評価・inbox・lease・pi の kick/steer。すべて SessionRunner の中,
+// src/session/runner.ts) には入口の別を漏らさない (architecture.md §1)。
+// Store/Storage の実装選択 (env) も同様にここで行う (persistence.md §1)。
+// docs/build-plan.md Step 4-5 / docs/design/architecture.md §1, §6。
 
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
@@ -11,8 +13,9 @@ import { fileURLToPath } from "node:url";
 import { Firestore } from "@google-cloud/firestore";
 import { WebClient } from "@slack/web-api";
 import type { ChatEvent } from "./ingress/chat-event.js";
-import type { Ack } from "./ingress/event-source.js";
+import type { Ack, EventSource } from "./ingress/event-source.js";
 import { SocketEventSource } from "./ingress/event-source.js";
+import { HttpEventSource } from "./ingress/http-event-source.js";
 import { rootLogger } from "./logger.js";
 import { Reactions } from "./reply/reactions.js";
 import { ReplyRouter } from "./reply/router.js";
@@ -76,10 +79,16 @@ function requireEnv(name: string): string {
 			"  SLACK_BOT_TOKEN     xoxb-... (OAuth & Permissions で取得)",
 		);
 		console.error(
-			"  SLACK_APP_TOKEN     xapp-... (Basic Information > App-Level Tokens, connections:write scope)",
+			"  SLACK_BOT_USER_ID   U...     (bot の User ID。App Home や `auth.test` で確認可能)",
 		);
 		console.error(
-			"  SLACK_BOT_USER_ID   U...     (bot の User ID。App Home や `auth.test` で確認可能)",
+			"  SLACK_MODE          socket|events (既定 socket。architecture.md §1)",
+		);
+		console.error(
+			"    socket 時 -> SLACK_APP_TOKEN      xapp-... (Basic Information > App-Level Tokens, connections:write scope)",
+		);
+		console.error(
+			"    events 時 -> SLACK_SIGNING_SECRET Basic Information > Signing Secret",
 		);
 		console.error("");
 		console.error("任意:");
@@ -88,6 +97,9 @@ function requireEnv(name: string): string {
 		);
 		console.error("  PI_MODEL            ChannelDoc.model 未指定時のモデル");
 		console.error("  PI_PROVIDER         pi の --provider");
+		console.error(
+			"  PORT                events モードの listen ポート (既定 8080)",
+		);
 		console.error("");
 		console.error("例 (.env ファイル推奨):");
 		console.error("  cp .env.example .env  # 値を埋める");
@@ -99,9 +111,33 @@ function requireEnv(name: string): string {
 	return value;
 }
 
+/** SLACK_MODE (既定 socket) で入口を切り替える (architecture.md §1)。両モードとも
+ * dedupe・起動判定・inbox 積みの後段は共通で、「受け取り方 / ACK の意味」だけが違う。
+ * モード別必須 env (SLACK_APP_TOKEN / SLACK_SIGNING_SECRET) もここで振り分ける。 */
+function buildEventSource(mode: string, botUserId: string): EventSource {
+	switch (mode) {
+		case "socket": {
+			const appToken = requireEnv("SLACK_APP_TOKEN");
+			return new SocketEventSource({ appToken, botUserId });
+		}
+		case "events": {
+			const signingSecret = requireEnv("SLACK_SIGNING_SECRET");
+			const port = Number.parseInt(process.env.PORT ?? "8080", 10);
+			return new HttpEventSource({
+				signingSecret,
+				botUserId,
+				port,
+				logger: rootLogger.child({ component: "http" }),
+			});
+		}
+		default:
+			throw new Error(`Unknown SLACK_MODE "${mode}" (expected socket|events)`);
+	}
+}
+
 async function main() {
+	const slackMode = process.env.SLACK_MODE ?? "socket";
 	const botToken = requireEnv("SLACK_BOT_TOKEN");
-	const appToken = requireEnv("SLACK_APP_TOKEN");
 	const botUserId = requireEnv("SLACK_BOT_USER_ID");
 	const configDir = process.env.CONFIG_DIR ?? "examples/config";
 	const model = process.env.PI_MODEL;
@@ -111,7 +147,7 @@ async function main() {
 	const archiveDir = process.env.WORKDIR_ARCHIVE_DIR;
 
 	const web = new WebClient(botToken);
-	const eventSource = new SocketEventSource({ appToken, botUserId });
+	const eventSource = buildEventSource(slackMode, botUserId);
 
 	const runner = new SessionRunner({
 		configSource: new FileConfigSource(configDir),
@@ -157,7 +193,9 @@ async function main() {
 	const seenMessages = new Set<string>();
 
 	await eventSource.start(async (event: ChatEvent, ack: Ack) => {
-		// Socket Mode なので積む前に即 ack してよい (architecture.md §1 の 3 秒 ACK)
+		// 3 秒 ACK の意味は入口で違う (Socket Mode = ack コールバック, Events API = 200
+		// レスポンス) が、Ack で吸収されているのでここでは「積む前に ack する」だけ書けばよい
+		// (architecture.md §1)。以降の残処理は ack 後も継続する
 		await ack();
 
 		logger.debug(
@@ -206,7 +244,10 @@ async function main() {
 		}
 	});
 
-	logger.info({ configDir }, "Socket Mode connected; waiting for events");
+	logger.info(
+		{ configDir, slackMode },
+		"event source started; waiting for events",
+	);
 }
 
 main().catch((err) => {
