@@ -272,13 +272,13 @@ describe("HttpEventSource", () => {
 		await source.stop();
 	});
 
-	it("GET /healthz returns 200 ok", async () => {
+	it("GET /health returns 200 ok", async () => {
 		const source = build();
 		await startWithHandler(source, async (_e, ack) => {
 			await ack();
 		});
 
-		const res = await source.honoApp.request("/healthz");
+		const res = await source.honoApp.request("/health");
 		expect(res.status).toBe(200);
 		expect(await res.text()).toBe("ok");
 

@@ -73,7 +73,9 @@ export class HttpEventSource implements EventSource {
 	private registerRoutes(
 		onEvent: (e: ChatEvent, ack: Ack) => Promise<void>,
 	): void {
-		this.app.get("/healthz", (c) => c.text("ok"));
+		// /healthz は GFE (Google Front End) の予約パスで Cloud Run のコンテナに
+		// 届かないため /health を使う
+		this.app.get("/health", (c) => c.text("ok"));
 
 		this.app.post("/slack/events", async (c) => {
 			const rawBody = await c.req.text();
