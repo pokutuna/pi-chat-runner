@@ -21,7 +21,7 @@ describe("buildPiArgs", () => {
 		expect(
 			buildPiArgs({
 				sessionPath: "/tmp/s/transcript.jsonl",
-				extensionPath: "/app/extensions/reply.ts",
+				extensionPaths: ["/app/extensions/reply.ts"],
 			}),
 		).toEqual([
 			"--mode",
@@ -33,10 +33,30 @@ describe("buildPiArgs", () => {
 		]);
 	});
 
+	it("expands --extension once per path in extensionPaths (reply + permission-gate)", () => {
+		const args = buildPiArgs({
+			sessionPath: "/tmp/s/transcript.jsonl",
+			extensionPaths: [
+				"/app/extensions/reply.ts",
+				"/app/extensions/permission-gate.ts",
+			],
+		});
+		expect(args).toEqual([
+			"--mode",
+			"rpc",
+			"--session",
+			"/tmp/s/transcript.jsonl",
+			"--extension",
+			"/app/extensions/reply.ts",
+			"--extension",
+			"/app/extensions/permission-gate.ts",
+		]);
+	});
+
 	it("appends optional provider/model/system-prompt/skill args", () => {
 		const args = buildPiArgs({
 			sessionPath: "/tmp/s.jsonl",
-			extensionPath: "/e/reply.ts",
+			extensionPaths: ["/e/reply.ts"],
 			provider: "google-vertex",
 			model: "gemini-2.5-flash-lite",
 			appendSystemPrompt: "thread_key is t1",
@@ -54,7 +74,7 @@ describe("buildPiArgs", () => {
 	it("passes the ADC marker as --api-key only for google-vertex", () => {
 		const vertex = buildPiArgs({
 			sessionPath: "/s.jsonl",
-			extensionPath: "/e.ts",
+			extensionPaths: ["/e.ts"],
 			provider: "google-vertex",
 		});
 		expect(vertex[vertex.indexOf("--api-key") + 1]).toBe(
@@ -63,7 +83,7 @@ describe("buildPiArgs", () => {
 
 		const other = buildPiArgs({
 			sessionPath: "/s.jsonl",
-			extensionPath: "/e.ts",
+			extensionPaths: ["/e.ts"],
 			provider: "anthropic",
 		});
 		expect(other).not.toContain("--api-key");
@@ -72,7 +92,7 @@ describe("buildPiArgs", () => {
 	it("omits optional args when not specified", () => {
 		const args = buildPiArgs({
 			sessionPath: "/s.jsonl",
-			extensionPath: "/e.ts",
+			extensionPaths: ["/e.ts"],
 		});
 		for (const flag of [
 			"--provider",
@@ -122,7 +142,7 @@ describe("PiProcess spawn options (UID 分離, session-runtime.md §6)", () => {
 	it("does not pass uid/gid keys to spawn when unset (現状動作を維持)", () => {
 		const proc = new PiProcess({
 			sessionPath: "/s.jsonl",
-			extensionPath: "/e.ts",
+			extensionPaths: ["/e.ts"],
 			piBinary: process.execPath,
 		});
 		proc.start();
@@ -146,7 +166,7 @@ describe("PiProcess spawn options (UID 分離, session-runtime.md §6)", () => {
 
 		const proc = new PiProcess({
 			sessionPath: "/s.jsonl",
-			extensionPath: "/e.ts",
+			extensionPaths: ["/e.ts"],
 			piBinary: process.execPath,
 			uid,
 			gid,

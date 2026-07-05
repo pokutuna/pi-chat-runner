@@ -37,8 +37,10 @@ export interface PiPermissionOptions {
 export interface PiProcessOptions {
 	/** `--session` に渡す transcript JSONL の絶対パス */
 	sessionPath: string;
-	/** `--extension` に渡す reply extension の絶対パス */
-	extensionPath: string;
+	/** `--extension` に渡す extension の絶対パス群。pi の CLI は `--extension` を
+	 * 複数回受け付けるため、配列の各要素を 1 フラグずつ展開する
+	 * (reply + permission-gate を常時両方注入するため単一パスから複数化した) */
+	extensionPaths: string[];
 	/** pi バイナリのパス。省略時は env PI_BIN、それも無ければ "pi"。
 	 * permission 指定時は無視される (entrypoint を直接 node で起動するため) */
 	piBinary?: string;
@@ -71,21 +73,18 @@ export function buildPiArgs(
 	options: Pick<
 		PiProcessOptions,
 		| "sessionPath"
-		| "extensionPath"
+		| "extensionPaths"
 		| "provider"
 		| "model"
 		| "appendSystemPrompt"
 		| "skillPath"
 	>,
 ): string[] {
-	const args = [
-		"--mode",
-		"rpc",
-		"--session",
-		options.sessionPath,
-		"--extension",
-		options.extensionPath,
-	];
+	const args = ["--mode", "rpc", "--session", options.sessionPath];
+	// pi の CLI は --extension を複数回受け付けるため、パスごとに 1 フラグ展開する
+	// (reply + permission-gate を常時両方注入するため)
+	for (const extensionPath of options.extensionPaths)
+		args.push("--extension", extensionPath);
 	if (options.provider) args.push("--provider", options.provider);
 	// google-vertex の認証可否判定は「ADC ファイルの存在チェック」なので、Cloud Run の
 	// メタデータサーバー ADC (ファイルを作らない) では "No API key found" になる。

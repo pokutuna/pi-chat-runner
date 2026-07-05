@@ -215,10 +215,15 @@ async function main() {
 			add: (args) => web.reactions.add(args),
 		}),
 		// tsx 実行時は <repo>/src/../extensions、build 後は <repo>/dist/../extensions を指す。
-		// pi が --extension で TS ソースを直接ロードするためビルド対象外 (build-plan.md)
-		extensionPath: fileURLToPath(
-			new URL("../extensions/reply.ts", import.meta.url),
-		),
+		// pi が --extension で TS ソースを直接ロードするためビルド対象外 (build-plan.md)。
+		// permission-gate は事故防止層 (docs/research/pi-tools-and-sandbox.md) として
+		// reply と同様に常時注入する
+		extensionPaths: [
+			fileURLToPath(new URL("../extensions/reply.ts", import.meta.url)),
+			fileURLToPath(
+				new URL("../extensions/permission-gate.ts", import.meta.url),
+			),
+		],
 		...(model !== undefined ? { model } : {}),
 		...(provider !== undefined ? { provider } : {}),
 		...(Object.keys(extraEnv).length > 0 ? { extraEnv } : {}),

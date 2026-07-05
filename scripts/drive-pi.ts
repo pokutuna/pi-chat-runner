@@ -44,12 +44,15 @@ const sessionPath = resolve(
 );
 mkdirSync(dirname(sessionPath), { recursive: true });
 
-const extensionPath = resolve(import.meta.dirname, "../extensions/reply.ts");
+const extensionPaths = [
+	resolve(import.meta.dirname, "../extensions/reply.ts"),
+	resolve(import.meta.dirname, "../extensions/permission-gate.ts"),
+];
 const threadKey = values["thread-key"];
 
 const pi = new PiProcess({
 	sessionPath,
-	extensionPath,
+	extensionPaths,
 	...(values["pi-bin"] ? { piBinary: values["pi-bin"] } : {}),
 	...(values.model ? { model: values.model } : {}),
 	...(values.provider ? { provider: values.provider } : {}),
@@ -122,7 +125,7 @@ pi.on("exit", (code, signal) => {
 });
 
 console.log(`session: ${sessionPath}`);
-console.log(`extension: ${extensionPath}`);
+console.log(`extensions: ${extensionPaths.join(", ")}`);
 pi.start();
 pi.prompt(promptText);
 
