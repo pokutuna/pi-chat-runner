@@ -1,13 +1,16 @@
-// SessionRunner — event を受けて session を主語に処理するオーケストレーション (Step 3)
+// SessionRunner — event を受けて session を主語に処理するオーケストレーション (Step 4)
 //
 // docs/design/architecture.md §1 (event は「きっかけ係」、session が「処理の担い手」)、
 // §6 (起動と steering のフロー)、docs/design/session-runtime.md §1 (kick シーケンス)、
-// §4 (追加メッセージは配達するだけ。注入タイミングは pi が管理する)。
+// §3 (tmpfs + 境界 flush)、docs/design/persistence.md §1 (Store 群)、§3 (flush → ack の順序)。
 //
-// Step 3 のスコープ: lease/linger/turn timeout/workdir flush は持たない (Step 4-6)。
-// 排他はインメモリの Map、永続化は同一パスの transcript.jsonl 再利用のみ。
+// Step 4 のスコープ: lease による多重起動の排他、drain/ack 分離 (drain は非破壊。
+// プロンプト済み item の記憶と重複除外は runner のインメモリ責務)、agent_end 後の
+// linger による追いメッセージ拾い直し、WorkdirStorage による境界退避 (未指定なら
+// Step 3 相当のローカル置きっぱなし)。turn timeout は Step 6。
 
 import { mkdir, stat } from "node:fs/promises";
+import { hostname } from "node:os";
 import { join } from "node:path";
 import {
 	createGate,
@@ -27,7 +30,9 @@ import type {
 	Gate as ChannelGateSpec,
 } from "../store/channel-doc.js";
 import type { ConfigSource } from "../store/config-source.js";
-import { type InboxItem, type InboxStore, inboxItemId } from "./inbox.js";
+import { inboxItemId } from "../store/inbox-item.js";
+import type { InboxItem, Lease, StateStore } from "../store/interfaces.js";
+import type { WorkdirStorage } from "../store/workdir-storage.js";
 import { extractReply, isAgentEnd, isToolExecutionEnd } from "./rpc.js";
 import { PiProcess } from "./runtime.js";
 
@@ -41,9 +46,12 @@ const APP_SYSTEM_PROMPT = [
 
 export interface SessionRunnerOptions {
 	configSource: ConfigSource;
-	inbox: InboxStore;
+	/** 永続化 Store 群 (inbox / sessions / leases)。persistence.md §1 */
+	store: StateStore;
 	router: ReplyRouter;
 	reactions: Reactions;
+	/** workdir の境界退避。未指定なら restore/flush をスキップ (Step 3 相当) */
+	workdirStorage?: WorkdirStorage;
 	/** pi の `--extension` に渡す reply extension の絶対パス */
 	extensionPath: string;
 	/** workdir のルート。既定 /tmp/pi-chat-runner/sessions */
@@ -56,18 +64,36 @@ export interface SessionRunnerOptions {
 	provider?: string;
 	/** allowlist (PATH/HOME) に追加で pi 子プロセスへ渡す env (session-runtime.md §2) */
 	extraEnv?: Record<string, string>;
+	/** lease の TTL。既定 60_000ms。renew は ttl/3 間隔 */
+	leaseTtlMs?: number;
+	/** agent_end 後に追いメッセージを待つ時間。既定 3_000ms */
+	lingerMs?: number;
+	/** lease の owner 識別子。既定 `hostname:pid` */
+	owner?: string;
 	logger?: Logger;
 }
 
 interface SessionRecord {
-	/** starting = spawn 準備中 (多重起動防止のため Map 登録済み)、running = PiProcess 稼働中 */
-	state: "starting" | "running";
+	/** starting = spawn 準備中 (多重起動防止のため Map 登録済み)、
+	 * running = PiProcess 稼働中、stopping = 終了処理中 (exit を異常扱いしない) */
+	state: "starting" | "running" | "stopping";
 	process?: PiProcess;
 	/** トリガーメッセージの ts (👀 / ✅ の対象) */
 	triggerTs: string;
 	channelId: string;
+	threadTs: string;
+	workdir: string;
 	/** kick 開始時刻 (finished ログの durationMs 算出用) */
 	startedAt: number;
+	/** このプロセスが保持する実行ロック。renew に失敗したら排他を失っている */
+	lease: Lease;
+	/** このセッションで prompt/steer 済みの item id。drain は非破壊 (未 ack 全件を
+	 * 返す) なので、重複除外はこのインメモリ記憶で行う (persistence.md §1) */
+	promptedIds: Set<string>;
+	/** prompt/steer を送るたびに増える世代。agent_end 処理中に増えていたら
+	 * 新しいターンが走り出しているので、終了判定をそのターンの agent_end に譲る */
+	turnEpoch: number;
+	renewTimer: NodeJS.Timeout | undefined;
 }
 
 /** thread_key の導出。スレッド外の発言はそのメッセージ自身が thread root になる */
@@ -118,8 +144,7 @@ export function toGateSpecs(
 }
 
 /** workdir の transcript.jsonl が既に存在するか (pi が既存 transcript を読んで
- * 文脈継続するかどうかの判定。session-runtime.md の再開は専用フローを持たず、
- * 同じ --session パスへの再 spawn だけで実現される)。 */
+ * 文脈継続するかどうかの判定。restore 後に評価すれば保存棚からの復元も拾える)。 */
 async function transcriptExists(sessionPath: string): Promise<boolean> {
 	try {
 		await stat(sessionPath);
@@ -129,31 +154,43 @@ async function transcriptExists(sessionPath: string): Promise<boolean> {
 	}
 }
 
+function sleep(ms: number): Promise<void> {
+	return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export class SessionRunner {
 	private readonly sessions = new Map<string, SessionRecord>();
 	private readonly configSource: ConfigSource;
-	private readonly inbox: InboxStore;
+	private readonly store: StateStore;
 	private readonly router: ReplyRouter;
 	private readonly reactions: Reactions;
+	private readonly workdirStorage: WorkdirStorage | undefined;
 	private readonly extensionPath: string;
 	private readonly workdirRoot: string;
 	private readonly piBinary: string | undefined;
 	private readonly model: string | undefined;
 	private readonly provider: string | undefined;
 	private readonly extraEnv: Record<string, string> | undefined;
+	private readonly leaseTtlMs: number;
+	private readonly lingerMs: number;
+	private readonly owner: string;
 	private readonly logger: Logger;
 
 	constructor(options: SessionRunnerOptions) {
 		this.configSource = options.configSource;
-		this.inbox = options.inbox;
+		this.store = options.store;
 		this.router = options.router;
 		this.reactions = options.reactions;
+		this.workdirStorage = options.workdirStorage;
 		this.extensionPath = options.extensionPath;
 		this.workdirRoot = options.workdirRoot ?? "/tmp/pi-chat-runner/sessions";
 		this.piBinary = options.piBinary;
 		this.model = options.model;
 		this.provider = options.provider;
 		this.extraEnv = options.extraEnv;
+		this.leaseTtlMs = options.leaseTtlMs ?? 60_000;
+		this.lingerMs = options.lingerMs ?? 3_000;
+		this.owner = options.owner ?? `${hostname()}:${process.pid}`;
 		this.logger = options.logger ?? rootLogger.child({ component: "session" });
 	}
 
@@ -170,26 +207,30 @@ export class SessionRunner {
 			enqueuedAt: new Date(),
 		};
 
-		// 実行中 (起動中含む) セッションがあるスレッド: gate は通さず同じ inbox へ
-		// (architecture.md §6 フロー 6。スレッド内の後続発言は追加指示として扱う)
+		// 実行中 (起動中含む) セッションがあるスレッド: gate は通さず enqueue して
+		// steer で配達 (architecture.md §6 フロー 6。後続発言は追加指示として扱う)。
+		// enqueue は「セッションあり or gate 通過」のときだけ行う — gate 非通過の
+		// 全メッセージを永続 store に溜め込まない (dedupe は enqueue 時に効く)
 		const existing = this.sessions.get(threadKey);
 		if (existing !== undefined) {
-			const fresh = await this.inbox.enqueue(threadKey, item);
+			const fresh = await this.store.inbox.enqueue(threadKey, item);
 			if (!fresh) {
-				this.logger.info(
+				this.logger.debug(
 					{ threadKey, itemId: item.id },
 					"inbox duplicate skip",
 				);
 				return;
 			}
 			// starting 中は初回 prompt の drain が拾う。running なら steer で即配達する
-			// (drain してから配達 = agent_end の drain と二重にならない)
 			if (existing.state === "running" && existing.process?.running) {
-				const items = await this.inbox.drain(threadKey);
-				if (items.length > 0) {
-					existing.process.steer(renderItems(items));
+				const items = await this.store.inbox.drain(threadKey);
+				const pending = items.filter((i) => !existing.promptedIds.has(i.id));
+				if (pending.length > 0) {
+					for (const p of pending) existing.promptedIds.add(p.id);
+					existing.turnEpoch += 1;
+					existing.process.steer(renderItems(pending));
 					this.logger.info(
-						{ threadKey, items: items.length },
+						{ threadKey, items: pending.length },
 						"session steered",
 					);
 				}
@@ -197,7 +238,7 @@ export class SessionRunner {
 			return;
 		}
 
-		// 実行中でない: ChannelDoc → gate 評価 → trigger なら enqueue して kick
+		// 実行中でない: ChannelDoc → gate 評価 → trigger なら lease を取って kick
 		const channelId = event.conversation.channelId;
 		const doc = await this.loadChannelDoc(channelId);
 		const { gates, combinator } = this.resolveGates(doc);
@@ -217,46 +258,85 @@ export class SessionRunner {
 			"gate triggered",
 		);
 
-		const fresh = await this.inbox.enqueue(threadKey, item);
+		// gate 通過が確定してから耐久キューへ積む (dedupe = at-least-once の再送吸収)
+		const fresh = await this.store.inbox.enqueue(threadKey, item);
 		if (!fresh) {
-			this.logger.info({ threadKey, itemId: item.id }, "inbox duplicate skip");
+			this.logger.debug({ threadKey, itemId: item.id }, "inbox duplicate skip");
 			return;
 		}
 
-		// 多重起動防止: gate 評価の await 中に別イベントが kick 済みかを再確認してから
-		// 同期的に Map へ登録する (has → set の間に await を挟まない)。
-		// 登録済みなら、上で enqueue した item はそのセッションの drain が拾う
+		// 多重起動防止: gate 評価の await 中に別イベントが kick 済みなら、
+		// 上で enqueue した item はそのセッションの drain が拾う
 		if (this.sessions.has(threadKey)) return;
+
+		// 実行ロック。取れなければ別プロセスが保持中 — enqueue 済みなので
+		// 保持者側の drain (steer / agent_end / linger) が拾う
+		const lease = await this.store.leases.acquire(
+			threadKey,
+			this.owner,
+			this.leaseTtlMs,
+		);
+		if (lease === null) {
+			this.logger.info(
+				{ threadKey, itemId: item.id },
+				"lease held by another process; enqueued only",
+			);
+			return;
+		}
+		if (this.sessions.has(threadKey)) {
+			// acquire の await 中にローカルの別イベントが kick した (そちらが lease を
+			// 取れているはずなので通常到達しないが、二重 kick だけは防ぐ)
+			await this.store.leases.release(lease);
+			return;
+		}
+
+		const threadTs = event.conversation.threadTs ?? event.id;
 		const record: SessionRecord = {
 			state: "starting",
 			triggerTs: event.id,
 			channelId,
+			threadTs,
+			workdir: join(this.workdirRoot, channelId, threadTs),
 			startedAt: Date.now(),
+			lease,
+			promptedIds: new Set(),
+			turnEpoch: 0,
+			renewTimer: undefined,
 		};
 		this.sessions.set(threadKey, record);
 
 		try {
 			await this.kick(threadKey, record, event, doc);
 		} catch (err) {
+			// enqueue 済み item は ack されていないので、同スレッドの次のイベント
+			// (または再送) で再 kick され拾い直される (persistence.md §4)
 			this.sessions.delete(threadKey);
+			this.stopRenewTimer(record);
+			try {
+				await record.process?.stop();
+			} catch {
+				// spawn 途中の失敗など。stop は best-effort でよい
+			}
+			await this.store.leases.release(lease);
 			this.logger.warn({ threadKey, err }, "session kick failed");
 		}
 	}
 
-	/** kick シーケンス (session-runtime.md §1。Step 3 は restore/flush なしの縮退版) */
+	/** kick シーケンス (session-runtime.md §1: restore → spawn → prompt) */
 	private async kick(
 		threadKey: string,
 		record: SessionRecord,
 		triggerEvent: InboundMessage,
 		doc: ChannelDoc | null,
 	): Promise<void> {
-		const channelId = triggerEvent.conversation.channelId;
-		const threadTs = triggerEvent.conversation.threadTs ?? triggerEvent.id;
+		const { channelId, threadTs, workdir } = record;
 
 		// 同 thread_key は常に同じ workdir/transcript.jsonl を使う。再 trigger 時は
 		// 同じパスで再 spawn され、pi が JSONL を読んで文脈を継続する (再開の専用フローなし)
-		const workdir = join(this.workdirRoot, channelId, threadTs);
 		await mkdir(workdir, { recursive: true });
+		if (this.workdirStorage !== undefined) {
+			await this.workdirStorage.restore(threadKey, workdir);
+		}
 		const sessionPath = join(workdir, "transcript.jsonl");
 		const resumed = await transcriptExists(sessionPath);
 
@@ -294,10 +374,20 @@ export class SessionRunner {
 			}
 		});
 		proc.on("exit", (code, signal) => {
-			// 正常終了パス (onAgentEnd) では Map から除去済み。ここに残っていたら異常終了
+			// 正常終了パス (onAgentEnd) では state を stopping にしてから stop している。
+			// running のまま exit したら異常終了: 未 ack の item は inbox に残っているので、
+			// lease を解いて次のイベントで拾い直せるようにする (flush はしない)
 			const current = this.sessions.get(threadKey);
-			if (current !== undefined && current.process === proc) {
+			if (
+				current !== undefined &&
+				current.process === proc &&
+				current.state !== "stopping"
+			) {
 				this.sessions.delete(threadKey);
+				this.stopRenewTimer(current);
+				void this.store.leases.release(current.lease).catch((err) => {
+					this.logger.warn({ threadKey, err }, "lease release failed");
+				});
 				this.logger.warn({ threadKey, code, signal }, "pi exited unexpectedly");
 			}
 		});
@@ -305,6 +395,7 @@ export class SessionRunner {
 		proc.start();
 		record.state = "running";
 		record.process = proc;
+		this.startRenewTimer(threadKey, record);
 
 		this.router.register(threadKey, { channelId, threadTs });
 		await this.safeReact(
@@ -314,11 +405,31 @@ export class SessionRunner {
 		);
 
 		// enqueue 済みの入力 (spawn 準備中に積まれた分を含む) を束ねて初回 prompt にする。
+		// トリガーイベント自身も enqueue 済みなので通常 drain 経由で届く。
 		// ChannelDoc.context は初回のみ先頭に注入する (config.md §4)
-		const items = await this.inbox.drain(threadKey);
-		const body =
-			items.length > 0 ? renderItems(items) : renderEvent(triggerEvent);
+		const items = (await this.store.inbox.drain(threadKey)).filter(
+			(i) => !record.promptedIds.has(i.id),
+		);
+		let body: string;
+		if (items.length > 0) {
+			for (const i of items) record.promptedIds.add(i.id);
+			body = renderItems(items);
+		} else {
+			// drain が空 (Store 実装の遅延など)。トリガーイベントに直接フォールバック
+			// するが、ack 対象には含める (二重 prompt を防ぐ)
+			record.promptedIds.add(inboxItemId(triggerEvent));
+			body = renderEvent(triggerEvent);
+		}
+		record.turnEpoch += 1;
 		proc.prompt(prependContext(body, doc));
+
+		await this.store.sessions.put(threadKey, {
+			channelId,
+			threadTs,
+			triggerTs: record.triggerTs,
+			status: "active",
+			updatedAt: new Date(),
+		});
 		this.logger.info(
 			{
 				threadKey,
@@ -332,30 +443,114 @@ export class SessionRunner {
 		);
 	}
 
-	/** agent_end: 残り入力があれば次の prompt (連投の取りこぼし防止)、無ければ ✅ で終了 */
+	/**
+	 * agent_end: flush → ack (この順序が正。逆にするとクラッシュで入力が消える) →
+	 * 残り入力があれば次の prompt、無ければ linger して再確認、それでも無ければ ✅ で終了
+	 * (persistence.md §3, session-model.md §4 の linger)
+	 */
 	private async onAgentEnd(threadKey: string, proc: PiProcess): Promise<void> {
 		const record = this.sessions.get(threadKey);
 		if (record === undefined || record.process !== proc) return;
+		const epoch = record.turnEpoch;
 
-		const items = await this.inbox.drain(threadKey);
-		if (items.length > 0) {
-			proc.prompt(renderItems(items));
-			this.logger.info({ threadKey, items: items.length }, "session continued");
-			return;
+		// 1. ターン境界の flush → 2. flush 成功後に ack (persistence.md §3)。
+		// ack 対象は flush 前のスナップショット — flush の await 中に steer が
+		// promptedIds へ追加した item を「そのターンの flush 前」に ack しない
+		const toAck = [...record.promptedIds];
+		if (this.workdirStorage !== undefined) {
+			await this.workdirStorage.flush(threadKey, record.workdir);
+		}
+		if (toAck.length > 0) {
+			await this.store.inbox.ack(threadKey, toAck);
+			for (const id of toAck) record.promptedIds.delete(id);
 		}
 
-		// reply が 1 度も呼ばれなくても沈黙のまま ✅ を付けて終える (build-plan Step 3)
-		this.sessions.delete(threadKey);
+		// 3. 新規入力があれば同一プロセスで継続 (flush/ack は次の agent_end で行う)
+		if (await this.promptPending(threadKey, record, proc)) return;
+		// flush/ack の await 中に steer 済みなら、そのターンの agent_end に終了判定を譲る
+		if (record.turnEpoch !== epoch) return;
+
+		// 4. linger: agent_end 直後に届いた追いメッセージを拾ってから終える。
+		// この間レコードは Map に残す (新イベントは steer パスに入りうる)
+		await sleep(this.lingerMs);
+		if (this.sessions.get(threadKey) !== record || record.process !== proc)
+			return;
+		if (await this.promptPending(threadKey, record, proc)) return;
+		if (record.turnEpoch !== epoch) return;
+
+		// 5. 終了処理。reply が 1 度も呼ばれなくても沈黙のまま ✅ を付けて終える
+		record.state = "stopping";
 		await this.safeReact(
 			() => this.reactions.addCheck(record.channelId, record.triggerTs),
 			threadKey,
 			"check",
 		);
+		await this.store.sessions.put(threadKey, {
+			channelId: record.channelId,
+			threadTs: record.threadTs,
+			triggerTs: record.triggerTs,
+			status: "finished",
+			updatedAt: new Date(),
+		});
 		await proc.stop();
+		this.stopRenewTimer(record);
+		await this.store.leases.release(record.lease);
+		this.sessions.delete(threadKey);
 		this.logger.info(
 			{ threadKey, durationMs: Date.now() - record.startedAt },
 			"session finished",
 		);
+	}
+
+	/** 未 prompt の item があれば prompt して true (drain は非破壊なので
+	 * promptedIds で除外する)。無ければ false */
+	private async promptPending(
+		threadKey: string,
+		record: SessionRecord,
+		proc: PiProcess,
+	): Promise<boolean> {
+		const items = (await this.store.inbox.drain(threadKey)).filter(
+			(i) => !record.promptedIds.has(i.id),
+		);
+		if (items.length === 0) return false;
+		for (const i of items) record.promptedIds.add(i.id);
+		record.turnEpoch += 1;
+		proc.prompt(renderItems(items));
+		this.logger.info({ threadKey, items: items.length }, "session continued");
+		return true;
+	}
+
+	/** lease の renew を ttl/3 間隔で回す。false は排他喪失 = 別の保持者が動いて
+	 * いる可能性があるため、flush せずプロセスを止める (書き戻さない) */
+	private startRenewTimer(threadKey: string, record: SessionRecord): void {
+		const intervalMs = Math.max(1, Math.floor(this.leaseTtlMs / 3));
+		const timer = setInterval(() => {
+			void (async () => {
+				if (this.sessions.get(threadKey) !== record) return;
+				const ok = await this.store.leases.renew(record.lease, this.leaseTtlMs);
+				if (ok) return;
+				if (this.sessions.get(threadKey) !== record) return;
+				this.logger.error(
+					{ threadKey, owner: this.owner },
+					"lease renew failed; stopping session without flush",
+				);
+				record.state = "stopping";
+				this.sessions.delete(threadKey);
+				this.stopRenewTimer(record);
+				await record.process?.stop();
+			})().catch((err) => {
+				this.logger.error({ threadKey, err }, "lease renew handling failed");
+			});
+		}, intervalMs);
+		timer.unref();
+		record.renewTimer = timer;
+	}
+
+	private stopRenewTimer(record: SessionRecord): void {
+		if (record.renewTimer !== undefined) {
+			clearInterval(record.renewTimer);
+			record.renewTimer = undefined;
+		}
 	}
 
 	private async loadChannelDoc(channelId: string): Promise<ChannelDoc | null> {

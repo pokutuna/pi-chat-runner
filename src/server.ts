@@ -1,10 +1,14 @@
-// エントリポイント (Step 3: ローカル一気通貫)
+// エントリポイント (Step 4: 永続化と排他)
 //
 // Socket Mode で受けたイベントをハードフィルタ (Layer 0) だけ通し、SessionRunner に渡す。
-// gate 評価・inbox・pi の kick/steer はすべて SessionRunner の中 (src/session/runner.ts)。
-// docs/build-plan.md Step 3 / docs/design/architecture.md §1, §6。
+// gate 評価・inbox・lease・pi の kick/steer はすべて SessionRunner の中 (src/session/runner.ts)。
+// Store/Storage の実装選択 (env) はここで行い、runner には漏らさない (persistence.md §1)。
+// docs/build-plan.md Step 4 / docs/design/architecture.md §1, §6。
 
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Firestore } from "@google-cloud/firestore";
 import { WebClient } from "@slack/web-api";
 import type { ChatEvent } from "./ingress/chat-event.js";
 import type { Ack } from "./ingress/event-source.js";
@@ -12,9 +16,13 @@ import { SocketEventSource } from "./ingress/event-source.js";
 import { rootLogger } from "./logger.js";
 import { Reactions } from "./reply/reactions.js";
 import { ReplyRouter } from "./reply/router.js";
-import { InMemoryInbox } from "./session/inbox.js";
 import { SessionRunner } from "./session/runner.js";
 import { FileConfigSource } from "./store/config-source.js";
+import { FirestoreStateStore } from "./store/firestore.js";
+import type { StateStore } from "./store/interfaces.js";
+import { InMemoryStateStore } from "./store/memory.js";
+import { SqliteStateStore } from "./store/sqlite.js";
+import { CopyWorkdirStorage } from "./store/workdir-storage.js";
 
 const logger = rootLogger.child({ component: "server" });
 
@@ -33,6 +41,29 @@ function collectGcpEnv(): Record<string, string> {
 		if (value !== undefined) env[key] = value;
 	}
 	return env;
+}
+
+/** env STORE_BACKEND (既定 memory) で永続化バックエンドを選ぶ (persistence.md §1)。
+ * SessionRunner 以下には実装の別を漏らさない。 */
+function buildStateStore(): StateStore {
+	const backend = process.env.STORE_BACKEND ?? "memory";
+	switch (backend) {
+		case "memory":
+			return new InMemoryStateStore();
+		case "sqlite": {
+			const path = process.env.SQLITE_PATH ?? "/tmp/pi-chat-runner/state.db";
+			mkdirSync(dirname(path), { recursive: true });
+			return new SqliteStateStore(path);
+		}
+		case "firestore":
+			// projectId は GOOGLE_CLOUD_PROJECT / エミュレータは FIRESTORE_EMULATOR_HOST
+			// を SDK が自動で読む (persistence.md §1)
+			return new FirestoreStateStore(new Firestore());
+		default:
+			throw new Error(
+				`Unknown STORE_BACKEND "${backend}" (expected memory|sqlite|firestore)`,
+			);
+	}
 }
 
 function requireEnv(name: string): string {
@@ -76,13 +107,15 @@ async function main() {
 	const model = process.env.PI_MODEL;
 	const provider = process.env.PI_PROVIDER;
 	const extraEnv = collectGcpEnv();
+	const store = buildStateStore();
+	const archiveDir = process.env.WORKDIR_ARCHIVE_DIR;
 
 	const web = new WebClient(botToken);
 	const eventSource = new SocketEventSource({ appToken, botUserId });
 
 	const runner = new SessionRunner({
 		configSource: new FileConfigSource(configDir),
-		inbox: new InMemoryInbox(),
+		store,
 		router: new ReplyRouter({
 			poster: {
 				async postMessage(channelId, threadTs, text) {
@@ -105,7 +138,18 @@ async function main() {
 		...(model !== undefined ? { model } : {}),
 		...(provider !== undefined ? { provider } : {}),
 		...(Object.keys(extraEnv).length > 0 ? { extraEnv } : {}),
+		// WORKDIR_ARCHIVE_DIR 未設定なら境界退避なし (Step 3 相当の挙動)
+		...(archiveDir !== undefined && archiveDir !== ""
+			? { workdirStorage: new CopyWorkdirStorage(archiveDir) }
+			: {}),
 	});
+	logger.info(
+		{
+			storeBackend: process.env.STORE_BACKEND ?? "memory",
+			workdirArchiveDir: archiveDir,
+		},
+		"state store configured",
+	);
 
 	// Layer 0 (ハードフィルタ): 同一メッセージは app_mention と message の 2 イベントで
 	// 届く (event_id は別) ため、メッセージ ts で重複排除する。inbox の dedupe は
