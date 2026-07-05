@@ -557,6 +557,41 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
 		).not.toBeNull();
 	});
 
+	it("cleans up and releases the lease when pi responds with success:false", async () => {
+		const h = await harness();
+		const trigger = message({ mentionsBot: true, text: "FAIL_PROMPT please" });
+		const threadKey = threadKeyOf(trigger);
+
+		await h.runner.handle(trigger);
+
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+		// pi command failed が異常終了として処理されていること
+		expect(h.logLines().some((line) => line.msg === "pi command failed")).toBe(
+			true,
+		);
+		expect(h.logLines().some((line) => line.msg === "session failed")).toBe(
+			true,
+		);
+
+		// lease は解放されている
+		expect(
+			await h.store.leases.acquire(threadKey, "probe", 1000),
+		).not.toBeNull();
+
+		// エラー通知がスレッドへ投稿されている (router.deliver 経由)
+		expect(h.poster.calls).toHaveLength(1);
+		expect(h.poster.calls[0]?.channelId).toBe("C01");
+		expect(h.poster.calls[0]?.threadTs).toBe(trigger.id);
+		expect(h.poster.calls[0]?.text).toContain(
+			"No API key found for google-vertex",
+		);
+
+		// 未 ack の item は inbox に残っており、flush はされていない (異常終了なので
+		// このターンの入力は次の kick で再実行される)
+		expect((await h.store.inbox.drain(threadKey)).length).toBe(1);
+	});
+
 	it("does not re-prompt items drained at kick when a later drain returns them (promptedIds)", async () => {
 		// drain は非破壊なので、kick で prompt 済みの trigger item は ack されるまで
 		// (= 最初の agent_end まで) 再 drain に出続ける。steer パスの drain と

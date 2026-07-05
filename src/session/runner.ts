@@ -355,6 +355,9 @@ export class SessionRunner {
 		});
 
 		proc.on("event", (piEvent) => {
+			// ペイロード全体はログに残さない (大きい・機微を含みうる)。type だけで
+			// 「pi が動いているか」をデバッグ時に見える状態にする
+			this.logger.debug({ threadKey, eventType: piEvent.type }, "pi event");
 			if (isToolExecutionEnd(piEvent)) {
 				const payload = extractReply(piEvent);
 				if (payload !== null) {
@@ -372,6 +375,33 @@ export class SessionRunner {
 					this.logger.warn({ threadKey, err }, "agent_end handling failed");
 				});
 			}
+		});
+		proc.on("response", (response) => {
+			// success: true は prompt/steer の受理応答に過ぎない (agent_end が本当の
+			// 終端)。debug ログのみで十分
+			if (response.success) {
+				this.logger.debug(
+					{ threadKey, command: response.command },
+					"pi command accepted",
+				);
+				return;
+			}
+			// success: false は pi 側が「動けない」と判断したケース (認証エラー等)。
+			// pi は生きたまま次コマンドを待つが、agent_end が来ないので何もしなければ
+			// runner は永久に無音ハングする → ここで異常終了として扱いプロセスを止める
+			this.logger.error(
+				{ threadKey, command: response.command, error: response.error },
+				"pi command failed",
+			);
+			void this.failSession(threadKey, proc, response.error).catch((err) => {
+				this.logger.warn({ threadKey, err }, "failSession handling failed");
+			});
+		});
+		proc.on("invalid", (raw, error) => {
+			this.logger.debug(
+				{ threadKey, raw: raw.slice(0, 500), error },
+				"pi stdout line invalid",
+			);
 		});
 		proc.on("exit", (code, signal) => {
 			// 正常終了パス (onAgentEnd) では state を stopping にしてから stop している。
@@ -499,6 +529,48 @@ export class SessionRunner {
 		this.logger.info(
 			{ threadKey, durationMs: Date.now() - record.startedAt },
 			"session finished",
+		);
+	}
+
+	/**
+	 * pi が response.success=false を返したときの異常終了処理 (例: Cloud Run で
+	 * ADC が見つからず認証エラーになるケース)。agent_end が来ない見込みなので
+	 * ここで能動的にセッションを畳む。exit ハンドラの「running のまま exit したら
+	 * 異常終了」と同じクリーンアップ (lease 解放 / renew 停止 / Map から削除) を行うが、
+	 * flush はしない (このターンの入力は inbox に残したまま次回に再実行させる)。
+	 * state を先に "stopping" にしておくことで、proc.stop() が引き起こす exit イベントが
+	 * 二重にクリーンアップを走らせない (exit ハンドラは state !== "stopping" のときだけ動く)
+	 */
+	private async failSession(
+		threadKey: string,
+		proc: PiProcess,
+		error: string | undefined,
+	): Promise<void> {
+		const record = this.sessions.get(threadKey);
+		if (record === undefined || record.process !== proc) return;
+
+		record.state = "stopping";
+		this.sessions.delete(threadKey);
+		this.stopRenewTimer(record);
+
+		// register 済み (kick で必ず register している) なので deliver できる。
+		// Slack への通知が失敗してもセッションの畳み込みは続ける
+		await this.router
+			.deliver({
+				thread_key: threadKey,
+				text: `:warning: セッションが異常終了しました: ${error ?? "unknown error"}`,
+			})
+			.catch((err) => {
+				this.logger.warn({ threadKey, err }, "failure notice delivery failed");
+			});
+
+		await this.store.leases.release(record.lease).catch((err) => {
+			this.logger.warn({ threadKey, err }, "lease release failed");
+		});
+		await proc.stop();
+		this.logger.warn(
+			{ threadKey, durationMs: Date.now() - record.startedAt },
+			"session failed",
 		);
 	}
 
