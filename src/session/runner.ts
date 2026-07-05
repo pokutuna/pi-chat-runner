@@ -34,7 +34,7 @@ import { inboxItemId } from "../store/inbox-item.js";
 import type { InboxItem, Lease, StateStore } from "../store/interfaces.js";
 import type { WorkdirStorage } from "../store/workdir-storage.js";
 import { extractReply, isAgentEnd, isToolExecutionEnd } from "./rpc.js";
-import { PiProcess } from "./runtime.js";
+import { buildPiPermissionOptions, PiProcess } from "./runtime.js";
 
 /** app 共通プロンプト。ChannelDoc.systemPrompt はこれへの追記分 (architecture.md §2) */
 const APP_SYSTEM_PROMPT = [
@@ -43,6 +43,21 @@ const APP_SYSTEM_PROMPT = [
 	"plain assistant text is never delivered.",
 	"If no response is needed, simply do not call reply.",
 ].join(" ");
+
+/** Node Permission Model 有効化の静的パラメタ (session-runtime.md §6)。
+ * workdir / home はセッションごとに決まるため kick 時に buildPiPermissionOptions
+ * へ都度渡す — ここに載るのはイメージ内で固定のパスだけ */
+export interface PiPermissionConfig {
+	/** pi 本体のエントリポイント JS の絶対パス (npm -g 実体。docker で
+	 * `readlink -f $(which pi)` して確定させる) */
+	entrypoint: string;
+	/** pi 本体・依存が入る npm global の node_modules ルート (`npm root -g`) */
+	nodeModulesDir: string;
+	/** `/app` 相当 (extension・skill 焼き込み先) */
+	appDir: string;
+	/** 追加で write を許可したいパス (例 "/tmp/*")。既定なし */
+	extraWrite?: string[];
+}
 
 export interface SessionRunnerOptions {
 	configSource: ConfigSource;
@@ -72,6 +87,10 @@ export interface SessionRunnerOptions {
 	 * ホームが無いと pi が ~/.pi 等を作れないため、Runner の HOME (/root) とは
 	 * 別に明示指定する (session-runtime.md §6) */
 	agentHome?: string;
+	/** Node Permission Model 経由での起動を有効にする設定 (opt-in。未指定なら
+	 * 現状動作 = pi をそのまま spawn する。pi-tools-and-sandbox.md 「リーズナブルな
+	 * sandbox レイヤ案」、Cloud Run 実イメージでのみ有効化する想定) */
+	piPermission?: PiPermissionConfig;
 	/** lease の TTL。既定 60_000ms。renew は ttl/3 間隔 */
 	leaseTtlMs?: number;
 	/** agent_end 後に追いメッセージを待つ時間。既定 3_000ms */
@@ -214,6 +233,7 @@ export class SessionRunner {
 	private readonly agentUid: number | undefined;
 	private readonly agentGid: number | undefined;
 	private readonly agentHome: string;
+	private readonly piPermission: PiPermissionConfig | undefined;
 	private readonly leaseTtlMs: number;
 	private readonly lingerMs: number;
 	private readonly owner: string;
@@ -234,6 +254,7 @@ export class SessionRunner {
 		this.agentUid = options.agentUid;
 		this.agentGid = options.agentGid;
 		this.agentHome = options.agentHome ?? "/home/agent";
+		this.piPermission = options.piPermission;
 		this.leaseTtlMs = options.leaseTtlMs ?? 60_000;
 		this.lingerMs = options.lingerMs ?? 3_000;
 		this.owner = options.owner ?? `${hostname()}:${process.pid}`;
@@ -403,6 +424,28 @@ export class SessionRunner {
 			this.agentUid !== undefined && this.agentGid !== undefined
 				? { ...this.extraEnv, HOME: this.agentHome }
 				: this.extraEnv;
+		// Node Permission Model (session-runtime.md §6, pi-tools-and-sandbox.md
+		// 「リーズナブルな sandbox レイヤ案」) が opt-in で有効なら、pi 本体の
+		// JS 実装ツール (read/write/edit/grep) の fs アクセスをこのセッションの
+		// workdir/home に閉じ込める。home は uid 分離時の agentHome と揃える
+		// (extraEnv の HOME 上書きと同じ理由)
+		const home =
+			this.agentUid !== undefined && this.agentGid !== undefined
+				? this.agentHome
+				: (this.extraEnv?.HOME ?? this.agentHome);
+		const permission =
+			this.piPermission !== undefined
+				? buildPiPermissionOptions({
+						entrypoint: this.piPermission.entrypoint,
+						nodeModulesDir: this.piPermission.nodeModulesDir,
+						appDir: this.piPermission.appDir,
+						workdir,
+						home,
+						...(this.piPermission.extraWrite !== undefined
+							? { extraWrite: this.piPermission.extraWrite }
+							: {}),
+					})
+				: undefined;
 		const proc = new PiProcess({
 			sessionPath,
 			extensionPath: this.extensionPath,
@@ -414,6 +457,7 @@ export class SessionRunner {
 			...(extraEnv !== undefined ? { extraEnv } : {}),
 			...(this.agentUid !== undefined ? { uid: this.agentUid } : {}),
 			...(this.agentGid !== undefined ? { gid: this.agentGid } : {}),
+			...(permission !== undefined ? { permission } : {}),
 			// pi は正常時にも stderr へ出すことがあるため warn ではなく debug
 			logger: (line) => this.logger.debug({ threadKey, line }, "pi stderr"),
 		});

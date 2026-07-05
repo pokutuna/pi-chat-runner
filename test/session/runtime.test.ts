@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
 	buildPiArgs,
 	buildPiEnv,
+	buildPiPermissionOptions,
+	buildSpawnCommand,
 	PiProcess,
 } from "../../src/session/runtime.js";
 
@@ -156,5 +158,77 @@ describe("PiProcess spawn options (UID 分離, session-runtime.md §6)", () => {
 		expect(options?.uid).toBe(uid);
 		expect(options?.gid).toBe(gid);
 		proc.kill();
+	});
+});
+
+describe("buildSpawnCommand (Node Permission Model, session-runtime.md §6)", () => {
+	it("spawns piBinary directly when permission is unset (現状動作を維持)", () => {
+		expect(buildSpawnCommand(["--mode", "rpc"], { piBinary: "pi" })).toEqual({
+			command: "pi",
+			args: ["--mode", "rpc"],
+		});
+	});
+
+	it('falls back to env PI_BIN then "pi" when piBinary is unset', () => {
+		expect(buildSpawnCommand(["--mode", "rpc"], {})).toEqual({
+			command: process.env.PI_BIN ?? "pi",
+			args: ["--mode", "rpc"],
+		});
+	});
+
+	it("wraps with node --permission when permission is specified", () => {
+		const result = buildSpawnCommand(["--mode", "rpc"], {
+			piBinary: "pi",
+			permission: {
+				entrypoint: "/usr/local/lib/node_modules/pi/dist/cli.js",
+				allowFsRead: ["/app/*", "/tmp/workdir/*"],
+				allowFsWrite: ["/tmp/workdir/*"],
+			},
+		});
+		expect(result.command).toBe(process.execPath);
+		expect(result.args).toEqual([
+			"--permission",
+			"--allow-fs-read=/app/*",
+			"--allow-fs-read=/tmp/workdir/*",
+			"--allow-fs-write=/tmp/workdir/*",
+			"--allow-child-process",
+			"/usr/local/lib/node_modules/pi/dist/cli.js",
+			"--mode",
+			"rpc",
+		]);
+	});
+});
+
+describe("buildPiPermissionOptions (session-runtime.md §6)", () => {
+	it("builds allow-fs-read/write lists scoped to workdir/home/node_modules/app", () => {
+		const options = buildPiPermissionOptions({
+			entrypoint: "/usr/local/lib/node_modules/pi/dist/cli.js",
+			nodeModulesDir: "/usr/local/lib/node_modules",
+			appDir: "/app",
+			workdir: "/tmp/workdir",
+			home: "/home/agent",
+		});
+		expect(options.entrypoint).toBe(
+			"/usr/local/lib/node_modules/pi/dist/cli.js",
+		);
+		expect(options.allowFsRead).toContain("/usr/local/lib/node_modules/*");
+		expect(options.allowFsRead).toContain("/app/*");
+		expect(options.allowFsRead).toContain("/tmp/workdir/*");
+		expect(options.allowFsRead).toContain("/home/agent/*");
+		// プロジェクト trust 判定の祖先チェック用パスも含む
+		expect(options.allowFsRead).toContain("/AGENTS.md");
+		expect(options.allowFsWrite).toEqual(["/tmp/workdir/*", "/home/agent/*"]);
+	});
+
+	it("appends extraWrite paths when specified", () => {
+		const options = buildPiPermissionOptions({
+			entrypoint: "/e.js",
+			nodeModulesDir: "/nm",
+			appDir: "/app",
+			workdir: "/wd",
+			home: "/home/agent",
+			extraWrite: ["/tmp/*"],
+		});
+		expect(options.allowFsWrite).toEqual(["/wd/*", "/home/agent/*", "/tmp/*"]);
 	});
 });

@@ -59,6 +59,12 @@ spec:
             # ディレクトリを作る (session-runtime.md §3)
             - name: WORKDIR_ARCHIVE_DIR
               value: /data
+            # Node Permission Model 経由での pi 起動を有効化 (session-runtime.md §6、
+            # pi-tools-and-sandbox.md 「リーズナブルな sandbox レイヤ案」)。
+            # base image の npm -g レイアウトが既定値のままなら PI_ENTRYPOINT 等の
+            # 上書きは不要
+            - name: PI_PERMISSION_MODE
+              value: "1"
             # UID 分離 (session-runtime.md §6)。base image の agent ユーザー
             # (uid/gid 1001) で pi を実行し、Runner の environ / /data を読めなくする
             - name: PI_AGENT_UID

@@ -14,13 +14,36 @@ import {
 	type RpcResponse,
 } from "./rpc.js";
 
+/**
+ * Node Permission Model 経由での起動設定 (pi-tools-and-sandbox.md
+ * 「リーズナブルな sandbox レイヤ案」、session-runtime.md §6)。指定時のみ有効になる
+ * opt-in — 未指定なら `piBinary` (既定 "pi") をそのまま spawn する現状動作を維持する。
+ * bash の子プロセスには効かない (uid 分離が担う層) が、pi 本体の JS 実装ツール
+ * (read/write/edit/grep) の fs アクセスを制限する多層防御の一層。
+ */
+export interface PiPermissionOptions {
+	/** pi 本体のエントリポイント JS (例
+	 * /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js)。
+	 * `node --permission ... <entrypoint> <pi の引数...>` の形で起動する */
+	entrypoint: string;
+	/** `--allow-fs-read` に渡すパス群 (グロブ可)。フラグはパスごとに繰り返し指定する
+	 * (Node 26 で `--allow-fs-write` のカンマ区切りは deprecated warning になり
+	 * 機能しないため、read/write ともに 1 パス 1 フラグで組み立てる) */
+	allowFsRead: string[];
+	/** `--allow-fs-write` に渡すパス群 (グロブ可) */
+	allowFsWrite: string[];
+}
+
 export interface PiProcessOptions {
 	/** `--session` に渡す transcript JSONL の絶対パス */
 	sessionPath: string;
 	/** `--extension` に渡す reply extension の絶対パス */
 	extensionPath: string;
-	/** pi バイナリのパス。省略時は env PI_BIN、それも無ければ "pi" */
+	/** pi バイナリのパス。省略時は env PI_BIN、それも無ければ "pi"。
+	 * permission 指定時は無視される (entrypoint を直接 node で起動するため) */
 	piBinary?: string;
+	/** 指定時、`node --permission` 経由で pi を起動する (opt-in)。省略時は現状動作 */
+	permission?: PiPermissionOptions;
 	/** `--provider` (省略時は pi のローカル設定に従う) */
 	provider?: string;
 	/** `--model` (省略時は pi のローカル設定に従う) */
@@ -75,6 +98,107 @@ export function buildPiArgs(
 		args.push("--append-system-prompt", options.appendSystemPrompt);
 	if (options.skillPath) args.push("--skill", options.skillPath);
 	return args;
+}
+
+/**
+ * 実際に spawn する command/args の組み立て (純粋関数、テスト対象)。
+ * permission 未指定なら `piBinary` (pi バイナリ) をそのまま呼ぶ現状動作。
+ * 指定時は `node --permission --allow-fs-read=... --allow-fs-write=...
+ * --allow-child-process <entrypoint> <pi の引数...>` に切り替える
+ * (pi-tools-and-sandbox.md 「リーズナブルな sandbox レイヤ案」)。
+ * --allow-child-process は常に付ける — bash tool 自体は uid 分離が守る層なので、
+ * ここで止めても意味がなく (JS 実装ツールの fs アクセス制限が本レイヤの主目的)、
+ * 付けなければ bash tool の spawn 自体が Permission Model に拒否されて動かなくなる。
+ * allowFsRead/allowFsWrite はパスごとに 1 フラグに展開する (Node 26 で
+ * カンマ区切りは deprecated warning になり機能しないため)。
+ */
+export function buildSpawnCommand(
+	piArgs: string[],
+	options: Pick<PiProcessOptions, "piBinary" | "permission">,
+): { command: string; args: string[] } {
+	const permission = options.permission;
+	if (permission === undefined) {
+		return {
+			command: options.piBinary ?? process.env.PI_BIN ?? "pi",
+			args: piArgs,
+		};
+	}
+	const flags: string[] = ["--permission"];
+	for (const path of permission.allowFsRead)
+		flags.push(`--allow-fs-read=${path}`);
+	for (const path of permission.allowFsWrite)
+		flags.push(`--allow-fs-write=${path}`);
+	flags.push("--allow-child-process");
+	return {
+		command: process.execPath,
+		args: [...flags, permission.entrypoint, ...piArgs],
+	};
+}
+
+/**
+ * pi 起動時に cwd から `/` まで祖先ディレクトリを遡って existsSync するファイル名
+ * (プロジェクト trust 判定・context ファイル探索。pi dist/core/trust-manager.js の
+ * TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES と dist/core/resource-loader.js の
+ * loadContextFileFromDir、および `.git` / `.agents/skills` の存在チェックを
+ * docker で実測して特定した一覧)。workdir 配下は `--allow-fs-read` の glob
+ * (`<dir>/*`) で祖先チェックも自動的に通るが、`/` 直下は glob を使わず個別に
+ * 許可しないと Permission Model が existsSync 自体を拒否してしまう
+ * (`--allow-fs-read=/` や `/*` は他ユーザーの読めるファイルまで丸ごと開けてしまい
+ * 広すぎるため使わない。docker で確認済み)。
+ */
+const PI_ROOT_TRUST_PROBE_PATHS = [
+	"/AGENTS.md",
+	"/AGENTS.MD",
+	"/CLAUDE.md",
+	"/CLAUDE.MD",
+	"/.git",
+	"/.pi/settings.json",
+	"/.pi/extensions",
+	"/.pi/skills",
+	"/.pi/prompts",
+	"/.pi/themes",
+	"/.pi/SYSTEM.md",
+	"/.pi/APPEND_SYSTEM.md",
+	"/.agents/skills",
+];
+
+/**
+ * Node Permission Model 用の allow パス一覧の組み立て (純粋関数、テスト対象)。
+ * pi 本体 (npm global の node_modules) / `/app` (extension・skill 焼き込み) /
+ * workdir / agent HOME への read を許可し、write は workdir と agent HOME
+ * (+ 任意で /tmp) に限る。実際の allow 集合は docker 起動での実測 (このモジュールの
+ * コメント、pi-tools-and-sandbox.md) に基づく最小構成。
+ */
+export function buildPiPermissionOptions(options: {
+	/** pi 本体のエントリポイント JS の絶対パス */
+	entrypoint: string;
+	/** pi 本体の node_modules ルート (既定は entrypoint の npm global レイアウトから
+	 * 推測できないため必須。例 /usr/local/lib/node_modules) */
+	nodeModulesDir: string;
+	/** `/app` 相当 (extension・skill 焼き込み先) の絶対パス */
+	appDir: string;
+	/** セッションの workdir (cwd)。read/write 両方を許可する */
+	workdir: string;
+	/** pi の HOME (uid 分離時は agent home)。~/.pi 等の読み書きに要る */
+	home: string;
+	/** 追加で write を許可したいパス (例 "/tmp/*"）。既定なし */
+	extraWrite?: string[];
+}): PiPermissionOptions {
+	return {
+		entrypoint: options.entrypoint,
+		allowFsRead: [
+			`${options.nodeModulesDir}/*`,
+			`${options.appDir}/*`,
+			`${options.workdir}/*`,
+			`${options.home}/*`,
+			...PI_ROOT_TRUST_PROBE_PATHS,
+		],
+		allowFsWrite: [
+			`${options.workdir}/*`,
+			`${options.home}/*`,
+			...(options.extraWrite ?? []),
+		],
+	};
 }
 
 /**
@@ -133,8 +257,11 @@ export class PiProcess extends EventEmitter<PiProcessEvents> {
 
 	start(): void {
 		if (this.child) throw new Error("PiProcess already started");
-		const binary = this.options.piBinary ?? process.env.PI_BIN ?? "pi";
-		const child = spawn(binary, buildPiArgs(this.options), {
+		const { command, args } = buildSpawnCommand(
+			buildPiArgs(this.options),
+			this.options,
+		);
+		const child = spawn(command, args, {
 			cwd: this.options.cwd,
 			env: buildPiEnv(process.env, this.options.extraEnv),
 			stdio: ["pipe", "pipe", "pipe"],

@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import type { InboundMessage } from "../../src/ingress/chat-event.js";
 import { Reactions } from "../../src/reply/reactions.js";
 import { type ChatPoster, ReplyRouter } from "../../src/reply/router.js";
+import type { PiPermissionConfig } from "../../src/session/runner.js";
 import {
 	renderEvent,
 	SessionRunner,
@@ -125,6 +126,7 @@ interface HarnessOptions {
 	agentUid?: number;
 	agentGid?: number;
 	agentHome?: string;
+	piPermission?: PiPermissionConfig;
 }
 
 async function harness(
@@ -164,6 +166,9 @@ async function harness(
 		...(options.agentGid !== undefined ? { agentGid: options.agentGid } : {}),
 		...(options.agentHome !== undefined
 			? { agentHome: options.agentHome }
+			: {}),
+		...(options.piPermission !== undefined
+			? { piPermission: options.piPermission }
 			: {}),
 	});
 	return {
@@ -454,6 +459,33 @@ describe("SessionRunner (fake-pi integration)", () => {
 		expect(stats.uid).toBe(uid);
 		expect(stats.gid).toBe(gid);
 		expect(stats.mode & 0o777).toBe(0o700);
+	});
+
+	it("Node Permission Model が有効なとき node --permission 経由で pi (fake-pi) を起動する", async () => {
+		// permission 指定時は entrypoint を直接 node で起動するため、piBinary は
+		// 使われない (buildSpawnCommand の仕様)。fake-pi.mjs 自体を entrypoint に
+		// 見立て、workdir/node_modules/appDir への read/write を許可した状態でも
+		// 通常のセッションと同じく reply → agent_end まで動くことを確認する
+		const h = await harness(
+			{},
+			{
+				piPermission: {
+					entrypoint: FAKE_PI,
+					nodeModulesDir: join(process.cwd(), "node_modules"),
+					appDir: process.cwd(),
+				},
+			},
+		);
+		const trigger = message({
+			mentionsBot: true,
+			text: "permission model isolated",
+		});
+
+		await h.runner.handle(trigger);
+
+		await waitFor(() => h.poster.calls.length === 1, "reply posted");
+		expect(h.poster.calls[0]?.text).toBe(`echo: ${renderEvent(trigger)}`);
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
 	});
 });
 

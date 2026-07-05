@@ -19,6 +19,7 @@ import { HttpEventSource } from "./ingress/http-event-source.js";
 import { rootLogger } from "./logger.js";
 import { Reactions } from "./reply/reactions.js";
 import { ReplyRouter } from "./reply/router.js";
+import type { PiPermissionConfig } from "./session/runner.js";
 import { SessionRunner } from "./session/runner.js";
 import { FileConfigSource } from "./store/config-source.js";
 import { FirestoreStateStore } from "./store/firestore.js";
@@ -89,6 +90,25 @@ function parseAgentIds(): { uid?: number; gid?: number } {
 	return { uid, gid };
 }
 
+/** env PI_PERMISSION_MODE=1 (session-runtime.md §6, pi-tools-and-sandbox.md
+ * 「リーズナブルな sandbox レイヤ案」) で Node Permission Model 起動を opt-in する。
+ * 未設定なら無効 (現状動作)。Cloud Run 実イメージでのみ有効化する想定 — ローカル開発・
+ * テストの fake pi (test/fixtures/fake-pi.mjs) はこの機構を使わなくても動く。
+ * entrypoint/nodeModulesDir は npm -g インストール先の実体パス (docker で
+ * `readlink -f $(which pi)` / `npm root -g` を実測して決めた既定値。イメージの
+ * レイアウトを変えた場合は env で上書きする) */
+function parsePiPermissionConfig(): PiPermissionConfig | undefined {
+	if (process.env.PI_PERMISSION_MODE !== "1") return undefined;
+	return {
+		entrypoint:
+			process.env.PI_ENTRYPOINT ??
+			"/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js",
+		nodeModulesDir:
+			process.env.PI_NODE_MODULES_DIR ?? "/usr/local/lib/node_modules",
+		appDir: process.env.PI_APP_DIR ?? "/app",
+	};
+}
+
 function requireEnv(name: string): string {
 	const value = process.env[name];
 	if (value === undefined || value === "") {
@@ -119,6 +139,9 @@ function requireEnv(name: string): string {
 		console.error("  PI_PROVIDER         pi の --provider");
 		console.error(
 			"  PI_AGENT_UID/GID    pi を落とす実行 uid/gid (session-runtime.md §6 の UID 分離。両方セットで有効)",
+		);
+		console.error(
+			"  PI_PERMISSION_MODE  1 で Node Permission Model 起動を有効化 (Cloud Run 実イメージ向け)",
 		);
 		console.error(
 			"  PORT                events モードの listen ポート (既定 8080)",
@@ -169,6 +192,7 @@ async function main() {
 	const store = buildStateStore();
 	const archiveDir = process.env.WORKDIR_ARCHIVE_DIR;
 	const agentIds = parseAgentIds();
+	const piPermission = parsePiPermissionConfig();
 
 	const web = new WebClient(botToken);
 	const eventSource = buildEventSource(slackMode, botUserId);
@@ -205,6 +229,8 @@ async function main() {
 		// PI_AGENT_UID/GID 未設定なら UID 分離なし (現状動作)
 		...(agentIds.uid !== undefined ? { agentUid: agentIds.uid } : {}),
 		...(agentIds.gid !== undefined ? { agentGid: agentIds.gid } : {}),
+		// PI_PERMISSION_MODE=1 未設定なら Node Permission Model なし (現状動作)
+		...(piPermission !== undefined ? { piPermission } : {}),
 	});
 	logger.info(
 		{
