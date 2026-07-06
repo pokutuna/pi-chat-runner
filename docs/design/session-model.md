@@ -97,6 +97,35 @@ interface EntryDoc extends /* SessionEntry */ {
   (b) チャンネルレーン + idle リセット (hermes: idle 24h / 毎日 4 時) に設定で切り替える。
 - 時間枠はキーに入れない。**時間はリセットポリシーとして updated_at に対して評価する** (hermes)。
 
+### セッション単位と返信先の分離 (session.mode / reply.mode)
+
+上の (d)/(b) の切り替えを設定に落とすとき、**「セッション (文脈) の単位」と「返信の宛先」を
+独立した 2 軸にする**。[chat-model.md](chat-model.md) §5.3 の「1 セッション内に複数の
+thread_key が併存し、ホストが宛先解決する」というモデルがこの分離の土台で、
+「文脈はチャンネルで 1 本、返事は話題ごとにスレッド」が成立する。
+
+| session \ reply | thread (スレッドに返す) | flat (チャンネル直下に返す) |
+|---|---|---|
+| **thread** (スレッド = 1 会話) | 既定。通常チャンネル向け | 非推奨 (文脈が切れるのに返事だけ散らばる) |
+| **channel** (チャンネル = 1 会話) | 文脈共有 + 話題ごとにスレッド返信 | DM・スレッド文化がない場 (連投で会話) |
+
+- **sessionKey はポリシー導出**: thread モード = `channelId:threadTs ?? メッセージts` (現行)、
+  channel モード = `channelId`。workdir・保存棚・lease・inbox はすべて sessionKey 由来。
+- **reply 用 thread_key はメッセージごとに発行**し、宛先 (トリガーメッセージの位置) を
+  ホストの宛先表に登録する。sessionKey と thread_key は別物 — sessionKey が同じでも
+  メッセージごとに返信先スレッドは異なりうる。
+- 境界規則 (mode によらず固定):
+  1. **スレッド内で話しかけられたら、reply.mode に関わらずそのスレッドに返す**。
+     reply.mode が効くのはチャンネル直下トリガーの返信先だけ。
+  2. session=thread + reply=flat は許可するが warn (意味が薄い)。
+- **channel モードは idle リセットとセット**: 前回活動から N 分超えたら transcript を
+  世代交代して新規開始 (時間はキーに入れない、の帰結)。transcript の際限ない肥大も防ぐ。
+- DM は予約名 `dm` の既定を `session: channel` + `reply: flat` とし、
+  追加設定なしで「1 つの続いた会話」になる。implicit prompt cache の効率面でも、
+  メッセージ単位セッションより transcript prefix の再利用が効く。
+- 設定の置き場所は ChannelDoc ([config.md](config.md) §2)。ライブラリ利用者向けには
+  sessionKey 導出関数の注入口を設けてもよいが、まず enum の 2 軸で足りるかを見る。
+
 ### 会話の流れの把握
 
 起動時に渡す文脈は 3 層:

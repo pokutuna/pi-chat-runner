@@ -60,8 +60,20 @@ interface ChannelDoc {
   model?: string;          // 省略時は app 既定 (gemini-3-pro)
   tools?: string[];        // pi --tools allowlist
   excludeTools?: string[]; // pi --exclude-tools denylist
+  session?: {              // セッション (文脈) の単位 ([session-model.md](session-model.md) §3)
+    mode?: "thread" | "channel";  // 既定 thread。dm の既定は channel
+    idleResetMinutes?: number;    // channel モードのみ。無活動で transcript を世代交代
+  };
+  reply?: {                // チャンネル直下トリガーへの返信先 ([session-model.md](session-model.md) §3)
+    mode?: "thread" | "flat";     // 既定 thread。dm の既定は flat
+  };
 }
 ```
+
+`session.mode` は sessionKey の導出ポリシー (thread = `channelId:threadTs ?? ts`、
+channel = `channelId`)。`reply.mode` はチャンネル直下トリガーへの返信先で、スレッド内
+トリガーは mode に関わらずそのスレッドに返す。2 軸の組み合わせと境界規則は
+[session-model.md](session-model.md) §3「セッション単位と返信先の分離」を正とする。
 
 `tools` / `excludeTools` は pi の `--tools` / `--exclude-tools` に渡る。`--tools` は
 built-in だけでなく extension のツールにも適用されるため、reply extension も対象になる。
