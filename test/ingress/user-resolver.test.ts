@@ -129,7 +129,7 @@ describe("enrichEvent", () => {
 		});
 		const result = (await enrichEvent(event, resolver)) as InboundMessage;
 		expect(result.text).toBe(
-			"@アリス と @ボブ によろしくと @アリス にも伝えて",
+			"@アリス (U111) と @ボブ (U222) によろしくと @アリス (U111) にも伝えて",
 		);
 	});
 

@@ -878,6 +878,24 @@ describe("threadKeyOf", () => {
 	});
 });
 
+describe("renderEvent", () => {
+	it("shows displayName with the user id when resolved", () => {
+		const event = message({
+			sender: { id: "U123", isBot: false, displayName: "pokutuna" },
+			text: "hello",
+		});
+		expect(renderEvent(event)).toBe("<pokutuna (U123)> のメッセージ:\nhello");
+	});
+
+	it("falls back to the bare user id when unresolved", () => {
+		const event = message({
+			sender: { id: "U123", isBot: false },
+			text: "hello",
+		});
+		expect(renderEvent(event)).toBe("<U123> のメッセージ:\nhello");
+	});
+});
+
 describe("inboxItemId", () => {
 	it("prefers Slack event_id from metadata", () => {
 		expect(inboxItemId(message({ metadata: { eventId: "Ev123" } }))).toBe(

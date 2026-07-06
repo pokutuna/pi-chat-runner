@@ -59,6 +59,8 @@ const APP_SYSTEM_PROMPT = [
 	"Your response reaches the user ONLY through the reply(thread_key, text) tool;",
 	"plain assistant text is never delivered.",
 	"If no response is needed, simply do not call reply.",
+	"Users appear as `name (USER_ID)`; to @-mention one in a reply,",
+	"write `<@USER_ID>` (e.g. `<@U12345>`), not the plain name.",
 ].join(" ");
 
 /** Node Permission Model 有効化の静的パラメタ (session-runtime.md §6)。
@@ -163,8 +165,14 @@ export function threadKeyOf(event: InboundMessage): string {
 }
 
 /** イベント 1 件のプロンプト描画 (session-runtime.md §4 の renderEvent) */
+// 表示名だけにすると pi が mention (`<@U123>`) を組み立てられなくなるため、
+// UserID は常に併記する
 export function renderEvent(event: InboundMessage): string {
-	return `<${event.sender.displayName ?? event.sender.id}> のメッセージ:\n${event.text}`;
+	const sender =
+		event.sender.displayName !== undefined
+			? `${event.sender.displayName} (${event.sender.id})`
+			: event.sender.id;
+	return `<${sender}> のメッセージ:\n${event.text}`;
 }
 
 function renderItems(items: InboxItem[]): string {

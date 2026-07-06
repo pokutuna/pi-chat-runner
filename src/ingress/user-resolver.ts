@@ -83,11 +83,13 @@ export async function enrichEvent(
 			const name = await resolver.resolve(userId);
 			if (name !== null) resolvedNames.set(userId, name);
 		}
+		// 名前だけに置き換えると pi が mention (`<@U123>`) を組み立てられなくなる
+		// ため、UserID を併記する
 		text = event.text.replace(
 			STRIPPED_MENTION_PATTERN,
 			(full, userId: string) => {
 				const name = resolvedNames.get(userId);
-				return name !== undefined ? `@${name}` : full;
+				return name !== undefined ? `@${name} (${userId})` : full;
 			},
 		);
 	}
