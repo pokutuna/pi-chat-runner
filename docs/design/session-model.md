@@ -276,8 +276,19 @@ interface TriggerPolicy {
   gates: Gate[];            // 評価する Gate 群 (順序は短絡評価の順)
   combinator: GateCombinator; // any=どれか true で起動 / all=全て true で起動
   cooldownSec: number;      // 同一レーンの連続起動抑止 (CooldownGate に落としてもよい)
-  debounceSec: number;      // 連投をまとめて 1 回で判定
+  debounceSec: number;      // 連投バーストが静まるまで kick を遅らせて 1 ターンに束ねる
 }
+```
+
+`debounceSec` は kick 遅延方式: gate 通過 → inbox enqueue までは即時に行い、kick だけを
+レーンごとのタイマーで遅らせる。後続メッセージが来るたび「最後のメッセージ + debounceSec」
+にスライドし、hard cap (最初の滞留メッセージ + debounceSec×3) を超えては延ばさない。
+mention は明示呼び出しなので debounce をバイパスして即 kick する (保留分は初回 prompt の
+drain がまとめて配達)。item は enqueue 済みなのでタイマー消失 (プロセス死) でも失われない。
+なお「判定ごと束ねる」(結合テキストを classifier に 1 回で渡す) 形は classifier Gate
+導入時に検討する。
+
+```typescript
 
 // 既定プリセット (現行の 3 段ゲート):
 //   { gates: [MentionGate, ClassifierGate], combinator: "any" }

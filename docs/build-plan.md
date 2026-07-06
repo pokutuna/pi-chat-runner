@@ -117,6 +117,9 @@ CLI (`apply` / `status` / `init`)、base image の公開。
   「ターン境界ポーリング」ではない。[design/session-runtime.md](design/session-runtime.md) §4)
 - [x] `extensions/permission-gate.ts` (bash tool の denylist: パッケージ管理・破壊的操作・
   chmod/chown・PID 1 kill をブロックする事故防止層。[design/session-runtime.md](design/session-runtime.md) §6)
+- [x] `trigger.debounceSec` (kick 遅延方式: 連投バーストを 1 ターンに束ねる。スライディング +
+  hard cap ×3、mention は即 kick。[design/session-model.md](design/session-model.md) §5。
+  `trigger.cooldownSec` は未実装で、設定されると warn して無視される)
 
 ## 未着手 (将来。design にあるが計画に現れていない項目)
 
