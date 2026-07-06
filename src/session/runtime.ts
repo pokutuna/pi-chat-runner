@@ -57,9 +57,9 @@ export interface PiProcessOptions {
 	skillPath?: string;
 	/** 子プロセスの cwd (workdir) */
 	cwd?: string;
-	/** allowlist (PATH, HOME) に追加で渡す env。uid 分離時は HOME を
-	 * agent のホーム (例 /home/agent) に上書きするためここに HOME を含めて渡す
-	 * (Runner の HOME である /root を継承すると agent uid で書けない) */
+	/** allowlist (PATH, HOME) に追加で渡す env。HOME は常に agent の HOME
+	 * (例 /home/agent) に上書きするためここに含めて渡す (Runner の HOME を
+	 * そのまま継承しない) */
 	extraEnv?: Record<string, string>;
 	/** 子プロセスの実行 uid (session-runtime.md §6: UID 分離)。省略時は継承 (現状動作) */
 	uid?: number;
@@ -129,6 +129,10 @@ export function buildSpawnCommand(
 	for (const path of permission.allowFsWrite)
 		flags.push(`--allow-fs-write=${path}`);
 	flags.push("--allow-child-process");
+	// Node 26 の Permission Model はネットワークもデフォルト拒否
+	// (fetch が getaddrinfo ERR_ACCESS_DENIED で失敗し LLM 呼び出しが不可能になる)。
+	// このレイヤの目的は fs アクセス制限なので net は全面許可する
+	flags.push("--allow-net");
 	return {
 		command: process.execPath,
 		args: [...flags, permission.entrypoint, ...piArgs],
@@ -161,6 +165,9 @@ const PI_TRUST_PROBE_FILENAMES = [
 	".pi/themes",
 	".pi/SYSTEM.md",
 	".pi/APPEND_SYSTEM.md",
+	// dist/migrations.js の migrateCommandsToPrompts が cwd の .pi/commands を
+	// existsSync する (prompts への rename 判定)
+	".pi/commands",
 	".agents/skills",
 ];
 
@@ -194,10 +201,15 @@ export function buildPiPermissionOptions(options: {
 	appDir: string;
 	/** セッションの workdir (cwd)。read/write 両方を許可する */
 	workdir: string;
-	/** pi の HOME (uid 分離時は agent home)。~/.pi 等の読み書きに要る */
+	/** pi の HOME (常に agentHome)。~/.pi 等の読み書きに要る */
 	home: string;
 	/** 追加で write を許可したいパス (例 "/tmp/*"）。既定なし */
 	extraWrite?: string[];
+	/** 追加で read を許可したいパス (例 GOOGLE_APPLICATION_CREDENTIALS のファイル
+	 * パス)。HOME を agentHome に固定するとローカルのユーザー ADC
+	 * ($HOME/.config/gcloud) は HOME 経由で見えなくなるため、明示指定されたファイルだけ
+	 * 個別に read を許可する用途。既定なし */
+	extraRead?: string[];
 }): PiPermissionOptions {
 	return {
 		entrypoint: options.entrypoint,
@@ -211,6 +223,13 @@ export function buildPiPermissionOptions(options: {
 			...ancestorDirs(options.workdir).flatMap((dir) =>
 				PI_TRUST_PROBE_FILENAMES.map((name) => join(dir, name)),
 			),
+			// pi の bash tool はシェル解決で existsSync("/bin/bash") を呼ぶ
+			// (dist/utils/shell.js の getShellConfig)。Permission Model 下では
+			// 未許可パスの existsSync は例外になるため、許可しないと bash tool が
+			// コマンド内容にかかわらず全て失敗する。/bin/sh はそのフォールバック
+			"/bin/bash",
+			"/bin/sh",
+			...(options.extraRead ?? []),
 		],
 		allowFsWrite: [
 			`${options.workdir}/*`,

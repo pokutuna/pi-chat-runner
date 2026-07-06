@@ -99,6 +99,10 @@ function parseAgentIds(): { uid?: number; gid?: number } {
  * レイアウトを変えた場合は env で上書きする) */
 function parsePiPermissionConfig(): PiPermissionConfig | undefined {
 	if (process.env.PI_PERMISSION_MODE !== "1") return undefined;
+	// HOME を agentHome に固定するとローカルのユーザー ADC ($HOME/.config/gcloud) は
+	// HOME 経由で見えなくなるため、GOOGLE_APPLICATION_CREDENTIALS で明示された
+	// ファイルだけ read を許可する
+	const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
 	return {
 		entrypoint:
 			process.env.PI_ENTRYPOINT ??
@@ -106,6 +110,7 @@ function parsePiPermissionConfig(): PiPermissionConfig | undefined {
 		nodeModulesDir:
 			process.env.PI_NODE_MODULES_DIR ?? "/usr/local/lib/node_modules",
 		appDir: process.env.PI_APP_DIR ?? "/app",
+		...(credentialsPath !== undefined ? { extraRead: [credentialsPath] } : {}),
 	};
 }
 
@@ -139,6 +144,9 @@ function requireEnv(name: string): string {
 		console.error("  PI_PROVIDER         pi の --provider");
 		console.error(
 			"  PI_AGENT_UID/GID    pi を落とす実行 uid/gid (session-runtime.md §6 の UID 分離。両方セットで有効)",
+		);
+		console.error(
+			"  PI_AGENT_HOME       pi 子プロセスへ常に HOME として渡すディレクトリ (既定 /home/agent)",
 		);
 		console.error(
 			"  PI_PERMISSION_MODE  1 で Node Permission Model 起動を有効化 (Cloud Run 実イメージ向け)",
@@ -193,6 +201,7 @@ async function main() {
 	const archiveDir = process.env.WORKDIR_ARCHIVE_DIR;
 	const agentIds = parseAgentIds();
 	const piPermission = parsePiPermissionConfig();
+	const agentHome = process.env.PI_AGENT_HOME;
 
 	const web = new WebClient(botToken);
 	const eventSource = buildEventSource(slackMode, botUserId);
@@ -234,6 +243,8 @@ async function main() {
 		// PI_AGENT_UID/GID 未設定なら UID 分離なし (現状動作)
 		...(agentIds.uid !== undefined ? { agentUid: agentIds.uid } : {}),
 		...(agentIds.gid !== undefined ? { agentGid: agentIds.gid } : {}),
+		// PI_AGENT_HOME 未設定なら SessionRunner の既定 (/home/agent) を使う
+		...(agentHome !== undefined ? { agentHome } : {}),
 		// PI_PERMISSION_MODE=1 未設定なら Node Permission Model なし (現状動作)
 		...(piPermission !== undefined ? { piPermission } : {}),
 	});

@@ -213,6 +213,7 @@ describe("buildSpawnCommand (Node Permission Model, session-runtime.md §6)", ()
 			"--allow-fs-read=/tmp/workdir/*",
 			"--allow-fs-write=/tmp/workdir/*",
 			"--allow-child-process",
+			"--allow-net",
 			"/usr/local/lib/node_modules/pi/dist/cli.js",
 			"--mode",
 			"rpc",
@@ -260,6 +261,9 @@ describe("buildPiPermissionOptions (session-runtime.md §6)", () => {
 		expect(options.allowFsRead).toContain("/AGENTS.md");
 		expect(options.allowFsRead).toContain("/tmp/.pi/settings.json");
 		expect(options.allowFsRead).toContain("/.agents/skills");
+		// bash tool のシェル解決 (existsSync("/bin/bash")) を通すための許可
+		expect(options.allowFsRead).toContain("/bin/bash");
+		expect(options.allowFsRead).toContain("/bin/sh");
 		expect(options.allowFsWrite).toEqual(["/tmp/workdir/*", "/home/agent/*"]);
 	});
 
@@ -273,5 +277,21 @@ describe("buildPiPermissionOptions (session-runtime.md §6)", () => {
 			extraWrite: ["/tmp/*"],
 		});
 		expect(options.allowFsWrite).toEqual(["/wd/*", "/home/agent/*", "/tmp/*"]);
+	});
+
+	it("appends extraRead paths when specified (e.g. GOOGLE_APPLICATION_CREDENTIALS)", () => {
+		const options = buildPiPermissionOptions({
+			entrypoint: "/e.js",
+			nodeModulesDir: "/nm",
+			appDir: "/app",
+			workdir: "/wd",
+			home: "/home/agent",
+			extraRead: [
+				"/Users/me/.config/gcloud/application_default_credentials.json",
+			],
+		});
+		expect(options.allowFsRead).toContain(
+			"/Users/me/.config/gcloud/application_default_credentials.json",
+		);
 	});
 });
