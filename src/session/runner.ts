@@ -17,6 +17,7 @@ import {
 	mkdir,
 	readdir,
 	realpath,
+	rename,
 	stat,
 } from "node:fs/promises";
 import { hostname } from "node:os";
@@ -263,6 +264,31 @@ async function transcriptExists(sessionPath: string): Promise<boolean> {
 		return true;
 	} catch {
 		return false;
+	}
+}
+
+/** 前回活動時刻から idleResetMinutes を超えたかどうかの判定 (session-model.md §3:
+ * 時間はキーに入れず、リセットポリシーとして updated_at に対して評価する)。
+ * 純関数として export しテストする */
+export function isIdleExpired(
+	lastUpdatedAt: Date,
+	idleResetMinutes: number,
+	now: number,
+): boolean {
+	return now - lastUpdatedAt.getTime() > idleResetMinutes * 60_000;
+}
+
+/** channel モードの idle リセット (session-model.md §3): workdir 直下の
+ * transcript.jsonl が存在すれば transcript-<epoch ms>.jsonl にリネームして世代交代する。
+ * pi は transcript が無ければ新規会話として開始する。workdir の他のファイルは残す */
+async function rotateTranscript(workdir: string, now: number): Promise<void> {
+	const from = join(workdir, "transcript.jsonl");
+	const to = join(workdir, `transcript-${now}.jsonl`);
+	try {
+		await rename(from, to);
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
+		throw err;
 	}
 }
 
@@ -536,12 +562,47 @@ export class SessionRunner {
 				"session.mode=thread with reply.mode=flat is discouraged (session-model.md §3)",
 			);
 		}
+		// idleResetMinutes は channel モード専用 (session-model.md §3)。thread モードで
+		// 設定されていても効果がないため warn して無視する
+		if (
+			policy.sessionMode === "thread" &&
+			doc?.session?.idleResetMinutes !== undefined
+		) {
+			this.logger.warn(
+				{ sessionKey, channelId },
+				"session.idleResetMinutes is only effective with session.mode=channel; ignored",
+			);
+		}
 
 		// 同 sessionKey は常に同じ workdir/transcript.jsonl を使う。再 trigger 時は
 		// 同じパスで再 spawn され、pi が JSONL を読んで文脈を継続する (再開の専用フローなし)
 		await mkdir(workdir, { recursive: true });
 		if (this.workdirStorage !== undefined) {
 			await this.workdirStorage.restore(sessionKey, workdir);
+		}
+		// channel モードの idle リセット (session-model.md §3): 前回活動から
+		// idleResetMinutes 超えていたら transcript を世代交代する。rotate は
+		// chown より前 (rotate されたファイルの所有権も chown で揃うため)
+		if (
+			policy.sessionMode === "channel" &&
+			doc?.session?.idleResetMinutes !== undefined
+		) {
+			const idleResetMinutes = doc.session.idleResetMinutes;
+			const previous = await this.store.sessions.get(sessionKey);
+			if (previous !== null) {
+				const now = Date.now();
+				if (isIdleExpired(previous.updatedAt, idleResetMinutes, now)) {
+					await rotateTranscript(workdir, now);
+					this.logger.info(
+						{
+							sessionKey,
+							idleResetMinutes,
+							idleMs: now - previous.updatedAt.getTime(),
+						},
+						"idle reset: transcript rotated",
+					);
+				}
+			}
 		}
 		// UID 分離 (session-runtime.md §6) が有効なら、workdir を agent 所有 0700 に
 		// する。mkdir は Runner (root) 実行なので root 所有で作られ、restore で

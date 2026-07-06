@@ -3,7 +3,15 @@
 // - Slack  → FakePoster / FakeReactionClient
 // - config → インメモリの ConfigSource
 // - store  → InMemoryStateStore (Step 4: lease / drain-ack / linger の検証もここで行う)
-import { mkdtemp, readFile, realpath, stat, writeFile } from "node:fs/promises";
+import {
+	mkdir,
+	mkdtemp,
+	readdir,
+	readFile,
+	realpath,
+	stat,
+	writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +22,7 @@ import { Reactions } from "../../src/reply/reactions.js";
 import { type ChatPoster, ReplyRouter } from "../../src/reply/router.js";
 import type { PiPermissionConfig } from "../../src/session/runner.js";
 import {
+	isIdleExpired,
 	renderEvent,
 	replyThreadKeyOf,
 	resolveSessionPolicy,
@@ -455,6 +464,44 @@ describe("SessionRunner (fake-pi integration)", () => {
 			JSON.parse(line),
 		);
 		expect(commands.map((c) => c.type)).toEqual(["prompt", "steer"]);
+	});
+
+	it("session.idleResetMinutes (channel モード): 前回活動から idle 超過していたら transcript を世代交代する", async () => {
+		const h = await harness({
+			C01: { session: { mode: "channel", idleResetMinutes: 1 } },
+		});
+		const sessionKey = "C01";
+		const workdir = join(h.workdirRoot, "C01", "channel");
+
+		// 事前に workdir と transcript.jsonl、および 10 分前の SessionDoc を用意する
+		// (前回セッションが idle 期間を超えて放置された状態を模す)
+		await mkdir(workdir, { recursive: true });
+		await writeFile(join(workdir, "transcript.jsonl"), "OLD TRANSCRIPT\n");
+		await h.store.sessions.put(sessionKey, {
+			channelId: "C01",
+			threadTs: "channel",
+			triggerTs: "1699999999.000000",
+			status: "finished",
+			updatedAt: new Date(Date.now() - 10 * 60_000),
+		});
+
+		const trigger = message({ mentionsBot: true, text: "idle reset please" });
+		await h.runner.handle(trigger);
+		await waitFor(() => h.poster.calls.length === 1, "reply posted");
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+		const entries = await readdir(workdir);
+		expect(entries).toContain("commands.jsonl");
+		expect(entries.some((name) => /^transcript-\d+\.jsonl$/.test(name))).toBe(
+			true,
+		);
+		expect(entries).not.toContain("transcript.jsonl");
+
+		expect(
+			h
+				.logLines()
+				.some((line) => line.msg === "idle reset: transcript rotated"),
+		).toBe(true);
 	});
 
 	it("stays silent but still adds the check reaction when reply is never called", async () => {
@@ -1038,6 +1085,26 @@ describe("renderEvent", () => {
 		expect(renderEvent(event, "C01:1700000000.000100")).toBe(
 			"<U123> のメッセージ (thread_key: C01:1700000000.000100):\nhello",
 		);
+	});
+});
+
+describe("isIdleExpired", () => {
+	it("ちょうど idleResetMinutes 分では超過していない (false)", () => {
+		const lastUpdatedAt = new Date("2026-07-05T00:00:00Z");
+		const now = lastUpdatedAt.getTime() + 5 * 60_000;
+		expect(isIdleExpired(lastUpdatedAt, 5, now)).toBe(false);
+	});
+
+	it("idleResetMinutes 分を 1ms でも超えたら超過している (true)", () => {
+		const lastUpdatedAt = new Date("2026-07-05T00:00:00Z");
+		const now = lastUpdatedAt.getTime() + 5 * 60_000 + 1;
+		expect(isIdleExpired(lastUpdatedAt, 5, now)).toBe(true);
+	});
+
+	it("idleResetMinutes 未満なら超過していない (false)", () => {
+		const lastUpdatedAt = new Date("2026-07-05T00:00:00Z");
+		const now = lastUpdatedAt.getTime() + 4 * 60_000;
+		expect(isIdleExpired(lastUpdatedAt, 5, now)).toBe(false);
 	});
 });
 
