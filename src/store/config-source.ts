@@ -150,6 +150,8 @@ async function resolveFileReferences(
 		...(doc.excludeTools !== undefined
 			? { excludeTools: doc.excludeTools }
 			: {}),
+		...(doc.session !== undefined ? { session: doc.session } : {}),
+		...(doc.reply !== undefined ? { reply: doc.reply } : {}),
 	};
 
 	// channel を含む YAML 形式から実行時 ChannelDoc への変換。ここで再度 strict 検証しておく

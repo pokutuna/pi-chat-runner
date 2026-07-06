@@ -61,6 +61,21 @@ export const ChannelDocSchema = z
 		tools: z.array(z.string()).optional(),
 		/** pi の --exclude-tools に渡す denylist */
 		excludeTools: z.array(z.string()).optional(),
+		/** セッション (文脈) の単位。session-model.md §3 */
+		session: z
+			.object({
+				mode: z.enum(["thread", "channel"]).optional(),
+				idleResetMinutes: z.number().positive().optional(),
+			})
+			.strict()
+			.optional(),
+		/** チャンネル直下トリガーへの返信先。同 §3 */
+		reply: z
+			.object({
+				mode: z.enum(["thread", "flat"]).optional(),
+			})
+			.strict()
+			.optional(),
 	})
 	.strict();
 

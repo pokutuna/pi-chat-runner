@@ -24,14 +24,18 @@ function collectingLogger(): { logger: pino.Logger; lines: () => unknown[] } {
 }
 
 class FakePoster implements ChatPoster {
-	calls: { channelId: string; threadTs: string; text: string }[] = [];
+	calls: { channelId: string; threadTs?: string; text: string }[] = [];
 
 	async postMessage(
 		channelId: string,
-		threadTs: string,
 		text: string,
+		threadTs?: string,
 	): Promise<void> {
-		this.calls.push({ channelId, threadTs, text });
+		this.calls.push({
+			channelId,
+			text,
+			...(threadTs !== undefined ? { threadTs } : {}),
+		});
 	}
 }
 
@@ -85,5 +89,15 @@ describe("ReplyRouter", () => {
 		await router.deliver({ thread_key: "k", text: "x" });
 
 		expect(poster.calls[0]?.threadTs).toBe("2");
+	});
+
+	it("posts flat (no thread_ts) when the destination omits threadTs", async () => {
+		const poster = new FakePoster();
+		const router = new ReplyRouter({ poster });
+		router.register("k", { channelId: "C01" });
+
+		await router.deliver({ thread_key: "k", text: "flat reply" });
+
+		expect(poster.calls).toEqual([{ channelId: "C01", text: "flat reply" }]);
 	});
 });

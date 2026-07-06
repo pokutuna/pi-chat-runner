@@ -14,7 +14,9 @@
 //     それ以外          … `echo: <本文>` の reply → agent_end を吐く
 // - agent_end.messages には固定の usage 付き assistant message を 1 件含める
 //   (SessionRunner の usage 集計ロジックをテストから確認するため)
-// - thread_key は --append-system-prompt に埋め込まれた "thread_key: <key>" を拾う
+// - thread_key はまず prompt/steer の message 本文中の "(thread_key: <key>):" を拾う
+//   (session-model.md §3: メッセージごとの thread_key)。見つからなければ
+//   --append-system-prompt 末尾の "Fallback thread_key for this session: <key>" を使う
 // - stdin が閉じたら終了する (PiProcess.stop の graceful パス)
 // - 起動時に <workdir>/env-seen.json へ process.env のスナップショットを書く
 //   (SessionRunner → PiProcess の extraEnv 透過をテストから確認するため)
@@ -37,14 +39,24 @@ const commandsLog = join(workdir, "commands.jsonl");
 writeFileSync(join(workdir, "env-seen.json"), JSON.stringify(process.env));
 
 const systemPrompt = argValue("--append-system-prompt") ?? "";
-const threadKeyMatch = systemPrompt.match(/thread_key: (\S+)/);
-const threadKey = threadKeyMatch ? threadKeyMatch[1] : "unknown";
+const fallbackMatch = systemPrompt.match(
+	/Fallback thread_key for this session: (\S+)/,
+);
+const fallbackThreadKey = fallbackMatch ? fallbackMatch[1] : "unknown";
+
+/** message 本文中の直近の "(thread_key: <key>):" を拾う。無ければ session の
+ * fallback thread_key を使う (buildSystemPrompt の指示と同じ規則) */
+function threadKeyFromMessage(message) {
+	const matches = [...message.matchAll(/\(thread_key: (\S+)\):/g)];
+	const last = matches.at(-1);
+	return last ? last[1] : fallbackThreadKey;
+}
 
 function emit(event) {
 	process.stdout.write(`${JSON.stringify(event)}\n`);
 }
 
-function emitReply(text) {
+function emitReply(threadKey, text) {
 	emit({
 		type: "tool_execution_end",
 		toolCallId: `tc-${Date.now()}`,
@@ -104,14 +116,20 @@ function handleCommand(command) {
 			// このプロセスは生き続ける (SIGKILL を受けて終了する)
 			return;
 		}
-		emitReply(`echo: ${command.message}`);
+		emitReply(
+			threadKeyFromMessage(command.message),
+			`echo: ${command.message}`,
+		);
 		emitAgentEnd();
 		return;
 	}
 
 	if (command.type === "steer" && waitingForSteer) {
 		waitingForSteer = false;
-		emitReply(`steered: ${command.message}`);
+		emitReply(
+			threadKeyFromMessage(command.message),
+			`steered: ${command.message}`,
+		);
 		emitAgentEnd();
 	}
 }

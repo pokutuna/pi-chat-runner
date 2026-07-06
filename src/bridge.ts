@@ -59,11 +59,11 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 		store,
 		router: new ReplyRouter({
 			poster: {
-				async postMessage(channelId, threadTs, text) {
+				async postMessage(channelId, text, threadTs) {
 					await web.chat.postMessage({
 						channel: channelId,
-						thread_ts: threadTs,
 						text,
+						...(threadTs !== undefined ? { thread_ts: threadTs } : {}),
 					});
 				},
 			},

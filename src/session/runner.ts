@@ -139,6 +139,9 @@ interface SessionRecord {
 	channelId: string;
 	threadTs: string;
 	workdir: string;
+	/** kick 時に導出した session.mode / reply.mode。promptPending / kick から
+	 * 参照して宛先登録・フォールバック登録に使う (session-model.md §3) */
+	policy: SessionPolicy;
 	/** kick 開始時刻 (finished ログの durationMs 算出用) */
 	startedAt: number;
 	/** このプロセスが保持する実行ロック。renew に失敗したら排他を失っている */
@@ -159,24 +162,64 @@ interface SessionRecord {
 	usageTotals?: UsageTotals;
 }
 
-/** thread_key の導出。スレッド外の発言はそのメッセージ自身が thread root になる */
-export function threadKeyOf(event: InboundMessage): string {
+/** session.mode / reply.mode の実効値 (doc 未設定時の既定込み。session-model.md §3) */
+export interface SessionPolicy {
+	sessionMode: "thread" | "channel";
+	replyMode: "thread" | "flat";
+}
+
+/** ChannelDoc.session / ChannelDoc.reply からポリシーを導出する。DM は既定
+ * session: channel, reply: flat (session-model.md §3 「DM は予約名 dm の既定」) */
+export function resolveSessionPolicy(
+	doc: ChannelDoc | null,
+	isDm: boolean,
+): SessionPolicy {
+	return {
+		sessionMode: doc?.session?.mode ?? (isDm ? "channel" : "thread"),
+		replyMode: doc?.reply?.mode ?? (isDm ? "flat" : "thread"),
+	};
+}
+
+/** セッション (文脈) キーの導出。sessionMode "thread" は現行 threadKeyOf と同じ
+ * (channelId:threadTs ?? メッセージ ts)、"channel" は channelId のみ
+ * (session-model.md §3) */
+export function sessionKeyOf(
+	event: InboundMessage,
+	policy: SessionPolicy,
+): string {
+	if (policy.sessionMode === "channel") {
+		return event.conversation.channelId;
+	}
 	return `${event.conversation.channelId}:${event.conversation.threadTs ?? event.id}`;
 }
 
-/** イベント 1 件のプロンプト描画 (session-runtime.md §4 の renderEvent) */
+/** 返信宛先キーの導出。メッセージごとに発行し、sessionKey とは独立に
+ * トリガーメッセージの位置を指す (session-model.md §3) */
+export function replyThreadKeyOf(event: InboundMessage): string {
+	return `${event.conversation.channelId}:${event.conversation.threadTs ?? event.id}`;
+}
+
+/** イベント 1 件のプロンプト描画 (session-runtime.md §4 の renderEvent)。
+ * threadKey 指定時はヘッダに thread_key を注記し、エージェントが reply 時に
+ * どの宛先へ返すべきかを判別できるようにする (session-model.md §3) */
 // 表示名だけにすると pi が mention (`<@U123>`) を組み立てられなくなるため、
 // UserID は常に併記する
-export function renderEvent(event: InboundMessage): string {
+export function renderEvent(event: InboundMessage, threadKey?: string): string {
 	const sender =
 		event.sender.displayName !== undefined
 			? `${event.sender.displayName} (${event.sender.id})`
 			: event.sender.id;
-	return `<${sender}> のメッセージ:\n${event.text}`;
+	const header =
+		threadKey !== undefined
+			? `<${sender}> のメッセージ (thread_key: ${threadKey}):`
+			: `<${sender}> のメッセージ:`;
+	return `${header}\n${event.text}`;
 }
 
 function renderItems(items: InboxItem[]): string {
-	return items.map((item) => renderEvent(item.event)).join("\n\n");
+	return items
+		.map((item) => renderEvent(item.event, replyThreadKeyOf(item.event)))
+		.join("\n\n");
 }
 
 /**
@@ -311,38 +354,48 @@ export class SessionRunner {
 	}
 
 	async handle(event: InboundMessage): Promise<void> {
-		const threadKey = threadKeyOf(event);
+		const channelId = event.conversation.channelId;
+		const isDm = event.conversation.isDm === true;
+		// DM は channelId 個別の doc ではなく予約名 "dm" の doc を全 DM 共通で参照する
+		// (config.md §1, §2)。セッション自体は実 channelId (D...) で管理する
+		const doc = await this.loadChannelDoc(isDm ? DM_CHANNEL : channelId);
+		const policy = resolveSessionPolicy(doc, isDm);
+		const sessionKey = sessionKeyOf(event, policy);
 		const item: InboxItem = {
 			id: inboxItemId(event),
 			event,
 			enqueuedAt: new Date(),
 		};
 
-		// 実行中 (起動中含む) セッションがあるスレッド: gate は通さず enqueue して
+		// 実行中 (起動中含む) セッションがあるレーン: gate は通さず enqueue して
 		// steer で配達 (architecture.md §6 フロー 6。後続発言は追加指示として扱う)。
 		// enqueue は「セッションあり or gate 通過」のときだけ行う — gate 非通過の
 		// 全メッセージを永続 store に溜め込まない (dedupe は enqueue 時に効く)
-		const existing = this.sessions.get(threadKey);
+		const existing = this.sessions.get(sessionKey);
 		if (existing !== undefined) {
-			const fresh = await this.store.inbox.enqueue(threadKey, item);
+			const fresh = await this.store.inbox.enqueue(sessionKey, item);
 			if (!fresh) {
 				this.logger.debug(
-					{ threadKey, itemId: item.id },
+					{ sessionKey, itemId: item.id },
 					"inbox duplicate skip",
 				);
 				return;
 			}
 			// starting 中は初回 prompt の drain が拾う。running なら steer で即配達する
 			if (existing.state === "running" && existing.process?.running) {
-				const items = await this.store.inbox.drain(threadKey);
+				const items = await this.store.inbox.drain(sessionKey);
 				const pending = items.filter((i) => !existing.promptedIds.has(i.id));
 				if (pending.length > 0) {
+					// steer 前に宛先登録 (session-model.md §3 の境界規則)
+					for (const p of pending) {
+						this.registerReplyDestination(p.event, existing.policy);
+					}
 					for (const p of pending) existing.promptedIds.add(p.id);
 					existing.turnEpoch += 1;
-					this.resetTurnTimeout(threadKey, existing);
+					this.resetTurnTimeout(sessionKey, existing);
 					existing.process.steer(renderItems(pending));
 					this.logger.info(
-						{ threadKey, items: pending.length },
+						{ sessionKey, items: pending.length },
 						"session steered",
 					);
 				}
@@ -350,12 +403,7 @@ export class SessionRunner {
 			return;
 		}
 
-		// 実行中でない: ChannelDoc → gate 評価 → trigger なら lease を取って kick
-		const channelId = event.conversation.channelId;
-		const isDm = event.conversation.isDm === true;
-		// DM は channelId 個別の doc ではなく予約名 "dm" の doc を全 DM 共通で参照する
-		// (config.md §1, §2)。セッション自体は実 channelId (D...) で管理する
-		const doc = await this.loadChannelDoc(isDm ? DM_CHANNEL : channelId);
+		// 実行中でない: gate 評価 → trigger なら lease を取って kick
 		const { gates, combinator } = this.resolveGates(doc, isDm);
 		const decision = await evaluateTrigger(gates, combinator, {
 			event,
@@ -363,42 +411,45 @@ export class SessionRunner {
 		});
 		if (!decision.trigger) {
 			this.logger.debug(
-				{ channelId, threadKey, reason: decision.reason },
+				{ channelId, sessionKey, reason: decision.reason },
 				"gate not triggered",
 			);
 			return;
 		}
 		this.logger.info(
-			{ channelId, threadKey, reason: decision.reason },
+			{ channelId, sessionKey, reason: decision.reason },
 			"gate triggered",
 		);
 
 		// gate 通過が確定してから耐久キューへ積む (dedupe = at-least-once の再送吸収)
-		const fresh = await this.store.inbox.enqueue(threadKey, item);
+		const fresh = await this.store.inbox.enqueue(sessionKey, item);
 		if (!fresh) {
-			this.logger.debug({ threadKey, itemId: item.id }, "inbox duplicate skip");
+			this.logger.debug(
+				{ sessionKey, itemId: item.id },
+				"inbox duplicate skip",
+			);
 			return;
 		}
 
 		// 多重起動防止: gate 評価の await 中に別イベントが kick 済みなら、
 		// 上で enqueue した item はそのセッションの drain が拾う
-		if (this.sessions.has(threadKey)) return;
+		if (this.sessions.has(sessionKey)) return;
 
 		// 実行ロック。取れなければ別プロセスが保持中 — enqueue 済みなので
 		// 保持者側の drain (steer / agent_end / linger) が拾う
 		const lease = await this.store.leases.acquire(
-			threadKey,
+			sessionKey,
 			this.owner,
 			this.leaseTtlMs,
 		);
 		if (lease === null) {
 			this.logger.info(
-				{ threadKey, itemId: item.id },
+				{ sessionKey, itemId: item.id },
 				"lease held by another process; enqueued only",
 			);
 			return;
 		}
-		if (this.sessions.has(threadKey)) {
+		if (this.sessions.has(sessionKey)) {
 			// acquire の await 中にローカルの別イベントが kick した (そちらが lease を
 			// 取れているはずなので通常到達しないが、二重 kick だけは防ぐ)
 			await this.store.leases.release(lease);
@@ -411,7 +462,12 @@ export class SessionRunner {
 			triggerTs: event.id,
 			channelId,
 			threadTs,
-			workdir: join(this.workdirRoot, channelId, threadTs),
+			workdir: join(
+				this.workdirRoot,
+				channelId,
+				policy.sessionMode === "channel" ? "channel" : threadTs,
+			),
+			policy,
 			startedAt: Date.now(),
 			lease,
 			promptedIds: new Set(),
@@ -419,14 +475,14 @@ export class SessionRunner {
 			renewTimer: undefined,
 			turnTimeoutTimer: undefined,
 		};
-		this.sessions.set(threadKey, record);
+		this.sessions.set(sessionKey, record);
 
 		try {
-			await this.kick(threadKey, record, event, doc);
+			await this.kick(sessionKey, record, event, doc);
 		} catch (err) {
-			// enqueue 済み item は ack されていないので、同スレッドの次のイベント
+			// enqueue 済み item は ack されていないので、同レーンの次のイベント
 			// (または再送) で再 kick され拾い直される (persistence.md §4)
-			this.sessions.delete(threadKey);
+			this.sessions.delete(sessionKey);
 			this.stopRenewTimer(record);
 			this.clearTurnTimeout(record);
 			try {
@@ -435,24 +491,57 @@ export class SessionRunner {
 				// spawn 途中の失敗など。stop は best-effort でよい
 			}
 			await this.store.leases.release(lease);
-			this.logger.warn({ threadKey, err }, "session kick failed");
+			this.logger.warn({ sessionKey, err }, "session kick failed");
 		}
+	}
+
+	/** reply 宛先の登録 (メッセージごと。session-model.md §3)。境界規則:
+	 * スレッド内のトリガーは reply.mode に関わらずそのスレッドへ返す。
+	 * reply.mode が効くのはチャンネル直下トリガーの返信先だけ */
+	private registerReplyDestination(
+		event: InboundMessage,
+		policy: SessionPolicy,
+	): string {
+		const channelId = event.conversation.channelId;
+		const key = replyThreadKeyOf(event);
+		if (event.conversation.threadTs !== undefined) {
+			this.router.register(key, {
+				channelId,
+				threadTs: event.conversation.threadTs,
+			});
+		} else if (policy.replyMode === "thread") {
+			// 新スレッドを起こす (トリガーメッセージ自身を thread root にする)
+			this.router.register(key, { channelId, threadTs: event.id });
+		} else {
+			// フラット (チャンネル直下)
+			this.router.register(key, { channelId });
+		}
+		return key;
 	}
 
 	/** kick シーケンス (session-runtime.md §1: restore → spawn → prompt) */
 	private async kick(
-		threadKey: string,
+		sessionKey: string,
 		record: SessionRecord,
 		triggerEvent: InboundMessage,
 		doc: ChannelDoc | null,
 	): Promise<void> {
-		const { channelId, threadTs, workdir } = record;
+		const { channelId, threadTs, workdir, policy } = record;
 
-		// 同 thread_key は常に同じ workdir/transcript.jsonl を使う。再 trigger 時は
+		// session.mode=thread かつ reply.mode=flat は文脈が切れるのに返事だけ散らばる
+		// 非推奨な組み合わせ。動作は許可するので warn のみ (session-model.md §3)
+		if (policy.sessionMode === "thread" && policy.replyMode === "flat") {
+			this.logger.warn(
+				{ sessionKey, channelId },
+				"session.mode=thread with reply.mode=flat is discouraged (session-model.md §3)",
+			);
+		}
+
+		// 同 sessionKey は常に同じ workdir/transcript.jsonl を使う。再 trigger 時は
 		// 同じパスで再 spawn され、pi が JSONL を読んで文脈を継続する (再開の専用フローなし)
 		await mkdir(workdir, { recursive: true });
 		if (this.workdirStorage !== undefined) {
-			await this.workdirStorage.restore(threadKey, workdir);
+			await this.workdirStorage.restore(sessionKey, workdir);
 		}
 		// UID 分離 (session-runtime.md §6) が有効なら、workdir を agent 所有 0700 に
 		// する。mkdir は Runner (root) 実行なので root 所有で作られ、restore で
@@ -514,7 +603,7 @@ export class SessionRunner {
 			sessionPath,
 			extensionPaths: this.extensionPaths,
 			cwd: workdirReal,
-			appendSystemPrompt: buildSystemPrompt(threadKey, doc),
+			appendSystemPrompt: buildSystemPrompt(sessionKey, doc),
 			...(this.piBinary !== undefined ? { piBinary: this.piBinary } : {}),
 			...(model !== undefined ? { model } : {}),
 			...(this.provider !== undefined ? { provider: this.provider } : {}),
@@ -527,7 +616,7 @@ export class SessionRunner {
 			...(this.agentGid !== undefined ? { gid: this.agentGid } : {}),
 			...(permission !== undefined ? { permission } : {}),
 			// pi は正常時にも stderr へ出すことがあるため warn ではなく debug
-			logger: (line) => this.logger.debug({ threadKey, line }, "pi stderr"),
+			logger: (line) => this.logger.debug({ sessionKey, line }, "pi stderr"),
 		});
 
 		proc.on("event", (piEvent) => {
@@ -536,7 +625,7 @@ export class SessionRunner {
 			const logFields = piEventLogFields(piEvent);
 			if (logFields !== null) {
 				this.logger.debug(
-					{ threadKey, eventType: piEvent.type, ...logFields },
+					{ sessionKey, eventType: piEvent.type, ...logFields },
 					"pi event",
 				);
 			}
@@ -545,7 +634,7 @@ export class SessionRunner {
 				if (payload !== null) {
 					this.router.deliver(payload).catch((err) => {
 						this.logger.warn(
-							{ threadKey, threadKeyPayload: payload.thread_key, err },
+							{ sessionKey, threadKeyPayload: payload.thread_key, err },
 							"reply delivery failed",
 						);
 					});
@@ -557,7 +646,7 @@ export class SessionRunner {
 				// ここで拾わないとログに一切残らない (rpc.ts extractTurnErrors)
 				for (const errorMessage of extractTurnErrors(piEvent)) {
 					this.logger.error(
-						{ threadKey, errorMessage },
+						{ sessionKey, errorMessage },
 						"assistant turn ended with error",
 					);
 				}
@@ -565,9 +654,9 @@ export class SessionRunner {
 				// なくセッション累計 (rpc.ts extractUsageTotals)
 				const totals = extractUsageTotals(piEvent);
 				record.usageTotals = totals;
-				this.logger.info({ threadKey, ...totals }, "turn usage");
-				void this.onAgentEnd(threadKey, proc).catch((err) => {
-					this.logger.warn({ threadKey, err }, "agent_end handling failed");
+				this.logger.info({ sessionKey, ...totals }, "turn usage");
+				void this.onAgentEnd(sessionKey, proc).catch((err) => {
+					this.logger.warn({ sessionKey, err }, "agent_end handling failed");
 				});
 			}
 		});
@@ -576,7 +665,7 @@ export class SessionRunner {
 			// 終端)。debug ログのみで十分
 			if (response.success) {
 				this.logger.debug(
-					{ threadKey, command: response.command },
+					{ sessionKey, command: response.command },
 					"pi command accepted",
 				);
 				return;
@@ -585,16 +674,16 @@ export class SessionRunner {
 			// pi は生きたまま次コマンドを待つが、agent_end が来ないので何もしなければ
 			// runner は永久に無音ハングする → ここで異常終了として扱いプロセスを止める
 			this.logger.error(
-				{ threadKey, command: response.command, error: response.error },
+				{ sessionKey, command: response.command, error: response.error },
 				"pi command failed",
 			);
-			void this.failSession(threadKey, proc, response.error).catch((err) => {
-				this.logger.warn({ threadKey, err }, "failSession handling failed");
+			void this.failSession(sessionKey, proc, response.error).catch((err) => {
+				this.logger.warn({ sessionKey, err }, "failSession handling failed");
 			});
 		});
 		proc.on("invalid", (raw, error) => {
 			this.logger.debug(
-				{ threadKey, raw: raw.slice(0, 500), error },
+				{ sessionKey, raw: raw.slice(0, 500), error },
 				"pi stdout line invalid",
 			);
 		});
@@ -602,24 +691,27 @@ export class SessionRunner {
 			// 正常終了パス (onAgentEnd) では state を stopping にしてから stop している。
 			// running のまま exit したら異常終了: 未 ack の item は inbox に残っているので、
 			// lease を解いて次のイベントで拾い直せるようにする (flush はしない)
-			const current = this.sessions.get(threadKey);
+			const current = this.sessions.get(sessionKey);
 			if (
 				current !== undefined &&
 				current.process === proc &&
 				current.state !== "stopping"
 			) {
-				this.sessions.delete(threadKey);
+				this.sessions.delete(sessionKey);
 				this.stopRenewTimer(current);
 				this.clearTurnTimeout(current);
 				void this.store.leases.release(current.lease).catch((err) => {
-					this.logger.warn({ threadKey, err }, "lease release failed");
+					this.logger.warn({ sessionKey, err }, "lease release failed");
 				});
-				this.logger.warn({ threadKey, code, signal }, "pi exited unexpectedly");
+				this.logger.warn(
+					{ sessionKey, code, signal },
+					"pi exited unexpectedly",
+				);
 				// pi のクラッシュはユーザーから見えない (返信なしで無音になる) ので、
 				// トリガーメッセージに ❌ を付けて失敗を伝える
 				void this.safeReact(
 					() => this.reactions.addX(current.channelId, current.triggerTs),
-					threadKey,
+					sessionKey,
 					"x",
 				);
 			}
@@ -628,36 +720,47 @@ export class SessionRunner {
 		proc.start();
 		record.state = "running";
 		record.process = proc;
-		this.startRenewTimer(threadKey, record);
+		this.startRenewTimer(sessionKey, record);
 
-		this.router.register(threadKey, { channelId, threadTs });
+		// sessionKey でのフォールバック登録 (abnormalShutdown が thread_key: sessionKey で
+		// 通知を送るために必要)。sessionMode "channel" かつ replyMode "flat" ならチャンネル
+		// 直下、それ以外はトリガーのスレッドへ (session-model.md §3)
+		if (policy.sessionMode === "channel" && policy.replyMode === "flat") {
+			this.router.register(sessionKey, { channelId });
+		} else {
+			this.router.register(sessionKey, { channelId, threadTs });
+		}
 		await this.safeReact(
 			() => this.reactions.addEyes(channelId, record.triggerTs),
-			threadKey,
+			sessionKey,
 			"eyes",
 		);
 
 		// enqueue 済みの入力 (spawn 準備中に積まれた分を含む) を束ねて初回 prompt にする。
 		// トリガーイベント自身も enqueue 済みなので通常 drain 経由で届く。
 		// ChannelDoc.context は初回のみ先頭に注入する (config.md §4)
-		const items = (await this.store.inbox.drain(threadKey)).filter(
+		const items = (await this.store.inbox.drain(sessionKey)).filter(
 			(i) => !record.promptedIds.has(i.id),
 		);
 		let body: string;
 		if (items.length > 0) {
-			for (const i of items) record.promptedIds.add(i.id);
+			for (const i of items) {
+				this.registerReplyDestination(i.event, policy);
+				record.promptedIds.add(i.id);
+			}
 			body = renderItems(items);
 		} else {
 			// drain が空 (Store 実装の遅延など)。トリガーイベントに直接フォールバック
 			// するが、ack 対象には含める (二重 prompt を防ぐ)
+			const triggerKey = this.registerReplyDestination(triggerEvent, policy);
 			record.promptedIds.add(inboxItemId(triggerEvent));
-			body = renderEvent(triggerEvent);
+			body = renderEvent(triggerEvent, triggerKey);
 		}
 		record.turnEpoch += 1;
-		this.resetTurnTimeout(threadKey, record);
+		this.resetTurnTimeout(sessionKey, record);
 		proc.prompt(prependContext(body, doc));
 
-		await this.store.sessions.put(threadKey, {
+		await this.store.sessions.put(sessionKey, {
 			channelId,
 			threadTs,
 			triggerTs: record.triggerTs,
@@ -666,7 +769,7 @@ export class SessionRunner {
 		});
 		this.logger.info(
 			{
-				threadKey,
+				sessionKey,
 				workdir,
 				resumed,
 				model,
@@ -682,8 +785,8 @@ export class SessionRunner {
 	 * 残り入力があれば次の prompt、無ければ linger して再確認、それでも無ければ ✅ で終了
 	 * (persistence.md §3, session-model.md §4 の linger)
 	 */
-	private async onAgentEnd(threadKey: string, proc: PiProcess): Promise<void> {
-		const record = this.sessions.get(threadKey);
+	private async onAgentEnd(sessionKey: string, proc: PiProcess): Promise<void> {
+		const record = this.sessions.get(sessionKey);
 		if (record === undefined || record.process !== proc) return;
 		const epoch = record.turnEpoch;
 		// ターンが正常に終わったので timeout タイマーをクリア (リークさせない)。
@@ -695,34 +798,34 @@ export class SessionRunner {
 		// promptedIds へ追加した item を「そのターンの flush 前」に ack しない
 		const toAck = [...record.promptedIds];
 		if (this.workdirStorage !== undefined) {
-			await this.workdirStorage.flush(threadKey, record.workdir);
+			await this.workdirStorage.flush(sessionKey, record.workdir);
 		}
 		if (toAck.length > 0) {
-			await this.store.inbox.ack(threadKey, toAck);
+			await this.store.inbox.ack(sessionKey, toAck);
 			for (const id of toAck) record.promptedIds.delete(id);
 		}
 
 		// 3. 新規入力があれば同一プロセスで継続 (flush/ack は次の agent_end で行う)
-		if (await this.promptPending(threadKey, record, proc)) return;
+		if (await this.promptPending(sessionKey, record, proc)) return;
 		// flush/ack の await 中に steer 済みなら、そのターンの agent_end に終了判定を譲る
 		if (record.turnEpoch !== epoch) return;
 
 		// 4. linger: agent_end 直後に届いた追いメッセージを拾ってから終える。
 		// この間レコードは Map に残す (新イベントは steer パスに入りうる)
 		await sleep(this.lingerMs);
-		if (this.sessions.get(threadKey) !== record || record.process !== proc)
+		if (this.sessions.get(sessionKey) !== record || record.process !== proc)
 			return;
-		if (await this.promptPending(threadKey, record, proc)) return;
+		if (await this.promptPending(sessionKey, record, proc)) return;
 		if (record.turnEpoch !== epoch) return;
 
 		// 5. 終了処理。reply が 1 度も呼ばれなくても沈黙のまま ✅ を付けて終える
 		record.state = "stopping";
 		await this.safeReact(
 			() => this.reactions.addCheck(record.channelId, record.triggerTs),
-			threadKey,
+			sessionKey,
 			"check",
 		);
-		await this.store.sessions.put(threadKey, {
+		await this.store.sessions.put(sessionKey, {
 			channelId: record.channelId,
 			threadTs: record.threadTs,
 			triggerTs: record.triggerTs,
@@ -733,10 +836,10 @@ export class SessionRunner {
 		this.stopRenewTimer(record);
 		this.clearTurnTimeout(record);
 		await this.store.leases.release(record.lease);
-		this.sessions.delete(threadKey);
+		this.sessions.delete(sessionKey);
 		this.logger.info(
 			{
-				threadKey,
+				sessionKey,
 				durationMs: Date.now() - record.startedAt,
 				...(record.usageTotals !== undefined
 					? {
@@ -758,11 +861,11 @@ export class SessionRunner {
 	 * に共通化している (timeoutSession と共有)
 	 */
 	private async failSession(
-		threadKey: string,
+		sessionKey: string,
 		proc: PiProcess,
 		error: string | undefined,
 	): Promise<void> {
-		await this.abnormalShutdown(threadKey, proc, {
+		await this.abnormalShutdown(sessionKey, proc, {
 			noticeText: `:warning: セッションが異常終了しました: ${error ?? "unknown error"}`,
 			logMessage: "session failed",
 			stop: () => proc.stop(),
@@ -776,14 +879,14 @@ export class SessionRunner {
 	 * クリーンアップの中身は failSession と共通 (abnormalShutdown)
 	 */
 	private async timeoutSession(
-		threadKey: string,
+		sessionKey: string,
 		proc: PiProcess,
 	): Promise<void> {
 		this.logger.error(
-			{ threadKey, turnTimeoutMs: this.turnTimeoutMs },
+			{ sessionKey, turnTimeoutMs: this.turnTimeoutMs },
 			"turn timed out",
 		);
-		await this.abnormalShutdown(threadKey, proc, {
+		await this.abnormalShutdown(sessionKey, proc, {
 			noticeText: `:warning: ターンがタイムアウトしました (${this.turnTimeoutMs}ms)。セッションを終了します`,
 			logMessage: "session timed out",
 			stop: () => {
@@ -802,7 +905,7 @@ export class SessionRunner {
 	 * (exit ハンドラは state !== "stopping" のときだけ動く)
 	 */
 	private async abnormalShutdown(
-		threadKey: string,
+		sessionKey: string,
 		proc: PiProcess,
 		options: {
 			noticeText: string;
@@ -810,7 +913,7 @@ export class SessionRunner {
 			stop: () => Promise<void>;
 		},
 	): Promise<void> {
-		const record = this.sessions.get(threadKey);
+		const record = this.sessions.get(sessionKey);
 		if (record === undefined || record.process !== proc) return;
 
 		record.state = "stopping";
@@ -820,69 +923,72 @@ export class SessionRunner {
 		// register 済み (kick で必ず register している) なので deliver できる。
 		// Slack への通知が失敗してもセッションの畳み込みは続ける
 		await this.router
-			.deliver({ thread_key: threadKey, text: options.noticeText })
+			.deliver({ thread_key: sessionKey, text: options.noticeText })
 			.catch((err) => {
-				this.logger.warn({ threadKey, err }, "failure notice delivery failed");
+				this.logger.warn({ sessionKey, err }, "failure notice delivery failed");
 			});
 		await this.safeReact(
 			() => this.reactions.addX(record.channelId, record.triggerTs),
-			threadKey,
+			sessionKey,
 			"x",
 		);
 
 		await this.store.leases.release(record.lease).catch((err) => {
-			this.logger.warn({ threadKey, err }, "lease release failed");
+			this.logger.warn({ sessionKey, err }, "lease release failed");
 		});
 		await options.stop();
 		this.logger.warn(
-			{ threadKey, durationMs: Date.now() - record.startedAt },
+			{ sessionKey, durationMs: Date.now() - record.startedAt },
 			options.logMessage,
 		);
 		// activeSessionCount (テストの waitFor 等) がこのログの後で 0 になるよう、
 		// Map からの削除はクリーンアップ完了後に行う
-		this.sessions.delete(threadKey);
+		this.sessions.delete(sessionKey);
 	}
 
 	/** 未 prompt の item があれば prompt して true (drain は非破壊なので
 	 * promptedIds で除外する)。無ければ false */
 	private async promptPending(
-		threadKey: string,
+		sessionKey: string,
 		record: SessionRecord,
 		proc: PiProcess,
 	): Promise<boolean> {
-		const items = (await this.store.inbox.drain(threadKey)).filter(
+		const items = (await this.store.inbox.drain(sessionKey)).filter(
 			(i) => !record.promptedIds.has(i.id),
 		);
 		if (items.length === 0) return false;
-		for (const i of items) record.promptedIds.add(i.id);
+		for (const i of items) {
+			this.registerReplyDestination(i.event, record.policy);
+			record.promptedIds.add(i.id);
+		}
 		record.turnEpoch += 1;
-		this.resetTurnTimeout(threadKey, record);
+		this.resetTurnTimeout(sessionKey, record);
 		proc.prompt(renderItems(items));
-		this.logger.info({ threadKey, items: items.length }, "session continued");
+		this.logger.info({ sessionKey, items: items.length }, "session continued");
 		return true;
 	}
 
 	/** lease の renew を ttl/3 間隔で回す。false は排他喪失 = 別の保持者が動いて
 	 * いる可能性があるため、flush せずプロセスを止める (書き戻さない) */
-	private startRenewTimer(threadKey: string, record: SessionRecord): void {
+	private startRenewTimer(sessionKey: string, record: SessionRecord): void {
 		const intervalMs = Math.max(1, Math.floor(this.leaseTtlMs / 3));
 		const timer = setInterval(() => {
 			void (async () => {
-				if (this.sessions.get(threadKey) !== record) return;
+				if (this.sessions.get(sessionKey) !== record) return;
 				const ok = await this.store.leases.renew(record.lease, this.leaseTtlMs);
 				if (ok) return;
-				if (this.sessions.get(threadKey) !== record) return;
+				if (this.sessions.get(sessionKey) !== record) return;
 				this.logger.error(
-					{ threadKey, owner: this.owner },
+					{ sessionKey, owner: this.owner },
 					"lease renew failed; stopping session without flush",
 				);
 				record.state = "stopping";
-				this.sessions.delete(threadKey);
+				this.sessions.delete(sessionKey);
 				this.stopRenewTimer(record);
 				this.clearTurnTimeout(record);
 				await record.process?.stop();
 			})().catch((err) => {
-				this.logger.error({ threadKey, err }, "lease renew handling failed");
+				this.logger.error({ sessionKey, err }, "lease renew handling failed");
 			});
 		}, intervalMs);
 		timer.unref();
@@ -898,13 +1004,13 @@ export class SessionRunner {
 
 	/** turn timeout タイマーをリセットする (prompt/steer 送信ごとに呼ぶ。既存タイマーが
 	 * あれば止めて張り直す)。発火したら timeoutSession でセッションを異常終了させる */
-	private resetTurnTimeout(threadKey: string, record: SessionRecord): void {
+	private resetTurnTimeout(sessionKey: string, record: SessionRecord): void {
 		this.clearTurnTimeout(record);
 		const timer = setTimeout(() => {
 			const proc = record.process;
 			if (proc === undefined) return;
-			void this.timeoutSession(threadKey, proc).catch((err) => {
-				this.logger.warn({ threadKey, err }, "timeoutSession handling failed");
+			void this.timeoutSession(sessionKey, proc).catch((err) => {
+				this.logger.warn({ sessionKey, err }, "timeoutSession handling failed");
 			});
 		}, this.turnTimeoutMs);
 		timer.unref();
@@ -952,23 +1058,26 @@ export class SessionRunner {
 	/** リアクションは装飾なので、失敗してもセッションを止めない */
 	private async safeReact(
 		fn: () => Promise<void>,
-		threadKey: string,
+		sessionKey: string,
 		label: string,
 	): Promise<void> {
 		try {
 			await fn();
 		} catch (err) {
-			this.logger.warn({ threadKey, label, err }, "failed to add reaction");
+			this.logger.warn({ sessionKey, label, err }, "failed to add reaction");
 		}
 	}
 }
 
 /** app 共通 + ChannelDoc.systemPrompt + thread_key の指示 (session-runtime.md §2) */
-function buildSystemPrompt(threadKey: string, doc: ChannelDoc | null): string {
+function buildSystemPrompt(sessionKey: string, doc: ChannelDoc | null): string {
 	const parts = [APP_SYSTEM_PROMPT];
 	if (doc?.systemPrompt !== undefined) parts.push(doc.systemPrompt.trim());
 	parts.push(
-		`When calling the reply tool, use exactly this thread_key: ${threadKey}`,
+		"Each incoming message is annotated with its thread_key. When calling " +
+			"the reply tool, use the thread_key of the message you are replying to " +
+			"(the most recent one if replying generally). " +
+			`Fallback thread_key for this session: ${sessionKey}`,
 	);
 	return parts.join("\n\n");
 }

@@ -9,15 +9,20 @@ import type { Logger } from "../logger.js";
 import { rootLogger } from "../logger.js";
 import type { ReplyPayload } from "../session/rpc.js";
 
-/** 投稿先。Slack の会話座標は (channelId, threadTs) の 2 つだけ (architecture.md §0) */
+/** 投稿先。Slack の会話座標は (channelId, threadTs) の 2 つだけ (architecture.md §0)。
+ * threadTs は省略時はチャンネル直下に投稿する (reply.mode: flat) */
 export interface ReplyDestination {
 	channelId: string;
-	threadTs: string;
+	threadTs?: string;
 }
 
 /** WebClient.chat.postMessage の薄い IF。テストではフェイクを注入する */
 export interface ChatPoster {
-	postMessage(channelId: string, threadTs: string, text: string): Promise<void>;
+	postMessage(
+		channelId: string,
+		text: string,
+		threadTs?: string,
+	): Promise<void>;
 }
 
 export type ReplyFormatter = (text: string) => string;
@@ -58,8 +63,8 @@ export class ReplyRouter {
 		try {
 			await this.poster.postMessage(
 				destination.channelId,
-				destination.threadTs,
 				this.formatter(payload.text),
+				destination.threadTs,
 			);
 			this.logger.info(
 				{ threadKey: payload.thread_key, textLength: payload.text.length },

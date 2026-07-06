@@ -117,6 +117,35 @@ describe("ChannelDocSchema", () => {
 		});
 		expect(result.success).toBe(false);
 	});
+
+	it("accepts session/reply fields", () => {
+		const result = ChannelDocSchema.safeParse({
+			session: { mode: "channel", idleResetMinutes: 30 },
+			reply: { mode: "flat" },
+		});
+		expect(result.success).toBe(true);
+	});
+
+	it("rejects invalid session.mode value", () => {
+		const result = ChannelDocSchema.safeParse({
+			session: { mode: "invalid" },
+		});
+		expect(result.success).toBe(false);
+	});
+
+	it("rejects invalid reply.mode value", () => {
+		const result = ChannelDocSchema.safeParse({
+			reply: { mode: "invalid" },
+		});
+		expect(result.success).toBe(false);
+	});
+
+	it("rejects unknown keys inside session (strict)", () => {
+		const result = ChannelDocSchema.safeParse({
+			session: { mode: "thread", unknownField: true },
+		});
+		expect(result.success).toBe(false);
+	});
 });
 
 describe("ChannelDocFileSchema", () => {

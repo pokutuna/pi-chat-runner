@@ -5,3 +5,8 @@ tools:
 excludeTools:
   - write
   - edit
+session:
+  mode: channel
+  idleResetMinutes: 30
+reply:
+  mode: flat

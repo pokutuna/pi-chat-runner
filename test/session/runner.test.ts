@@ -15,8 +15,11 @@ import { type ChatPoster, ReplyRouter } from "../../src/reply/router.js";
 import type { PiPermissionConfig } from "../../src/session/runner.js";
 import {
 	renderEvent,
+	replyThreadKeyOf,
+	resolveSessionPolicy,
 	SessionRunner,
-	threadKeyOf,
+	sessionKeyOf,
+	type SessionPolicy,
 	toGateSpecs,
 } from "../../src/session/runner.js";
 import type { ChannelDoc } from "../../src/store/channel-doc.js";
@@ -37,9 +40,13 @@ const PERMISSION_GATE_EXTENSION = fileURLToPath(
 );
 
 class FakePoster implements ChatPoster {
-	calls: { channelId: string; threadTs: string; text: string }[] = [];
-	async postMessage(channelId: string, threadTs: string, text: string) {
-		this.calls.push({ channelId, threadTs, text });
+	calls: { channelId: string; threadTs?: string; text: string }[] = [];
+	async postMessage(channelId: string, text: string, threadTs?: string) {
+		this.calls.push({
+			channelId,
+			text,
+			...(threadTs !== undefined ? { threadTs } : {}),
+		});
 	}
 }
 
@@ -48,6 +55,17 @@ class FakeConfigSource implements ConfigSource {
 	async channel(id: string): Promise<ChannelDoc | null> {
 		return this.docs[id] ?? null;
 	}
+}
+
+/** 既存テストの大半は既定ポリシー (thread/thread) を前提に書かれているため、
+ * sessionKeyOf の呼び出しをこの既定ポリシーで束ねる薄いヘルパーを用意する
+ * (旧 threadKeyOf と同じ値を返す) */
+const THREAD_POLICY: SessionPolicy = {
+	sessionMode: "thread",
+	replyMode: "thread",
+};
+function threadKeyOf(event: InboundMessage): string {
+	return sessionKeyOf(event, THREAD_POLICY);
 }
 
 function message(overrides: Partial<InboundMessage> = {}): InboundMessage {
@@ -220,7 +238,7 @@ describe("SessionRunner (fake-pi integration)", () => {
 		expect(h.poster.calls[0]).toEqual({
 			channelId: "C01",
 			threadTs: trigger.id,
-			text: `echo: ${renderEvent(trigger)}`,
+			text: `echo: ${renderEvent(trigger, replyThreadKeyOf(trigger))}`,
 		});
 
 		await waitFor(
@@ -312,10 +330,11 @@ describe("SessionRunner (fake-pi integration)", () => {
 		await h.runner.handle(trigger);
 
 		await waitFor(() => h.poster.calls.length === 1, "reply posted");
+		// DM は既定 session: channel, reply: flat (session-model.md §3) なので、
+		// スレッド外トリガーの返信先はチャンネル直下 (threadTs 無し) になる
 		expect(h.poster.calls[0]).toEqual({
 			channelId: "D01",
-			threadTs: trigger.id,
-			text: `echo: ${renderEvent(trigger)}`,
+			text: `echo: ${renderEvent(trigger, replyThreadKeyOf(trigger))}`,
 		});
 		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
 	});
@@ -376,7 +395,9 @@ describe("SessionRunner (fake-pi integration)", () => {
 		await h.runner.handle(followUp);
 
 		await waitFor(() => h.poster.calls.length === 1, "steered reply posted");
-		expect(h.poster.calls[0]?.text).toBe(`steered: ${renderEvent(followUp)}`);
+		expect(h.poster.calls[0]?.text).toBe(
+			`steered: ${renderEvent(followUp, replyThreadKeyOf(followUp))}`,
+		);
 		expect(h.poster.calls[0]?.threadTs).toBe(threadTs);
 
 		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
@@ -384,10 +405,56 @@ describe("SessionRunner (fake-pi integration)", () => {
 			JSON.parse(line),
 		);
 		expect(commands.map((c) => c.type)).toEqual(["prompt", "steer"]);
-		expect(commands[1]?.message).toBe(renderEvent(followUp));
+		expect(commands[1]?.message).toBe(
+			renderEvent(followUp, replyThreadKeyOf(followUp)),
+		);
 
 		// steer 済み item も flush → ack でまとめて確定される
 		expect(await h.store.inbox.drain(threadKeyOf(trigger))).toEqual([]);
+	});
+
+	it("channel モード (session.mode: channel) では、スレッド外の 2 つ目のメッセージが新セッションでなく同一セッションへの steer になる", async () => {
+		const h = await harness({
+			C01: { session: { mode: "channel" } },
+		});
+		const trigger = message({ mentionsBot: true, text: "WAIT_FOR_STEER" });
+
+		await h.runner.handle(trigger);
+		await waitFor(async () => {
+			try {
+				return (await h.commandsLog("C01", "channel")).length >= 1;
+			} catch {
+				return false;
+			}
+		}, "initial prompt recorded");
+		expect(h.runner.activeSessionCount).toBe(1);
+
+		// トリガーと同じスレッド外 (threadTs 無し) の 2 件目。session.mode: channel
+		// なので sessionKey は channelId のみで揃い、同一セッションへの steer になる
+		// (session-model.md §3)
+		const second = message({
+			id: "1700000000.000250",
+			conversation: { channelId: "C01" },
+			text: "追加の指示です (channel モード)",
+		});
+		await h.runner.handle(second);
+
+		// 新規セッションが増えていない (同一セッションへの steer)
+		expect(h.runner.activeSessionCount).toBe(1);
+
+		await waitFor(() => h.poster.calls.length === 1, "steered reply posted");
+		// reply.mode の既定は thread なので、スレッド外トリガーの返信は
+		// メッセージごとに新しいスレッドを起こす (thread_key = channelId:second.id)
+		expect(h.poster.calls[0]?.threadTs).toBe(second.id);
+		expect(h.poster.calls[0]?.text).toBe(
+			`steered: ${renderEvent(second, replyThreadKeyOf(second))}`,
+		);
+
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+		const commands = (await h.commandsLog("C01", "channel")).map((line) =>
+			JSON.parse(line),
+		);
+		expect(commands.map((c) => c.type)).toEqual(["prompt", "steer"]);
 	});
 
 	it("stays silent but still adds the check reaction when reply is never called", async () => {
@@ -597,7 +664,9 @@ describe("SessionRunner (fake-pi integration)", () => {
 		await h.runner.handle(trigger);
 
 		await waitFor(() => h.poster.calls.length === 1, "reply posted");
-		expect(h.poster.calls[0]?.text).toBe(`echo: ${renderEvent(trigger)}`);
+		expect(h.poster.calls[0]?.text).toBe(
+			`echo: ${renderEvent(trigger, replyThreadKeyOf(trigger))}`,
+		);
 		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
 	});
 });
@@ -720,7 +789,9 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
 		});
 
 		await waitFor(() => h.poster.calls.length === 2, "linger reply posted");
-		expect(h.poster.calls[1]?.text).toBe(`echo: ${renderEvent(late)}`);
+		expect(h.poster.calls[1]?.text).toBe(
+			`echo: ${renderEvent(late, replyThreadKeyOf(late))}`,
+		);
 		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
 
 		// 同一プロセス (再 spawn なし) で処理されている
@@ -862,16 +933,80 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
 		);
 		// prompt は kick の 1 回だけ。steer は followUp のみ (trigger の再送なし)
 		expect(commands.map((c) => c.type)).toEqual(["prompt", "steer"]);
-		expect(commands[1]?.message).toBe(renderEvent(followUp));
+		expect(commands[1]?.message).toBe(
+			renderEvent(followUp, replyThreadKeyOf(followUp)),
+		);
 		expect(commands[1]?.message).not.toContain("WAIT_FOR_STEER");
 	});
 });
 
-describe("threadKeyOf", () => {
-	it("uses threadTs when present, message ts otherwise", () => {
-		expect(threadKeyOf(message())).toBe("C01:1700000000.000100");
+describe("resolveSessionPolicy", () => {
+	it("既定はチャンネル: session=thread, reply=thread", () => {
+		expect(resolveSessionPolicy(null, false)).toEqual({
+			sessionMode: "thread",
+			replyMode: "thread",
+		});
+	});
+
+	it("既定は DM: session=channel, reply=flat", () => {
+		expect(resolveSessionPolicy(null, true)).toEqual({
+			sessionMode: "channel",
+			replyMode: "flat",
+		});
+	});
+
+	it("doc の指定が isDm の既定より優先される (DM でも doc 指定が勝つ)", () => {
 		expect(
-			threadKeyOf(
+			resolveSessionPolicy(
+				{ session: { mode: "thread" }, reply: { mode: "thread" } },
+				true,
+			),
+		).toEqual({ sessionMode: "thread", replyMode: "thread" });
+	});
+
+	it("doc の一部指定のみ上書きし、残りは isDm の既定に従う", () => {
+		expect(
+			resolveSessionPolicy({ session: { mode: "channel" } }, false),
+		).toEqual({
+			sessionMode: "channel",
+			replyMode: "thread",
+		});
+	});
+});
+
+describe("sessionKeyOf", () => {
+	it("thread モード: threadTs があれば channelId:threadTs", () => {
+		expect(
+			sessionKeyOf(
+				message({ conversation: { channelId: "C01", threadTs: "1699.5" } }),
+				THREAD_POLICY,
+			),
+		).toBe("C01:1699.5");
+	});
+
+	it("thread モード: threadTs が無ければメッセージ ts で代替する", () => {
+		expect(sessionKeyOf(message(), THREAD_POLICY)).toBe(
+			"C01:1700000000.000100",
+		);
+	});
+
+	it("channel モード: threadTs の有無に関わらず channelId のみ", () => {
+		const policy: SessionPolicy = { sessionMode: "channel", replyMode: "flat" };
+		expect(sessionKeyOf(message(), policy)).toBe("C01");
+		expect(
+			sessionKeyOf(
+				message({ conversation: { channelId: "C01", threadTs: "1699.5" } }),
+				policy,
+			),
+		).toBe("C01");
+	});
+});
+
+describe("replyThreadKeyOf", () => {
+	it("常に channelId:threadTs ?? メッセージ ts を返す (sessionMode に関わらない)", () => {
+		expect(replyThreadKeyOf(message())).toBe("C01:1700000000.000100");
+		expect(
+			replyThreadKeyOf(
 				message({ conversation: { channelId: "C01", threadTs: "1699.5" } }),
 			),
 		).toBe("C01:1699.5");
@@ -893,6 +1028,16 @@ describe("renderEvent", () => {
 			text: "hello",
 		});
 		expect(renderEvent(event)).toBe("<U123> のメッセージ:\nhello");
+	});
+
+	it("thread_key 指定時はヘッダに thread_key を注記する", () => {
+		const event = message({
+			sender: { id: "U123", isBot: false },
+			text: "hello",
+		});
+		expect(renderEvent(event, "C01:1700000000.000100")).toBe(
+			"<U123> のメッセージ (thread_key: C01:1700000000.000100):\nhello",
+		);
 	});
 });
 
