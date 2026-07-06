@@ -91,6 +91,11 @@ export interface SessionRunnerOptions {
 	/** pi の `--extension` に渡す extension の絶対パス群 (reply + permission-gate 等)。
 	 * すべて常時注入する (permission-gate は事故防止層なので無効化オプションは持たない) */
 	extensionPaths: string[];
+	/** pi の `--skill` に渡す固定パス規約のディレクトリ (session-runtime.md §5)。
+	 * kick ごとに存在確認し、実体のあるエントリ (.gitkeep 以外) が 1 つ以上あるときのみ
+	 * `--skill` を渡す。未指定・空ディレクトリならフラグを渡さない (pi の引数を無駄に
+	 * 増やさない) */
+	skillsDir?: string;
 	/** workdir のルート。既定 /tmp/pi-chat-runner/sessions */
 	workdirRoot?: string;
 	/** pi バイナリ。省略時は PiProcess の既定 (env PI_BIN → "pi") */
@@ -324,6 +329,20 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** skillsDir に実体のあるエントリ (.gitkeep 以外) が 1 つ以上あるかどうか
+ * (session-runtime.md §5)。dir が存在しない・空・.gitkeep のみのときは false を返し、
+ * `--skill` を渡さない判断に使う (pi の引数を無駄に増やさない)。SKILL.md の有無まで
+ * 厳密に見る必要はなく、readdir の軽い判定で十分とする */
+export async function hasSkillEntries(dir: string): Promise<boolean> {
+	try {
+		const entries = await readdir(dir);
+		return entries.some((entry) => entry !== ".gitkeep");
+	} catch (err) {
+		if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
+		throw err;
+	}
+}
+
 /** dir 配下 (dir 自身含む) を再帰的に chown する。UID 分離時、restore で
  * root 所有のままコピーされたファイルを agent 所有に揃えるための最小実装
  * (エントリ数が少ない workdir 前提。fs.cp に uid/gid オプションは無いため
@@ -368,6 +387,7 @@ export class SessionRunner {
 	private readonly reactions: Reactions;
 	private readonly workdirStorage: WorkdirStorage | undefined;
 	private readonly extensionPaths: string[];
+	private readonly skillsDir: string | undefined;
 	private readonly workdirRoot: string;
 	private readonly piBinary: string | undefined;
 	private readonly model: string | undefined;
@@ -390,6 +410,7 @@ export class SessionRunner {
 		this.reactions = options.reactions;
 		this.workdirStorage = options.workdirStorage;
 		this.extensionPaths = options.extensionPaths;
+		this.skillsDir = options.skillsDir;
 		this.workdirRoot = options.workdirRoot ?? "/tmp/pi-chat-runner/sessions";
 		this.piBinary = options.piBinary;
 		this.model = options.model;
@@ -815,6 +836,12 @@ export class SessionRunner {
 							: {}),
 					})
 				: undefined;
+		// skillsDir が指定されていても実体のあるエントリが無ければ --skill を渡さない
+		// (session-runtime.md §5。リポジトリの skills/ は .gitkeep のみで該当)
+		const skillPath =
+			this.skillsDir !== undefined && (await hasSkillEntries(this.skillsDir))
+				? this.skillsDir
+				: undefined;
 		const proc = new PiProcess({
 			sessionPath,
 			extensionPaths: this.extensionPaths,
@@ -823,6 +850,7 @@ export class SessionRunner {
 			...(this.piBinary !== undefined ? { piBinary: this.piBinary } : {}),
 			...(model !== undefined ? { model } : {}),
 			...(this.provider !== undefined ? { provider: this.provider } : {}),
+			...(skillPath !== undefined ? { skillPath } : {}),
 			...(doc?.tools !== undefined ? { tools: doc.tools } : {}),
 			...(doc?.excludeTools !== undefined
 				? { excludeTools: doc.excludeTools }

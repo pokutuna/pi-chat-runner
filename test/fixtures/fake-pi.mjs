@@ -20,6 +20,8 @@
 // - stdin が閉じたら終了する (PiProcess.stop の graceful パス)
 // - 起動時に <workdir>/env-seen.json へ process.env のスナップショットを書く
 //   (SessionRunner → PiProcess の extraEnv 透過をテストから確認するため)
+// - 起動時に <workdir>/argv-seen.json へ process.argv (先頭 2 要素を除く実引数) を書く
+//   (SessionRunner → PiProcess → buildPiArgs の --skill 等の透過をテストから確認するため)
 
 import { appendFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -37,6 +39,10 @@ if (!sessionPath) {
 const workdir = dirname(sessionPath);
 const commandsLog = join(workdir, "commands.jsonl");
 writeFileSync(join(workdir, "env-seen.json"), JSON.stringify(process.env));
+writeFileSync(
+	join(workdir, "argv-seen.json"),
+	JSON.stringify(process.argv.slice(2)),
+);
 
 const systemPrompt = argValue("--append-system-prompt") ?? "";
 const fallbackMatch = systemPrompt.match(

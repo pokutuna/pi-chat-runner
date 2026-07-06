@@ -111,6 +111,10 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 				new URL("../extensions/permission-gate.ts", import.meta.url),
 			),
 		],
+		// tsx 実行時は <repo>/src/../skills、build 後は <repo>/dist/../skills を指す。
+		// 固定パス規約 (session-runtime.md §5) — 空ディレクトリなら SessionRunner 側で
+		// --skill を渡さない判断をするため、ここでは常にこのパスを渡す
+		skillsDir: fileURLToPath(new URL("../skills", import.meta.url)),
 		...(options.model !== undefined ? { model: options.model } : {}),
 		...(options.provider !== undefined ? { provider: options.provider } : {}),
 		...(options.extraEnv !== undefined &&

@@ -23,6 +23,7 @@ import { type ChatPoster, ReplyRouter } from "../../src/reply/router.js";
 import type { PiPermissionConfig } from "../../src/session/runner.js";
 import {
 	computeKickDelayMs,
+	hasSkillEntries,
 	isIdleExpired,
 	renderEvent,
 	replyThreadKeyOf,
@@ -143,6 +144,7 @@ interface Harness {
 	logLines: () => Record<string, unknown>[];
 	commandsLog(channelId: string, threadTs: string): Promise<string[]>;
 	envSeen(channelId: string, threadTs: string): Promise<Record<string, string>>;
+	argvSeen(channelId: string, threadTs: string): Promise<string[]>;
 }
 
 interface HarnessOptions {
@@ -159,6 +161,7 @@ interface HarnessOptions {
 	agentHome?: string;
 	piPermission?: PiPermissionConfig;
 	turnTimeoutMs?: number;
+	skillsDir?: string;
 }
 
 async function harness(
@@ -212,6 +215,9 @@ async function harness(
 		...(options.turnTimeoutMs !== undefined
 			? { turnTimeoutMs: options.turnTimeoutMs }
 			: {}),
+		...(options.skillsDir !== undefined
+			? { skillsDir: options.skillsDir }
+			: {}),
 	});
 	return {
 		runner,
@@ -230,6 +236,13 @@ async function harness(
 		envSeen: async (channelId, threadTs) => {
 			const raw = await readFile(
 				join(workdirRoot, channelId, threadTs, "env-seen.json"),
+				"utf-8",
+			);
+			return JSON.parse(raw);
+		},
+		argvSeen: async (channelId, threadTs) => {
+			const raw = await readFile(
+				join(workdirRoot, channelId, threadTs, "argv-seen.json"),
 				"utf-8",
 			);
 			return JSON.parse(raw);
@@ -767,6 +780,59 @@ describe("SessionRunner (fake-pi integration)", () => {
 		);
 		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
 	});
+
+	it("skillsDir に実体のあるエントリがあれば --skill <dir> を渡す", async () => {
+		const skillsDir = await mkdtemp(join(tmpdir(), "pi-chat-runner-skills-"));
+		await mkdir(join(skillsDir, "example-skill"), { recursive: true });
+		await writeFile(
+			join(skillsDir, "example-skill", "SKILL.md"),
+			"# example\n",
+		);
+		const h = await harness({}, { skillsDir });
+		const trigger = message({ mentionsBot: true, text: "with skill" });
+
+		await h.runner.handle(trigger);
+
+		await waitFor(() => h.poster.calls.length === 1, "reply posted");
+		const argv = await h.argvSeen("C01", trigger.id);
+		const skillIndex = argv.indexOf("--skill");
+		expect(skillIndex).toBeGreaterThanOrEqual(0);
+		expect(argv[skillIndex + 1]).toBe(skillsDir);
+
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+	});
+
+	it("skillsDir が空 (.gitkeep のみ) のときは --skill を渡さない", async () => {
+		const skillsDir = await mkdtemp(join(tmpdir(), "pi-chat-runner-skills-"));
+		await writeFile(join(skillsDir, ".gitkeep"), "");
+		const h = await harness({}, { skillsDir });
+		const trigger = message({ mentionsBot: true, text: "without skill" });
+
+		await h.runner.handle(trigger);
+
+		await waitFor(() => h.poster.calls.length === 1, "reply posted");
+		const argv = await h.argvSeen("C01", trigger.id);
+		expect(argv).not.toContain("--skill");
+
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+	});
+
+	it("skillsDir が未存在のディレクトリのときも --skill を渡さない", async () => {
+		const skillsDir = join(
+			await mkdtemp(join(tmpdir(), "pi-chat-runner-skills-")),
+			"does-not-exist",
+		);
+		const h = await harness({}, { skillsDir });
+		const trigger = message({ mentionsBot: true, text: "missing skills dir" });
+
+		await h.runner.handle(trigger);
+
+		await waitFor(() => h.poster.calls.length === 1, "reply posted");
+		const argv = await h.argvSeen("C01", trigger.id);
+		expect(argv).not.toContain("--skill");
+
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+	});
 });
 
 describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
@@ -1298,6 +1364,34 @@ describe("computeKickDelayMs", () => {
 		expect(
 			computeKickDelayMs({ nowMs, firstPendingAtMs: nowMs, debounceSec: 0.5 }),
 		).toBe(500);
+	});
+});
+
+describe("hasSkillEntries", () => {
+	it("SKILL.md 等の実体があれば true を返す", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "pi-chat-runner-skills-"));
+		await mkdir(join(dir, "example-skill"), { recursive: true });
+		await writeFile(join(dir, "example-skill", "SKILL.md"), "# example\n");
+		expect(await hasSkillEntries(dir)).toBe(true);
+	});
+
+	it(".gitkeep のみのディレクトリは false を返す", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "pi-chat-runner-skills-"));
+		await writeFile(join(dir, ".gitkeep"), "");
+		expect(await hasSkillEntries(dir)).toBe(false);
+	});
+
+	it("空ディレクトリは false を返す", async () => {
+		const dir = await mkdtemp(join(tmpdir(), "pi-chat-runner-skills-"));
+		expect(await hasSkillEntries(dir)).toBe(false);
+	});
+
+	it("存在しないディレクトリは false を返す", async () => {
+		const dir = join(
+			await mkdtemp(join(tmpdir(), "pi-chat-runner-skills-")),
+			"does-not-exist",
+		);
+		expect(await hasSkillEntries(dir)).toBe(false);
 	});
 });
 
