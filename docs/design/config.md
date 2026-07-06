@@ -63,6 +63,7 @@ interface ChannelDoc {
   session?: {              // セッション (文脈) の単位 ([session-model.md](session-model.md) §3)
     mode?: "thread" | "channel";  // 既定 thread。dm の既定は channel
     idleResetMinutes?: number;    // channel モードのみ。無活動で transcript を世代交代
+    maxTranscriptKb?: number;     // channel モードのみ。transcript がこのサイズ超過で世代交代
   };
   reply?: {                // チャンネル直下トリガーへの返信先 ([session-model.md](session-model.md) §3)
     mode?: "thread" | "flat";     // 既定 thread。dm の既定は flat

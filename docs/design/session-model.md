@@ -120,6 +120,10 @@ thread_key が併存し、ホストが宛先解決する」というモデルが
   2. session=thread + reply=flat は許可するが warn (意味が薄い)。
 - **channel モードは idle リセットとセット**: 前回活動から N 分超えたら transcript を
   世代交代して新規開始 (時間はキーに入れない、の帰結)。transcript の際限ない肥大も防ぐ。
+- **サイズでも世代交代できる** (`maxTranscriptKb`): 長さの上限自体は pi の自動 compaction が
+  守るが、再開初手の compaction コスト (全履歴を入力に食う要約 1 回 + 初ターンの遅延) を
+  避けたい場合に、kick 時の transcript ファイルサイズで先回りして切る。バイト数はトークンの
+  粗い代理だが、しきい値用途には十分。トークン基準 (usage 累計の永続化) は必要になったら。
 - DM は予約名 `dm` の既定を `session: channel` + `reply: flat` とし、
   追加設定なしで「1 つの続いた会話」になる。implicit prompt cache の効率面でも、
   メッセージ単位セッションより transcript prefix の再利用が効く。
