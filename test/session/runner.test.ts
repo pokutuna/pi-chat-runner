@@ -20,7 +20,10 @@ import { describe, expect, it } from "vitest";
 import type { InboundMessage } from "../../src/ingress/chat-event.js";
 import { Reactions } from "../../src/reply/reactions.js";
 import { type ChatPoster, ReplyRouter } from "../../src/reply/router.js";
-import type { PiPermissionConfig } from "../../src/session/runner.js";
+import type {
+	MentionFormat,
+	PiPermissionConfig,
+} from "../../src/session/runner.js";
 import {
 	computeKickDelayMs,
 	hasSkillEntries,
@@ -162,6 +165,7 @@ interface HarnessOptions {
 	piPermission?: PiPermissionConfig;
 	turnTimeoutMs?: number;
 	skillsDir?: string;
+	mentionFormat?: MentionFormat;
 }
 
 async function harness(
@@ -218,6 +222,9 @@ async function harness(
 		...(options.skillsDir !== undefined
 			? { skillsDir: options.skillsDir }
 			: {}),
+		// SessionRunner では必須パラメータ。テストでは既定として Slack の
+		// `<@USER_ID>` 記法を使う (個々のテストが上書きしない限り)
+		mentionFormat: options.mentionFormat ?? ((id) => `<@${id}>`),
 	});
 	return {
 		runner,
@@ -285,6 +292,41 @@ describe("SessionRunner (fake-pi integration)", () => {
 			await h.store.leases.acquire(threadKey, "probe", 1000),
 		).not.toBeNull();
 		expect((await h.store.sessions.get(threadKey))?.status).toBe("finished");
+	});
+
+	it("mentionFormat に Slack の記法を渡すと、system prompt にその記法の説明が含まれる", async () => {
+		const h = await harness({}, { mentionFormat: (id) => `<@${id}>` });
+		const trigger = message({
+			mentionsBot: true,
+			text: "mention format default",
+		});
+
+		await h.runner.handle(trigger);
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+		const argv = await h.argvSeen("C01", trigger.id);
+		const idx = argv.indexOf("--append-system-prompt");
+		expect(idx).toBeGreaterThanOrEqual(0);
+		const systemPrompt = argv[idx + 1] ?? "";
+		expect(systemPrompt).toContain("<@USER_ID>");
+	});
+
+	it("mentionFormat を注入すると、system prompt にその記法が反映される", async () => {
+		const h = await harness({}, { mentionFormat: (id) => `@${id}` });
+		const trigger = message({
+			mentionsBot: true,
+			text: "mention format custom",
+		});
+
+		await h.runner.handle(trigger);
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+		const argv = await h.argvSeen("C01", trigger.id);
+		const idx = argv.indexOf("--append-system-prompt");
+		expect(idx).toBeGreaterThanOrEqual(0);
+		const systemPrompt = argv[idx + 1] ?? "";
+		expect(systemPrompt).toContain("@USER_ID");
+		expect(systemPrompt).not.toContain("<@USER_ID>");
 	});
 
 	it("logs turn usage aggregated from agent_end.messages", async () => {

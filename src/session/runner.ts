@@ -51,15 +51,29 @@ import {
 } from "./rpc.js";
 import { buildPiPermissionOptions, PiProcess } from "./runtime.js";
 
-/** app 共通プロンプト。ChannelDoc.systemPrompt はこれへの追記分 (architecture.md §2) */
+/** app 共通プロンプトのプラットフォーム中立な固定部分。ChannelDoc.systemPrompt は
+ * これへの追記分 (architecture.md §2)。mention 記法の説明は mentionFormat に依存する
+ * ため別関数 (mentionInstruction) で組み立て、buildSystemPrompt で結合する */
 const APP_SYSTEM_PROMPT = [
-	"You are an assistant running inside a Slack thread.",
+	"You are an assistant running inside a chat thread.",
 	"Your response reaches the user ONLY through the reply(thread_key, text) tool;",
 	"plain assistant text is never delivered.",
 	"If no response is needed, simply do not call reply.",
-	"Users appear as `name (USER_ID)`; to @-mention one in a reply,",
-	"write `<@USER_ID>` (e.g. `<@U12345>`), not the plain name.",
 ].join(" ");
+
+/** ユーザーへの言及をレンダリングする関数 (返信本文に埋め込む記法)。
+ * プラットフォームごとに記法が異なるため SessionRunnerOptions では必須
+ * (bridge が利用先プラットフォームの記法を渡す。bridge 以外の利用者は自分で実装を渡す) */
+export type MentionFormat = (userId: string) => string;
+
+/** mention 記法の説明文を組み立てる。mentionFormat の出力例をそのまま
+ * システムプロンプトへ埋め込み、実際の記法をエージェントに示す */
+function mentionInstruction(mentionFormat: MentionFormat): string {
+	return (
+		"Users appear as `name (USER_ID)`; to mention one in a reply, write " +
+		`${mentionFormat("USER_ID")} (not the plain name).`
+	);
+}
 
 /** Node Permission Model 有効化の静的パラメタ (session-runtime.md §6)。
  * workdir / home はセッションごとに決まるため kick 時に buildPiPermissionOptions
@@ -129,6 +143,10 @@ export interface SessionRunnerOptions {
 	turnTimeoutMs?: number;
 	/** lease の owner 識別子。既定 `hostname:pid` */
 	owner?: string;
+	/** ユーザーへの言及をレンダリングする関数 (返信本文に埋め込む記法)。プラットフォーム
+	 * ごとに記法が異なるため必須 (bridge が利用先プラットフォームの記法を渡す。
+	 * bridge 以外の利用者は自分で実装を渡す) */
+	mentionFormat: MentionFormat;
 	logger?: Logger;
 }
 
@@ -401,6 +419,7 @@ export class SessionRunner {
 	private readonly lingerMs: number;
 	private readonly turnTimeoutMs: number;
 	private readonly owner: string;
+	private readonly mentionFormat: MentionFormat;
 	private readonly logger: Logger;
 
 	constructor(options: SessionRunnerOptions) {
@@ -424,6 +443,7 @@ export class SessionRunner {
 		this.lingerMs = options.lingerMs ?? 3_000;
 		this.turnTimeoutMs = options.turnTimeoutMs ?? 600_000;
 		this.owner = options.owner ?? `${hostname()}:${process.pid}`;
+		this.mentionFormat = options.mentionFormat;
 		this.logger = options.logger ?? rootLogger.child({ component: "session" });
 	}
 
@@ -846,7 +866,11 @@ export class SessionRunner {
 			sessionPath,
 			extensionPaths: this.extensionPaths,
 			cwd: workdirReal,
-			appendSystemPrompt: buildSystemPrompt(sessionKey, doc),
+			appendSystemPrompt: buildSystemPrompt(
+				sessionKey,
+				doc,
+				this.mentionFormat,
+			),
 			...(this.piBinary !== undefined ? { piBinary: this.piBinary } : {}),
 			...(model !== undefined ? { model } : {}),
 			...(this.provider !== undefined ? { provider: this.provider } : {}),
@@ -1165,7 +1189,7 @@ export class SessionRunner {
 		this.clearTurnTimeout(record);
 
 		// register 済み (kick で必ず register している) なので deliver できる。
-		// Slack への通知が失敗してもセッションの畳み込みは続ける
+		// 通知の配達が失敗してもセッションの畳み込みは続ける
 		await this.router
 			.deliver({ thread_key: sessionKey, text: options.noticeText })
 			.catch((err) => {
@@ -1326,9 +1350,14 @@ export class SessionRunner {
 	}
 }
 
-/** app 共通 + ChannelDoc.systemPrompt + thread_key の指示 (session-runtime.md §2) */
-function buildSystemPrompt(sessionKey: string, doc: ChannelDoc | null): string {
-	const parts = [APP_SYSTEM_PROMPT];
+/** app 共通 + mention 記法の説明 + ChannelDoc.systemPrompt + thread_key の指示
+ * (session-runtime.md §2) */
+function buildSystemPrompt(
+	sessionKey: string,
+	doc: ChannelDoc | null,
+	mentionFormat: MentionFormat,
+): string {
+	const parts = [APP_SYSTEM_PROMPT, mentionInstruction(mentionFormat)];
 	if (doc?.systemPrompt !== undefined) parts.push(doc.systemPrompt.trim());
 	parts.push(
 		"Each incoming message is annotated with its thread_key. When calling " +
