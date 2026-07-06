@@ -5,6 +5,12 @@ features:
   bot_user:
     display_name: pi-chat-runner
     always_online: true
+  # DM (im) を受けるための入力欄。これが無いと App の Messages タブが
+  # read-only になり、ユーザーが bot に DM を送れない (DM 自体の受信は
+  # im:history + message.im 側)。DM の起動既定は passthrough (docs/design/config.md §2)
+  app_home:
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: false
 oauth_config:
   scopes:
     bot:
