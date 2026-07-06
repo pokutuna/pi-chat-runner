@@ -3,6 +3,8 @@
  * 参照: pi-coding-agent docs/rpc.md
  */
 
+import type { ReplyPayload } from "../reply/router.js";
+
 /** stdin に書く RPC コマンド (Step 2 で使う部分のみ) */
 export type RpcCommand =
 	| {
@@ -99,12 +101,6 @@ export function isToolExecutionEnd(
 
 export function isAgentEnd(event: PiEvent): event is AgentEndEvent {
 	return event.type === "agent_end";
-}
-
-/** reply ツールの引数 (extensions/reply.ts が details に詰めて返す形) */
-export interface ReplyPayload {
-	thread_key: string;
-	text: string;
 }
 
 /** tool_execution_end イベントから reply の引数を取り出す。reply 以外や形不正は null */

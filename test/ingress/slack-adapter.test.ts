@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest";
 import type {
 	InboundMessage,
 	ReactionEvent,
-} from "../src/ingress/chat-event.js";
-import { SlackIngressAdapter } from "../src/ingress/slack-adapter.js";
+} from "../../src/ingress/chat-event.js";
+import { SlackIngressAdapter } from "../../src/ingress/slack-adapter.js";
 
 const BOT_USER_ID = "UBOT123";
 

@@ -64,7 +64,7 @@ export {
 	type ChannelDocFile,
 	ChannelDocFileSchema,
 	ChannelDocSchema,
-	type Gate,
+	type GateConfig,
 	type Trigger,
 } from "./store/channel-doc.js";
 export {
@@ -83,3 +83,7 @@ export type {
 	StateStore,
 } from "./store/interfaces.js";
 export { InMemoryStateStore } from "./store/memory.js";
+export {
+	CopyWorkdirStorage,
+	type WorkdirStorage,
+} from "./store/workdir-storage.js";

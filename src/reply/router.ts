@@ -7,7 +7,12 @@
 
 import type { Logger } from "../logger.js";
 import { rootLogger } from "../logger.js";
-import type { ReplyPayload } from "../session/rpc.js";
+
+/** reply ツールの引数 (extensions/reply.ts が details に詰めて返す形) */
+export interface ReplyPayload {
+	thread_key: string;
+	text: string;
+}
 
 /** 投稿先。Slack の会話座標は (channelId, threadTs) の 2 つだけ (architecture.md §0)。
  * threadTs は省略時はチャンネル直下に投稿する (reply.mode: flat) */

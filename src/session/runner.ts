@@ -35,10 +35,7 @@ import type { Logger } from "../logger.js";
 import { rootLogger } from "../logger.js";
 import type { Reactions } from "../reply/reactions.js";
 import type { ReplyRouter } from "../reply/router.js";
-import type {
-	ChannelDoc,
-	Gate as ChannelGateSpec,
-} from "../store/channel-doc.js";
+import type { ChannelDoc, GateConfig } from "../store/channel-doc.js";
 import { type ConfigSource, DM_CHANNEL } from "../store/config-source.js";
 import { inboxItemId } from "../store/inbox-item.js";
 import type { InboxItem, Lease, StateStore } from "../store/interfaces.js";
@@ -229,7 +226,7 @@ function renderItems(items: InboxItem[]): string {
  * (YAML に classifier を書いても動き続ける。fail-loud にはしない)。
  */
 export function toGateSpecs(
-	gates: ChannelGateSpec[],
+	gates: GateConfig[],
 	warn: (message: string) => void = (message) => console.warn(message),
 ): GateSpec[] {
 	const specs: GateSpec[] = [];

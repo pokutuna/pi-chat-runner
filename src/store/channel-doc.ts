@@ -89,5 +89,5 @@ export const ChannelDocFileSchema = ChannelDocSchema.extend({
 
 export type ChannelDocFile = z.infer<typeof ChannelDocFileSchema>;
 
-export type Gate = z.infer<typeof GateSchema>;
+export type GateConfig = z.infer<typeof GateSchema>;
 export type Trigger = z.infer<typeof TriggerSchema>;
