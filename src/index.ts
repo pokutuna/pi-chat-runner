@@ -29,6 +29,12 @@ export {
 	type SlackRawEvent,
 	type SlackReactionAddedEvent,
 } from "./ingress/slack-adapter.js";
+// 自前 EventSource を書く利用者向け: UserID → 表示名解決 (renderEvent / mention 展開の enrich)
+export {
+	enrichEvent,
+	SlackUserResolver,
+	type UserResolver,
+} from "./ingress/user-resolver.js";
 export type { Logger } from "./logger.js";
 export { type ReactionClient, Reactions } from "./reply/reactions.js";
 export {

@@ -20,6 +20,8 @@ oauth_config:
     - channels:history
     - groups:history
     - im:history
+    # メッセージ描画時の UserID → 表示名解決 (users.info)。追加後は再インストールが必要
+    - users:read
 settings:
   event_subscriptions:
     bot_events:

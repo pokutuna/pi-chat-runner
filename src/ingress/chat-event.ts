@@ -18,6 +18,7 @@ export interface ConversationRef {
 export interface Sender {
 	id: string;
 	isBot: boolean;
+	/** 表示名。EventSource/bridge 層で解決できた場合のみ入る。無ければ id を使う。 */
 	displayName?: string;
 }
 

@@ -10,8 +10,9 @@
 
 import { fileURLToPath } from "node:url";
 import type { WebClient } from "@slack/web-api";
-import type { ChatEvent } from "./ingress/chat-event.js";
+import type { ChatEvent, InboundMessage } from "./ingress/chat-event.js";
 import type { Ack, EventSource } from "./ingress/event-source.js";
+import { enrichEvent, SlackUserResolver } from "./ingress/user-resolver.js";
 import type { Logger } from "./logger.js";
 import { rootLogger } from "./logger.js";
 import { Reactions } from "./reply/reactions.js";
@@ -47,6 +48,11 @@ export interface BridgeOptions {
 export async function startBridge(options: BridgeOptions): Promise<void> {
 	const logger = options.logger ?? rootLogger.child({ component: "server" });
 	const { web, eventSource, store, configSource } = options;
+
+	// メッセージ描画時の UserID → 表示名解決 (renderEvent / mention 展開)
+	const resolver = new SlackUserResolver({
+		usersInfo: (userId) => web.users.info({ user: userId }),
+	});
 
 	const runner = new SessionRunner({
 		configSource,
@@ -153,10 +159,13 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 			return;
 		}
 
+		// enrichEvent は kind を変えないため、message であることは維持される
+		const enriched = (await enrichEvent(event, resolver)) as InboundMessage;
+
 		try {
-			await runner.handle(event);
+			await runner.handle(enriched);
 		} catch (err) {
-			logger.error({ eventId: event.id, err }, "failed to handle event");
+			logger.error({ eventId: enriched.id, err }, "failed to handle event");
 		}
 	});
 
