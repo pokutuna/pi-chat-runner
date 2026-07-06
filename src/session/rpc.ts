@@ -185,6 +185,76 @@ export function extractUsageTotals(event: AgentEndEvent): UsageTotals {
 	return totals;
 }
 
+function preview(value: unknown, maxChars = 200): string {
+	let text: string;
+	try {
+		text = typeof value === "string" ? value : JSON.stringify(value);
+	} catch {
+		text = String(value);
+	}
+	return text.length > maxChars ? `${text.slice(0, maxChars)}...` : text;
+}
+
+/**
+ * pi イベントの debug ログ用概要フィールド。ペイロード全体は大きく機微も含みうる
+ * ため出さず、デバッグに効く要点だけ抜き出す。null を返したイベント
+ * (message_update / tool_execution_update のストリーミング差分) はログしない —
+ * 1 ターンで数百行出て他のログを埋めてしまうため。
+ */
+export function piEventLogFields(
+	event: PiEvent,
+): Record<string, unknown> | null {
+	const e = event as Record<string, unknown>;
+	switch (event.type) {
+		case "message_update":
+		case "tool_execution_update":
+			return null;
+		case "tool_execution_start":
+			return {
+				toolName: e.toolName,
+				toolCallId: e.toolCallId,
+				args: preview(e.args),
+			};
+		case "tool_execution_end": {
+			const end = event as ToolExecutionEndEvent;
+			const resultChars = (end.result?.content ?? []).reduce(
+				(sum, c) =>
+					sum + (c.type === "text" ? (c as { text: string }).text.length : 0),
+				0,
+			);
+			return {
+				toolName: end.toolName,
+				toolCallId: end.toolCallId,
+				isError: end.isError,
+				resultChars,
+			};
+		}
+		case "message_end": {
+			const message = e.message;
+			if (typeof message !== "object" || message === null) return {};
+			const m = message as Record<string, unknown>;
+			return {
+				role: m.role,
+				...(m.stopReason !== undefined ? { stopReason: m.stopReason } : {}),
+				...(typeof m.errorMessage === "string"
+					? { errorMessage: preview(m.errorMessage) }
+					: {}),
+			};
+		}
+		case "queue_update":
+			return {
+				steering: Array.isArray(e.steering) ? e.steering.length : 0,
+				followUp: Array.isArray(e.followUp) ? e.followUp.length : 0,
+			};
+		case "compaction_start":
+			return { reason: e.reason };
+		case "extension_error":
+			return { error: preview(e.error) };
+		default:
+			return {};
+	}
+}
+
 /**
  * 厳密 JSONL のインクリメンタルデコーダ。
  * rpc.md の指定どおり LF のみをレコード区切りにする (Node readline は

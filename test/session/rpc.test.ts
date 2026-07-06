@@ -7,6 +7,7 @@ import {
 	isToolExecutionEnd,
 	JsonlDecoder,
 	parsePiOutputLine,
+	piEventLogFields,
 	type ToolExecutionEndEvent,
 } from "../../src/session/rpc.js";
 
@@ -272,5 +273,96 @@ describe("extractUsageTotals", () => {
 			],
 		});
 		expect(totals.costTotal).toBe(0);
+	});
+});
+
+describe("piEventLogFields", () => {
+	it("returns null for streaming delta events", () => {
+		expect(piEventLogFields({ type: "message_update" })).toBeNull();
+		expect(piEventLogFields({ type: "tool_execution_update" })).toBeNull();
+	});
+
+	it("extracts toolName and args preview from tool_execution_start", () => {
+		const fields = piEventLogFields({
+			type: "tool_execution_start",
+			toolCallId: "call_1",
+			toolName: "bash",
+			args: { command: "ls -la" },
+		});
+		expect(fields).toEqual({
+			toolName: "bash",
+			toolCallId: "call_1",
+			args: '{"command":"ls -la"}',
+		});
+	});
+
+	it("truncates long args in tool_execution_start", () => {
+		const fields = piEventLogFields({
+			type: "tool_execution_start",
+			toolCallId: "call_1",
+			toolName: "bash",
+			args: { command: "x".repeat(500) },
+		});
+		expect((fields?.args as string).length).toBeLessThanOrEqual(203);
+		expect(fields?.args).toMatch(/\.\.\.$/);
+	});
+
+	it("extracts result size and error flag from tool_execution_end", () => {
+		const event: ToolExecutionEndEvent = {
+			type: "tool_execution_end",
+			toolCallId: "call_1",
+			toolName: "read",
+			result: {
+				content: [
+					{ type: "text", text: "hello" },
+					{ type: "image", data: "..." },
+				],
+			},
+			isError: false,
+		};
+		expect(piEventLogFields(event)).toEqual({
+			toolName: "read",
+			toolCallId: "call_1",
+			isError: false,
+			resultChars: 5,
+		});
+	});
+
+	it("extracts role and stopReason from message_end", () => {
+		const fields = piEventLogFields({
+			type: "message_end",
+			message: { role: "assistant", stopReason: "toolUse" },
+		});
+		expect(fields).toEqual({ role: "assistant", stopReason: "toolUse" });
+	});
+
+	it("includes errorMessage from message_end when present", () => {
+		const fields = piEventLogFields({
+			type: "message_end",
+			message: {
+				role: "assistant",
+				stopReason: "error",
+				errorMessage: "boom",
+			},
+		});
+		expect(fields).toEqual({
+			role: "assistant",
+			stopReason: "error",
+			errorMessage: "boom",
+		});
+	});
+
+	it("reports queue lengths for queue_update", () => {
+		const fields = piEventLogFields({
+			type: "queue_update",
+			steering: ["a", "b"],
+			followUp: [],
+		});
+		expect(fields).toEqual({ steering: 2, followUp: 0 });
+	});
+
+	it("returns empty fields for other event types", () => {
+		expect(piEventLogFields({ type: "agent_start" })).toEqual({});
+		expect(piEventLogFields({ type: "turn_end" })).toEqual({});
 	});
 });

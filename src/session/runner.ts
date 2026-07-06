@@ -48,6 +48,7 @@ import {
 	extractUsageTotals,
 	isAgentEnd,
 	isToolExecutionEnd,
+	piEventLogFields,
 	type UsageTotals,
 } from "./rpc.js";
 import { buildPiPermissionOptions, PiProcess } from "./runtime.js";
@@ -522,9 +523,15 @@ export class SessionRunner {
 		});
 
 		proc.on("event", (piEvent) => {
-			// ペイロード全体はログに残さない (大きい・機微を含みうる)。type だけで
-			// 「pi が動いているか」をデバッグ時に見える状態にする
-			this.logger.debug({ threadKey, eventType: piEvent.type }, "pi event");
+			// ペイロード全体はログに残さない (大きい・機微を含みうる)。イベント種別ごとの
+			// 概要フィールドだけ出す。ストリーミング差分は null が返るのでログしない
+			const logFields = piEventLogFields(piEvent);
+			if (logFields !== null) {
+				this.logger.debug(
+					{ threadKey, eventType: piEvent.type, ...logFields },
+					"pi event",
+				);
+			}
 			if (isToolExecutionEnd(piEvent)) {
 				const payload = extractReply(piEvent);
 				if (payload !== null) {
