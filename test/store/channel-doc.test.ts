@@ -120,7 +120,7 @@ describe("ChannelDocSchema", () => {
 
 	it("accepts session/reply fields", () => {
 		const result = ChannelDocSchema.safeParse({
-			session: { mode: "channel", idleResetMinutes: 30 },
+			session: { mode: "channel", idleResetMinutes: 30, maxTranscriptKb: 512 },
 			reply: { mode: "flat" },
 		});
 		expect(result.success).toBe(true);

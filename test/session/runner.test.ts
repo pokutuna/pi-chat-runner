@@ -26,9 +26,9 @@ import {
 	renderEvent,
 	replyThreadKeyOf,
 	resolveSessionPolicy,
+	type SessionPolicy,
 	SessionRunner,
 	sessionKeyOf,
-	type SessionPolicy,
 	toGateSpecs,
 } from "../../src/session/runner.js";
 import type { ChannelDoc } from "../../src/store/channel-doc.js";
@@ -502,6 +502,56 @@ describe("SessionRunner (fake-pi integration)", () => {
 				.logLines()
 				.some((line) => line.msg === "idle reset: transcript rotated"),
 		).toBe(true);
+	});
+
+	it("session.maxTranscriptKb (channel モード): transcript サイズが閾値を超えていたら世代交代する", async () => {
+		const h = await harness({
+			C01: { session: { mode: "channel", maxTranscriptKb: 1 } },
+		});
+		const workdir = join(h.workdirRoot, "C01", "channel");
+
+		// 事前に workdir と 2KB 程度の transcript.jsonl を用意する (閾値 1KB 超過)。
+		// size 判定は store に依存しないため SessionDoc の事前 put は不要
+		await mkdir(workdir, { recursive: true });
+		await writeFile(join(workdir, "transcript.jsonl"), "x".repeat(2 * 1024));
+
+		const trigger = message({ mentionsBot: true, text: "size reset please" });
+		await h.runner.handle(trigger);
+		await waitFor(() => h.poster.calls.length === 1, "reply posted");
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+		const entries = await readdir(workdir);
+		expect(entries.some((name) => /^transcript-\d+\.jsonl$/.test(name))).toBe(
+			true,
+		);
+		expect(entries).not.toContain("transcript.jsonl");
+
+		expect(
+			h
+				.logLines()
+				.some((line) => line.msg === "size reset: transcript rotated"),
+		).toBe(true);
+	});
+
+	it("session.maxTranscriptKb (channel モード): transcript サイズが閾値未満なら世代交代しない", async () => {
+		const h = await harness({
+			C01: { session: { mode: "channel", maxTranscriptKb: 10 } },
+		});
+		const workdir = join(h.workdirRoot, "C01", "channel");
+
+		await mkdir(workdir, { recursive: true });
+		await writeFile(join(workdir, "transcript.jsonl"), "x".repeat(100));
+
+		const trigger = message({ mentionsBot: true, text: "no size reset" });
+		await h.runner.handle(trigger);
+		await waitFor(() => h.poster.calls.length === 1, "reply posted");
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+		const entries = await readdir(workdir);
+		expect(entries).toContain("transcript.jsonl");
+		expect(entries.some((name) => /^transcript-\d+\.jsonl$/.test(name))).toBe(
+			false,
+		);
 	});
 
 	it("stays silent but still adds the check reaction when reply is never called", async () => {

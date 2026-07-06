@@ -562,15 +562,16 @@ export class SessionRunner {
 				"session.mode=thread with reply.mode=flat is discouraged (session-model.md §3)",
 			);
 		}
-		// idleResetMinutes は channel モード専用 (session-model.md §3)。thread モードで
-		// 設定されていても効果がないため warn して無視する
+		// idleResetMinutes / maxTranscriptKb は channel モード専用 (session-model.md §3)。
+		// thread モードで設定されていても効果がないため warn して無視する
 		if (
 			policy.sessionMode === "thread" &&
-			doc?.session?.idleResetMinutes !== undefined
+			(doc?.session?.idleResetMinutes !== undefined ||
+				doc?.session?.maxTranscriptKb !== undefined)
 		) {
 			this.logger.warn(
 				{ sessionKey, channelId },
-				"session.idleResetMinutes is only effective with session.mode=channel; ignored",
+				"session.idleResetMinutes / maxTranscriptKb are only effective with session.mode=channel; ignored",
 			);
 		}
 
@@ -580,26 +581,45 @@ export class SessionRunner {
 		if (this.workdirStorage !== undefined) {
 			await this.workdirStorage.restore(sessionKey, workdir);
 		}
-		// channel モードの idle リセット (session-model.md §3): 前回活動から
-		// idleResetMinutes 超えていたら transcript を世代交代する。rotate は
-		// chown より前 (rotate されたファイルの所有権も chown で揃うため)
-		if (
-			policy.sessionMode === "channel" &&
-			doc?.session?.idleResetMinutes !== undefined
-		) {
-			const idleResetMinutes = doc.session.idleResetMinutes;
-			const previous = await this.store.sessions.get(sessionKey);
-			if (previous !== null) {
-				const now = Date.now();
-				if (isIdleExpired(previous.updatedAt, idleResetMinutes, now)) {
+		// channel モードの世代交代 (session-model.md §3): idle 超過 または transcript
+		// サイズ超過のいずれかで transcript を世代交代する。rotate は chown より前
+		// (rotate されたファイルの所有権も chown で揃うため)。判定は idle → size の順で
+		// 独立に行うが、rotate 自体は最大 1 回 (idle が発動したら size 判定は省略する)
+		if (policy.sessionMode === "channel") {
+			let rotated = false;
+			const idleResetMinutes = doc?.session?.idleResetMinutes;
+			if (idleResetMinutes !== undefined) {
+				const previous = await this.store.sessions.get(sessionKey);
+				if (previous !== null) {
+					const now = Date.now();
+					if (isIdleExpired(previous.updatedAt, idleResetMinutes, now)) {
+						await rotateTranscript(workdir, now);
+						rotated = true;
+						this.logger.info(
+							{
+								sessionKey,
+								idleResetMinutes,
+								idleMs: now - previous.updatedAt.getTime(),
+							},
+							"idle reset: transcript rotated",
+						);
+					}
+				}
+			}
+			const maxTranscriptKb = doc?.session?.maxTranscriptKb;
+			if (!rotated && maxTranscriptKb !== undefined) {
+				const info = await stat(join(workdir, "transcript.jsonl")).catch(
+					(err) => {
+						if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+						throw err;
+					},
+				);
+				if (info !== null && info.size > maxTranscriptKb * 1024) {
+					const now = Date.now();
 					await rotateTranscript(workdir, now);
 					this.logger.info(
-						{
-							sessionKey,
-							idleResetMinutes,
-							idleMs: now - previous.updatedAt.getTime(),
-						},
-						"idle reset: transcript rotated",
+						{ sessionKey, maxTranscriptKb, sizeBytes: info.size },
+						"size reset: transcript rotated",
 					);
 				}
 			}

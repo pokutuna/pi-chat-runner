@@ -66,6 +66,7 @@ export const ChannelDocSchema = z
 			.object({
 				mode: z.enum(["thread", "channel"]).optional(),
 				idleResetMinutes: z.number().positive().optional(),
+				maxTranscriptKb: z.number().positive().optional(),
 			})
 			.strict()
 			.optional(),
