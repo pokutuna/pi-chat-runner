@@ -71,6 +71,11 @@ spec:
               value: "1001"
             - name: PI_AGENT_GID
               value: "1001"
+            # gcp-metadata の環境検出 (DMI ファイル read 等) は Permission Model 下で
+            # 当てにならないため、検出をスキップして metadata server へ直行させる
+            # (server.ts の collectGcpEnv 経由で pi 子プロセスにも渡る)
+            - name: METADATA_SERVER_DETECTION
+              value: assume-present
             # REPLACE: bot の User ID (自己エコー除外・mention 判定に使う)
             - name: SLACK_BOT_USER_ID
               value: "U0000000000"

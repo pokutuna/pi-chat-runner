@@ -38,6 +38,10 @@ function collectGcpEnv(): Record<string, string> {
 		"GOOGLE_CLOUD_PROJECT",
 		"GOOGLE_CLOUD_LOCATION",
 		"GOOGLE_APPLICATION_CREDENTIALS",
+		// gcp-metadata の環境検出 (DMI ファイル read 等) は sandbox 下で当てにならない。
+		// Cloud Run では assume-present を設定して検出をスキップし metadata server へ
+		// 直行させる (gcp-metadata 8.x の METADATA_SERVER_DETECTION)
+		"METADATA_SERVER_DETECTION",
 	];
 	const env: Record<string, string> = {};
 	for (const key of keys) {
