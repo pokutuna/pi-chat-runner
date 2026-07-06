@@ -1,0 +1,7 @@
+channel: "C0000000TOOLS"
+tools:
+  - read
+  - grep
+excludeTools:
+  - write
+  - edit

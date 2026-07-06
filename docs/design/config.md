@@ -58,8 +58,15 @@ interface ChannelDoc {
   context?: string[];      // 短い参照テキスト (数 KB まで)。長い・多いものは skill へ
   trigger?: TriggerConfig; // Gate 合成 ([session-model.md](session-model.md) §5)。省略時は mention のみ
   model?: string;          // 省略時は app 既定 (gemini-3-pro)
+  tools?: string[];        // pi --tools allowlist
+  excludeTools?: string[]; // pi --exclude-tools denylist
 }
 ```
+
+`tools` / `excludeTools` は pi の `--tools` / `--exclude-tools` に渡る。`--tools` は
+built-in だけでなく extension のツールにも適用されるため、reply extension も対象になる。
+bridge の返信経路は reply 一択なので、`--tools` 指定時は reply を常に補い、
+`excludeTools` に reply を書いても無視する。両方未指定なら現状どおり全ツール有効。
 
 DM は channelId 個別の doc ではなく、予約名 `dm` の doc (`channels/dm.yaml`) を
 全 DM 共通で参照する。doc が無ければ既定 trigger は passthrough (§1 の表の通り)。

@@ -504,6 +504,10 @@ export class SessionRunner {
 			...(this.piBinary !== undefined ? { piBinary: this.piBinary } : {}),
 			...(model !== undefined ? { model } : {}),
 			...(this.provider !== undefined ? { provider: this.provider } : {}),
+			...(doc?.tools !== undefined ? { tools: doc.tools } : {}),
+			...(doc?.excludeTools !== undefined
+				? { excludeTools: doc.excludeTools }
+				: {}),
 			...(extraEnv !== undefined ? { extraEnv } : {}),
 			...(this.agentUid !== undefined ? { uid: this.agentUid } : {}),
 			...(this.agentGid !== undefined ? { gid: this.agentGid } : {}),

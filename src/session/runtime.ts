@@ -56,6 +56,13 @@ export interface PiProcessOptions {
 	appendSystemPrompt?: string;
 	/** 追加の `--skill` パス */
 	skillPath?: string;
+	/** `--tools` allowlist (channel ごとの ChannelDoc.tools)。extension ツール
+	 * (reply 含む) にも適用されるため、buildPiArgs が reply を自動補完する。
+	 * 未指定または空配列ならフラグを渡さない (全ツール有効の現状動作) */
+	tools?: string[];
+	/** `--exclude-tools` denylist (ChannelDoc.excludeTools)。reply は
+	 * buildPiArgs が黙って除外する (返信経路を落とさないため) */
+	excludeTools?: string[];
 	/** 子プロセスの cwd (workdir) */
 	cwd?: string;
 	/** allowlist (PATH, HOME) に追加で渡す env。HOME は常に agent の HOME
@@ -80,6 +87,8 @@ export function buildPiArgs(
 		| "model"
 		| "appendSystemPrompt"
 		| "skillPath"
+		| "tools"
+		| "excludeTools"
 	>,
 ): string[] {
 	const args = ["--mode", "rpc", "--session", options.sessionPath];
@@ -104,6 +113,19 @@ export function buildPiArgs(
 	if (options.appendSystemPrompt)
 		args.push("--append-system-prompt", options.appendSystemPrompt);
 	if (options.skillPath) args.push("--skill", options.skillPath);
+	// --tools は extension ツールにも効くため、reply が落ちると返信経路
+	// (config.md §5 の常時注入方針) が壊れる。allowlist を指定するチャンネルでも
+	// reply だけは黙って補ってしまい、excludeTools に reply を書いても無視する
+	if (options.tools !== undefined && options.tools.length > 0) {
+		const tools = options.tools.includes("reply")
+			? options.tools
+			: [...options.tools, "reply"];
+		args.push("--tools", tools.join(","));
+	}
+	if (options.excludeTools !== undefined) {
+		const rest = options.excludeTools.filter((tool) => tool !== "reply");
+		if (rest.length > 0) args.push("--exclude-tools", rest.join(","));
+	}
 	return args;
 }
 

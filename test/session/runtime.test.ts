@@ -102,9 +102,56 @@ describe("buildPiArgs", () => {
 			"--model",
 			"--append-system-prompt",
 			"--skill",
+			"--tools",
+			"--exclude-tools",
 		]) {
 			expect(args).not.toContain(flag);
 		}
+	});
+
+	it("appends --tools with reply auto-added when not included", () => {
+		const args = buildPiArgs({
+			sessionPath: "/s.jsonl",
+			extensionPaths: ["/e.ts"],
+			tools: ["read", "grep"],
+		});
+		expect(args[args.indexOf("--tools") + 1]).toBe("read,grep,reply");
+	});
+
+	it("does not duplicate reply when --tools already includes it", () => {
+		const args = buildPiArgs({
+			sessionPath: "/s.jsonl",
+			extensionPaths: ["/e.ts"],
+			tools: ["read", "reply", "grep"],
+		});
+		expect(args[args.indexOf("--tools") + 1]).toBe("read,reply,grep");
+	});
+
+	it("omits --tools when tools is an empty array", () => {
+		const args = buildPiArgs({
+			sessionPath: "/s.jsonl",
+			extensionPaths: ["/e.ts"],
+			tools: [],
+		});
+		expect(args).not.toContain("--tools");
+	});
+
+	it("strips reply from --exclude-tools", () => {
+		const args = buildPiArgs({
+			sessionPath: "/s.jsonl",
+			extensionPaths: ["/e.ts"],
+			excludeTools: ["write", "reply", "edit"],
+		});
+		expect(args[args.indexOf("--exclude-tools") + 1]).toBe("write,edit");
+	});
+
+	it("omits --exclude-tools entirely when only reply was excluded", () => {
+		const args = buildPiArgs({
+			sessionPath: "/s.jsonl",
+			extensionPaths: ["/e.ts"],
+			excludeTools: ["reply"],
+		});
+		expect(args).not.toContain("--exclude-tools");
 	});
 });
 

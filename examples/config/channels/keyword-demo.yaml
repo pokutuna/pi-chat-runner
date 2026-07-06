@@ -8,3 +8,5 @@ trigger:
     - kind: keyword
       pattern: "([Hh]elp|エラー)" # JS の RegExp はインラインフラグ (?i) 非対応な点に注意
     - kind: mention
+# tools: [read, grep, bash]      # 調査専用にする例 (reply は自動で許可される)
+# excludeTools: [write, edit]    # 書き込み系だけ外す例

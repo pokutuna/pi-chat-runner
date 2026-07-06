@@ -56,6 +56,11 @@ export const ChannelDocSchema = z
 		context: z.array(z.string()).optional(),
 		trigger: TriggerSchema.optional(),
 		model: z.string().optional(),
+		/** pi の --tools に渡す allowlist。--tools は extension ツール (reply 含む) にも
+		 * 適用されるため、bridge が reply を自動補完する (runtime.ts buildPiArgs) */
+		tools: z.array(z.string()).optional(),
+		/** pi の --exclude-tools に渡す denylist */
+		excludeTools: z.array(z.string()).optional(),
 	})
 	.strict();
 

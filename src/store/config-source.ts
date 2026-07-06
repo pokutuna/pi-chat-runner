@@ -146,6 +146,10 @@ async function resolveFileReferences(
 		...(context !== undefined ? { context } : {}),
 		...(doc.trigger !== undefined ? { trigger: doc.trigger } : {}),
 		...(doc.model !== undefined ? { model: doc.model } : {}),
+		...(doc.tools !== undefined ? { tools: doc.tools } : {}),
+		...(doc.excludeTools !== undefined
+			? { excludeTools: doc.excludeTools }
+			: {}),
 	};
 
 	// channel を含む YAML 形式から実行時 ChannelDoc への変換。ここで再度 strict 検証しておく

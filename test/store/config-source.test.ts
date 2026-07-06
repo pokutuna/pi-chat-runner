@@ -62,6 +62,14 @@ describe("FileConfigSource", () => {
 		expect(doc?.systemPrompt).toBe("dm prompt");
 	});
 
+	it("passes tools/excludeTools through from the channel doc", async () => {
+		const source = new FileConfigSource(join(FIXTURES_DIR, "config-tools"));
+		const doc = await source.channel("C0000000TOOLS");
+
+		expect(doc?.tools).toEqual(["read", "grep"]);
+		expect(doc?.excludeTools).toEqual(["write", "edit"]);
+	});
+
 	it("returns null when no channel doc matches", async () => {
 		const source = new FileConfigSource(join(FIXTURES_DIR, "config"));
 		const doc = await source.channel("C_NOT_FOUND");
