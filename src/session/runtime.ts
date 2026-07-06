@@ -6,6 +6,7 @@
  */
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 import {
 	JsonlDecoder,
@@ -235,14 +236,33 @@ export function buildPiPermissionOptions(options: {
 			// コマンド内容にかかわらず全て失敗する。/bin/sh はそのフォールバック
 			"/bin/bash",
 			"/bin/sh",
+			// bash tool の出力が 50KB (DEFAULT_MAX_BYTES) を超えると pi は
+			// tmpdir()/pi-bash-<id>.log へスピルする (dist/core/bash-executor.js)。
+			// 許可しないと WriteStream の unhandled 'error' で pi がツール実行中に即死する。
+			// buildPiEnv は TMPDIR を渡さないため pi から見た tmpdir() は常に /tmp
+			...piBashSpillPatterns(),
 			...(options.extraRead ?? []),
 		],
 		allowFsWrite: [
 			`${options.workdir}/*`,
 			`${options.home}/*`,
+			...piBashSpillPatterns(),
 			...(options.extraWrite ?? []),
 		],
 	};
+}
+
+/** pi の bash 出力スピルファイル (/tmp/pi-bash-*.log) の許可パターン。
+ * macOS では /tmp が /private/tmp への symlink で、Permission Model の照合は
+ * パスの実体化タイミングで揺れるため realpath 側も併記する */
+function piBashSpillPatterns(): string[] {
+	const patterns = new Set<string>(["/tmp/pi-bash-*"]);
+	try {
+		patterns.add(join(realpathSync("/tmp"), "pi-bash-*"));
+	} catch {
+		// /tmp が無い環境はそのまま (コンテナでは /tmp は実体)
+	}
+	return [...patterns];
 }
 
 /**

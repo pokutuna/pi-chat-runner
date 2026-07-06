@@ -266,7 +266,14 @@ describe("buildPiPermissionOptions (session-runtime.md §6)", () => {
 		// bash tool のシェル解決 (existsSync("/bin/bash")) を通すための許可
 		expect(options.allowFsRead).toContain("/bin/bash");
 		expect(options.allowFsRead).toContain("/bin/sh");
-		expect(options.allowFsWrite).toEqual(["/tmp/workdir/*", "/home/agent/*"]);
+		// bash tool の 50KB 超え出力スピル先 (tmpdir()/pi-bash-<id>.log)。
+		// 許可しないと大きな出力で pi が即死する。read/write 両方に要る
+		expect(options.allowFsWrite).toContain("/tmp/pi-bash-*");
+		expect(options.allowFsRead).toContain("/tmp/pi-bash-*");
+		expect(options.allowFsWrite.slice(0, 2)).toEqual([
+			"/tmp/workdir/*",
+			"/home/agent/*",
+		]);
 	});
 
 	it("appends extraWrite paths when specified", () => {
@@ -278,7 +285,12 @@ describe("buildPiPermissionOptions (session-runtime.md §6)", () => {
 			home: "/home/agent",
 			extraWrite: ["/tmp/*"],
 		});
-		expect(options.allowFsWrite).toEqual(["/wd/*", "/home/agent/*", "/tmp/*"]);
+		// extraWrite は末尾に付く (先頭 2 つは workdir/home、間に pi-bash スピル許可)
+		expect(options.allowFsWrite.slice(0, 2)).toEqual([
+			"/wd/*",
+			"/home/agent/*",
+		]);
+		expect(options.allowFsWrite.at(-1)).toBe("/tmp/*");
 	});
 
 	it("appends extraRead paths when specified (e.g. GOOGLE_APPLICATION_CREDENTIALS)", () => {
