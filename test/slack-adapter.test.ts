@@ -94,4 +94,62 @@ describe("SlackIngressAdapter.normalize", () => {
 
 		expect(result).toBeNull();
 	});
+
+	it("sets isDm=true for message events with channel_type=im", () => {
+		const result = adapter.normalize({
+			type: "message",
+			text: "hi",
+			user: "U123",
+			channel: "D123",
+			channel_type: "im",
+			ts: "1720000004.000100",
+		});
+
+		expect(result).not.toBeNull();
+		const msg = result as InboundMessage;
+		expect(msg.conversation.isDm).toBe(true);
+	});
+
+	it("does not set isDm for message events with a regular channel_type", () => {
+		const result = adapter.normalize({
+			type: "message",
+			text: "hi",
+			user: "U123",
+			channel: "C123",
+			channel_type: "channel",
+			ts: "1720000005.000100",
+		});
+
+		expect(result).not.toBeNull();
+		const msg = result as InboundMessage;
+		expect(msg.conversation.isDm).toBeUndefined();
+	});
+
+	it("falls back to isDm=true when channel_type is missing but channelId starts with D", () => {
+		const result = adapter.normalize({
+			type: "message",
+			text: "hi",
+			user: "U123",
+			channel: "D999",
+			ts: "1720000006.000100",
+		});
+
+		expect(result).not.toBeNull();
+		const msg = result as InboundMessage;
+		expect(msg.conversation.isDm).toBe(true);
+	});
+
+	it("app_mention never sets isDm (app_mention does not fire in DMs)", () => {
+		const result = adapter.normalize({
+			type: "app_mention",
+			text: `<@${BOT_USER_ID}> hello`,
+			user: "U123",
+			channel: "C123",
+			ts: "1720000007.000100",
+		});
+
+		expect(result).not.toBeNull();
+		const msg = result as InboundMessage;
+		expect(msg.conversation.isDm).toBeUndefined();
+	});
 });

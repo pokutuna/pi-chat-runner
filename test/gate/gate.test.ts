@@ -55,10 +55,16 @@ describe("createGate (registry)", () => {
 });
 
 describe("defaultGates", () => {
-	it("returns mention-only gates", () => {
-		const gates = defaultGates();
+	it("returns mention-only gates for non-DM", () => {
+		const gates = defaultGates(false);
 		expect(gates).toHaveLength(1);
 		expect(gates[0]).toBeInstanceOf(MentionGate);
+	});
+
+	it("returns passthrough gate for DM", () => {
+		const gates = defaultGates(true);
+		expect(gates).toHaveLength(1);
+		expect(gates[0]).toBeInstanceOf(PassthroughGate);
 	});
 });
 

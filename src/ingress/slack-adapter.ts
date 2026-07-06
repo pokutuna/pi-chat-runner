@@ -34,6 +34,8 @@ export interface SlackMessageLikeEvent {
 	user?: string;
 	bot_id?: string;
 	channel: string;
+	/** "im" が DM。省略される場合があるので channelId の "D" prefix で fallback する */
+	channel_type?: string;
 	ts: string;
 	thread_ts?: string;
 	[key: string]: unknown;
@@ -109,10 +111,18 @@ export class SlackIngressAdapter {
 
 		const isBot = event.bot_id !== undefined || event.user === this.botUserId;
 
-		const conversation: ConversationRef =
-			event.thread_ts !== undefined
-				? { channelId: event.channel, threadTs: event.thread_ts }
-				: { channelId: event.channel };
+		// channel_type が無い場合 (一部の payload では省略される) は channelId の "D" prefix で
+		// フォールバック判定する (Slack の DM channelId は D で始まる)。
+		const isDm =
+			event.channel_type !== undefined
+				? event.channel_type === "im"
+				: event.channel.startsWith("D");
+
+		const conversation: ConversationRef = {
+			channelId: event.channel,
+			...(event.thread_ts !== undefined ? { threadTs: event.thread_ts } : {}),
+			...(isDm ? { isDm: true } : {}),
+		};
 
 		return {
 			kind: "message",

@@ -51,9 +51,10 @@ export function createGate(spec: GateSpec): Gate {
 	}
 }
 
-/** trigger 設定が無いチャンネルの既定 = mention のみ (session-model.md §5) */
-export function defaultGates(): Gate[] {
-	return [new MentionGate()];
+/** trigger 設定が無いチャンネルの既定 = mention のみ。DM は passthrough
+ * (session-model.md §5, docs/design/config.md §1 のユースケース表)。 */
+export function defaultGates(isDm: boolean): Gate[] {
+	return isDm ? [new PassthroughGate()] : [new MentionGate()];
 }
 
 /** 複数 Gate を combinator (any/all) で畳む。短絡評価する。

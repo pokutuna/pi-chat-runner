@@ -9,6 +9,9 @@
 export interface ConversationRef {
 	channelId: string;
 	threadTs?: string;
+	/** Slack の im (DM)。DM は ChannelDoc の予約名 dm と既定 passthrough gate の対象になる
+	 * (docs/design/config.md §1, §2)。 */
+	isDm?: boolean;
 }
 
 /** 発言者。簡素版のため scope/platform は持たない。 */

@@ -61,6 +61,11 @@ interface ChannelDoc {
 }
 ```
 
+DM は channelId 個別の doc ではなく、予約名 `dm` の doc (`channels/dm.yaml`) を
+全 DM 共通で参照する。doc が無ければ既定 trigger は passthrough (§1 の表の通り)。
+チャンネルの既定 (mention) と異なるのは、DM が 1:1 の明示的な話しかけであり
+メンションが自然な操作にならないため。
+
 将来拡張 (必要になったら足す。§3 末尾):
 
 - `image?: string` — チャンネル特化イメージ。単一サービスでは同居できないため、

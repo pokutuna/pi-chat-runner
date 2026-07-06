@@ -272,6 +272,41 @@ describe("SessionRunner (fake-pi integration)", () => {
 		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
 	});
 
+	it("DM without mention spawns a session (default = passthrough)", async () => {
+		const h = await harness();
+		const trigger = message({
+			conversation: { channelId: "D01", isDm: true },
+			text: "hi there, no mention",
+		});
+
+		await h.runner.handle(trigger);
+
+		await waitFor(() => h.poster.calls.length === 1, "reply posted");
+		expect(h.poster.calls[0]).toEqual({
+			channelId: "D01",
+			threadTs: trigger.id,
+			text: `echo: ${renderEvent(trigger)}`,
+		});
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+	});
+
+	it("reserved 'dm' ChannelDoc overrides the DM default (mention-only trigger)", async () => {
+		const h = await harness({
+			dm: {
+				trigger: { combinator: "any", gates: [{ kind: "mention" }] },
+			},
+		});
+		const trigger = message({
+			conversation: { channelId: "D01", isDm: true },
+			text: "hi there, no mention",
+		});
+
+		await h.runner.handle(trigger);
+
+		expect(h.runner.activeSessionCount).toBe(0);
+		expect(h.poster.calls).toEqual([]);
+	});
+
 	it("injects ChannelDoc.context into the first prompt only", async () => {
 		const h = await harness({
 			C01: { context: ["CONTEXT-NOTE"] },

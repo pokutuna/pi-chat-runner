@@ -338,8 +338,11 @@ export class SessionRunner {
 
 		// 実行中でない: ChannelDoc → gate 評価 → trigger なら lease を取って kick
 		const channelId = event.conversation.channelId;
-		const doc = await this.loadChannelDoc(channelId);
-		const { gates, combinator } = this.resolveGates(doc);
+		const isDm = event.conversation.isDm === true;
+		// DM は channelId 個別の doc ではなく予約名 "dm" の doc を全 DM 共通で参照する
+		// (config.md §1, §2)。セッション自体は実 channelId (D...) で管理する
+		const doc = await this.loadChannelDoc(isDm ? "dm" : channelId);
+		const { gates, combinator } = this.resolveGates(doc, isDm);
 		const decision = await evaluateTrigger(gates, combinator, {
 			event,
 			recent: [],
@@ -868,19 +871,23 @@ export class SessionRunner {
 		try {
 			return await this.configSource.channel(channelId);
 		} catch (err) {
-			// YAML の壊れで受信ループを止めない。既定動作 (mention 起動) に落とす
+			// YAML の壊れで受信ループを止めない。既定動作 (mention 起動 / DM は passthrough) に落とす
 			this.logger.warn({ channelId, err }, "failed to load channel doc");
 			return null;
 		}
 	}
 
-	private resolveGates(doc: ChannelDoc | null): {
+	private resolveGates(
+		doc: ChannelDoc | null,
+		isDm: boolean,
+	): {
 		gates: Gate[];
 		combinator: GateCombinator;
 	} {
 		if (doc?.trigger === undefined) {
-			// doc なし / trigger 未設定は既定 = mention のみ (session-model.md §5)
-			return { gates: defaultGates(), combinator: "any" };
+			// doc なし / trigger 未設定は既定 = mention のみ、DM は passthrough
+			// (session-model.md §5, config.md §1)
+			return { gates: defaultGates(isDm), combinator: "any" };
 		}
 		const specs = toGateSpecs(doc.trigger.gates, (message) =>
 			this.logger.warn(message),
