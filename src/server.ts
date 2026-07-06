@@ -21,6 +21,11 @@ import { Reactions } from "./reply/reactions.js";
 import { ReplyRouter } from "./reply/router.js";
 import type { PiPermissionConfig } from "./session/runner.js";
 import { SessionRunner } from "./session/runner.js";
+import {
+	collectPassthroughEnv,
+	loadAgentConfig,
+	resolveAgentConfig,
+} from "./store/agent-config.js";
 import { FileConfigSource } from "./store/config-source.js";
 import { FirestoreStateStore } from "./store/firestore.js";
 import type { StateStore } from "./store/interfaces.js";
@@ -94,22 +99,6 @@ function parseAgentIds(): { uid?: number; gid?: number } {
 	return { uid, gid };
 }
 
-/** env TURN_TIMEOUT_MS (session-runtime.md §6 の turn timeout。既定 600_000ms =
- * 10 分は SessionRunner の既定値に委ねる) をパースする。未設定なら undefined を返し
- * SessionRunnerOptions.turnTimeoutMs を省略させる (既定値を server.ts と二重管理しない) */
-function parseTurnTimeoutMs(): number | undefined {
-	const raw = process.env.TURN_TIMEOUT_MS;
-	if (raw === undefined || raw === "") return undefined;
-	const value = Number.parseInt(raw, 10);
-	// 0 や負数は setTimeout が即発火して全ターンがタイムアウトになるため弾く
-	if (Number.isNaN(value) || value <= 0) {
-		throw new Error(
-			"TURN_TIMEOUT_MS must be a positive integer (milliseconds)",
-		);
-	}
-	return value;
-}
-
 /** env PI_PERMISSION_MODE=1 (session-runtime.md §6, pi-tools-and-sandbox.md
  * 「リーズナブルな sandbox レイヤ案」) で Node Permission Model 起動を opt-in する。
  * 未設定なら無効 (現状動作)。Cloud Run 実イメージでのみ有効化する想定 — ローカル開発・
@@ -175,6 +164,12 @@ function requireEnv(name: string): string {
 			"  TURN_TIMEOUT_MS     1 ターンの上限 ms (既定 600000 = 10 分。超過で pi を kill してセッションを畳む)",
 		);
 		console.error(
+			"  PI_ENV_PASSTHROUGH  pi へ継承する env 名の追加 allowlist (カンマ区切り。SLACK_/BRIDGE_ prefix は拒否)",
+		);
+		console.error(
+			"  上記 PI_MODEL/PI_PROVIDER/TURN_TIMEOUT_MS/PI_ENV_PASSTHROUGH は CONFIG_DIR/agent.yaml でも設定可 (env が優先)",
+		);
+		console.error(
 			"  PORT                events モードの listen ポート (既定 8080)",
 		);
 		console.error("");
@@ -217,15 +212,32 @@ async function main() {
 	const botToken = requireEnv("SLACK_BOT_TOKEN");
 	const botUserId = requireEnv("SLACK_BOT_USER_ID");
 	const configDir = process.env.CONFIG_DIR ?? "examples/config";
-	const model = process.env.PI_MODEL;
-	const provider = process.env.PI_PROVIDER;
-	const extraEnv = collectGcpEnv();
+
+	// agent.yaml (config.md §6) + env を解決する。優先順位は env > agent.yaml > コード既定
+	const agentConfigFile = await loadAgentConfig(configDir);
+	const agentConfig = resolveAgentConfig(agentConfigFile, process.env);
+	const { model, provider, turnTimeoutMs } = agentConfig;
+	const passthrough = collectPassthroughEnv(
+		agentConfig.envPassthrough,
+		process.env,
+	);
+	if (passthrough.missing.length > 0) {
+		logger.warn(
+			{ missing: passthrough.missing },
+			"envPassthrough names not found in process.env",
+		);
+	}
+
+	const gcpEnv = collectGcpEnv();
+	// GCP env と envPassthrough が同じ名前を持つことは想定していない (allowlist の
+	// 対象が重ならない) が、衝突したら GCP 側を後勝ちにする — pi の google-vertex
+	// プロバイダの認証に必須の値をユーザー設定の envPassthrough で上書きさせない
+	const extraEnv = { ...passthrough.env, ...gcpEnv };
 	const store = buildStateStore();
 	const archiveDir = process.env.WORKDIR_ARCHIVE_DIR;
 	const agentIds = parseAgentIds();
 	const piPermission = parsePiPermissionConfig();
 	const agentHome = process.env.PI_AGENT_HOME;
-	const turnTimeoutMs = parseTurnTimeoutMs();
 
 	const web = new WebClient(botToken);
 	const eventSource = buildEventSource(slackMode, botUserId);
