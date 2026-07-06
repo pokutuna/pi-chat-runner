@@ -57,7 +57,7 @@ interface ChannelDoc {
   systemPrompt?: string;   // 役割・口調・チャンネル運用ルール (app 共通プロンプトに追記)
   context?: string[];      // 短い参照テキスト (数 KB まで)。長い・多いものは skill へ
   trigger?: TriggerConfig; // Gate 合成 ([session-model.md](session-model.md) §5)。省略時は mention のみ
-  model?: string;          // 省略時は app 既定 (gemini-3-pro)
+  model?: string;          // 省略時は app 既定 (agent.yaml の pi.model / env PI_MODEL。§6)
   tools?: string[];        // pi --tools allowlist
   excludeTools?: string[]; // pi --exclude-tools denylist
   session?: {              // セッション (文脈) の単位 ([session-model.md](session-model.md) §3)
@@ -359,8 +359,8 @@ type の存在と設定スキーマを strict に検証する。YAML 例:
 trigger:
   combinator: any
   gates:
-    - type: mention
-    - type: classifier
+    - kind: mention
+    - kind: classifier
       model: gemini-2.5-flash-lite
       prompt: ./prompts/gate-triage.md   # prompts/ のファイル参照を再利用
   cooldownSec: 60

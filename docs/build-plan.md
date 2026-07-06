@@ -100,12 +100,31 @@ compose.yaml (Firestore エミュレータ)。設計は [design/persistence.md](
 turn timeout (10 分) + エラー投稿 + ❌、DM 既定 config (`dm`)、
 CLI (`apply` / `status` / `init`)、base image の公開。
 
-- [ ] pi の bash から /data が読めない・Runner の environ が読めない
-- [ ] timeout 超過 → kill → ❌ + エラー投稿、再依頼で復帰
-- [ ] DM で passthrough 起動する
-- [ ] `apply` → ChannelDoc 反映 → 次イベントから挙動が変わる
-- [ ] `status` で sessions 一覧と transcript dump が見える
-- [ ] `init` の scaffold から利用者の拡張イメージがビルドできる
+- [x] UID 分離: `PI_AGENT_UID`/`PI_AGENT_GID` (両方セットで有効) で pi を別 uid/gid で spawn し、workdir を chown/chmod 0700 する ([src/session/runner.ts](../src/session/runner.ts) の agentUid/chownRecursive)
+- [ ] pi の bash から /data が読めない・Runner の environ が読めない (実行環境での検証。UID 分離の実装自体は上記の通り済み)
+- [x] timeout 超過 → kill → ❌ + エラー投稿、再依頼で復帰 (`turnTimeoutMs`、既定 10 分)
+- [x] DM で passthrough 起動する (予約名 `dm` の doc が無ければ既定 passthrough)
+- [x] agent.yaml + `envPassthrough` (bridge 予約 prefix の拒否込み)
+- [ ] `apply` → ChannelDoc 反映 → 次イベントから挙動が変わる (CLI 未実装。`src/cli/` はディレクトリのみ)
+- [ ] `status` で sessions 一覧と transcript dump が見える (CLI 未実装)
+- [ ] `init` の scaffold から利用者の拡張イメージがビルドできる (CLI 未実装)
+
+## 実装済みの追加機能 (計画時に無かった、または前倒しで入ったもの)
+
+- [x] session/reply の 2 軸 (`session.mode` / `reply.mode`) と、channel モードの
+  idle/size 世代交代 (transcript rotation) ([design/session-model.md](design/session-model.md) §3)
+- [x] イベント駆動の push 配達 (実行中セッションへの steer を新規イベント受信時に即時実行。
+  「ターン境界ポーリング」ではない。[design/session-runtime.md](design/session-runtime.md) §4)
+- [x] `extensions/permission-gate.ts` (bash tool の denylist: パッケージ管理・破壊的操作・
+  chmod/chown・PID 1 kill をブロックする事故防止層。[design/session-runtime.md](design/session-runtime.md) §6)
+
+## 未着手 (将来。design にあるが計画に現れていない項目)
+
+- [ ] classifier Gate / cooldown Gate ([design/session-model.md](design/session-model.md) §5)
+- [ ] resume_pending を伴う再開設計・鮮度窓・再開ループ遮断 ([design/session-model.md](design/session-model.md) §6)
+- [ ] SessionEntry (エントリ列) 台帳・artifact / outcome エントリ ([design/session-model.md](design/session-model.md) §2, §7, §8)
+- [ ] リアクションによる再開 (`targetIsOwnMessage` からの逆引き。[design/chat-model.md](design/chat-model.md) §2.3)
+- [ ] EgressAdapter / MessageChunker (長文分割) / InboundDebouncer ([design/chat-model.md](design/chat-model.md) §3.2, §3.4)
 
 ## 想定ディレクトリツリー (新規リポジトリ)
 

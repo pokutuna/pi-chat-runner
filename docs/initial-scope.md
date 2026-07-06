@@ -9,7 +9,7 @@
 | 論点 | 決定 | 補足 |
 |---|---|---|
 | 初期 Gate セット | mention / keyword / passthrough | registry と apply 時のスキーマ検証 ([design/config.md](design/config.md) §7) は初期版から。classifier (Flash-Lite) は次段 |
-| keyword Gate の仕様 | 大文字小文字を無視した部分一致の文字列リスト | 正規表現は導入しない (YAML 内 regex はエスケープ事故のもと)。必要になったら type: regex を別 Gate として追加 |
+| keyword Gate の仕様 | 正規表現 (JS `RegExp`) によるマッチ | パターン文字列を `new RegExp(pattern)` としてそのまま構築する。不正な正規表現はコンストラクション時にエラーとして表面化させる。インラインフラグ (`(?i)` 等) は JS の RegExp が対応しないため、大文字小文字を無視したい場合はパターン側で書き分ける ([design/session-model.md](design/session-model.md) §5) |
 | 受付の合図 | トリガーメッセージに 👀 リアクション | Gate 通過 = セッション到達時に付与。ターン正常終了で ✅ に差し替え、失敗で ❌。reply の無い沈黙 ([design/session-model.md](design/session-model.md) §5) でも「見た/終わった」は伝わる |
 | エラーの可視化 | スレッドに短いエラー投稿 + ❌ | 「処理に失敗しました (詳細はログ)」程度を host が投稿。再試行が尽きたときのみ (at-least-once の途中失敗では出さない) |
 | 添付ファイル | 初期版はテキストのみ | 添付の存在は「添付ファイルあり (未対応)」とプロンプトに注記。ダウンロード対応 (bot token での取得 + workdir 配置) は将来 |

@@ -3,8 +3,7 @@
 // zod を単一ソースとする (build-plan.md 技術スタック表: 「apply 時 strict 検証と
 // ChannelDoc 型を単一ソース化」)。手書きの interface は並置せず、型は z.infer で導出する。
 //
-// 設計ドキュメントの不整合の解決: config.md §7 の YAML 例では gate を `type:` と書いているが、
-// §6 の例と architecture.md §2 の ChannelDoc 定義は `kind:`。本実装は `kind` に統一する。
+// YAML の gate は kind: で指定する (config.md §7)。
 
 import { z } from "zod";
 

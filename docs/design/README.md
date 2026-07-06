@@ -1,7 +1,7 @@
 # Piper — Slack-driven pi agent bridge
 
 - Author: pokutuna
-- Status: Design-complete, ready for implementation
+- Status: 実装済み (build-plan.md Step 5 まで + Step 6 の一部)。詳細は [build-plan.md](../build-plan.md)
 - Created: 2026-07-05
 - URL: (発行後に記入)
 
@@ -102,8 +102,8 @@ flowchart LR
 trigger:
   combinator: any
   gates:
-    - type: mention
-    - type: classifier
+    - kind: mention
+    - kind: classifier
       model: gemini-2.5-flash-lite
       prompt: ./prompts/gate-triage.md
   cooldownSec: 60
@@ -150,6 +150,15 @@ Mitigations:
 - 投稿先の実体 (channel / ts) は常に bot (ホスト) が握り、pi は thread_key を渡すだけ
 - thread_key はホストにとって不透明なキーであり、ts ↔ 宛先の変換ロジックを pi 側に持たせない
 - reply extension は常時コード注入される固定の仕組みであり、Config (YAML) から外すことはできない
+
+#### エージェントが誤って (あるいは指示された通りに素直に) 事故を起こすコマンドを実行する
+Scenario: bash ツールでパッケージのグローバルインストール・`rm -rf /` 相当の破壊的操作・
+workdir 外の chmod/chown・`kill -9 1` のような、悪意ではなく事故として起きるコマンドを実行する。
+Mitigations:
+- `extensions/permission-gate.ts` を reply extension と同様に常時注入し、bash tool の
+  `tool_call` を denylist に照らして block する ([session-runtime.md](session-runtime.md) §6)
+- 素朴な正規表現判定であり、シェル合成・置換による意図的な回避は防げない — 事故防止層と
+  位置づけ、悪意あるプロンプトインジェクションへの対策は他の層 (UID 分離・FUSE 隔離等) に委ねる
 
 ## Timeline
 
