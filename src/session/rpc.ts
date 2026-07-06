@@ -121,6 +121,26 @@ export function extractReply(
 }
 
 /**
+ * agent_end の messages から assistant ターンのエラーを取り出す。
+ * LLM 呼び出しが失敗しても (例: ADC 不備、ネットワーク遮断) pi はターンを
+ * stopReason: "error" の assistant メッセージとして「正常に」完走させ agent_end を
+ * 返すため、ここで拾ってログに出さないと「✅ は付くが返信が無い」という
+ * 症状だけが残り、原因が transcript を直接読むまで分からない。
+ */
+export function extractTurnErrors(event: AgentEndEvent): string[] {
+	const errors: string[] = [];
+	for (const message of event.messages) {
+		if (typeof message !== "object" || message === null) continue;
+		const m = message as Record<string, unknown>;
+		if (m.role !== "assistant" || m.stopReason !== "error") continue;
+		errors.push(
+			typeof m.errorMessage === "string" ? m.errorMessage : "unknown error",
+		);
+	}
+	return errors;
+}
+
+/**
  * 厳密 JSONL のインクリメンタルデコーダ。
  * rpc.md の指定どおり LF のみをレコード区切りにする (Node readline は
  * U+2028/U+2029 も改行扱いするため不可)。末尾の CR は落とす。

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
 	extractReply,
+	extractTurnErrors,
 	isAgentEnd,
 	isToolExecutionEnd,
 	JsonlDecoder,
@@ -120,5 +121,41 @@ describe("extractReply", () => {
 				result: { content: [], details: { thread_key: 1 } },
 			}),
 		).toBeNull();
+	});
+});
+
+describe("extractTurnErrors", () => {
+	it("collects errorMessage from assistant messages with stopReason error", () => {
+		const errors = extractTurnErrors({
+			type: "agent_end",
+			messages: [
+				{ role: "user", content: [] },
+				{
+					role: "assistant",
+					stopReason: "error",
+					errorMessage: "Could not load the default credentials",
+				},
+			],
+		});
+		expect(errors).toEqual(["Could not load the default credentials"]);
+	});
+
+	it("returns empty for a normally finished turn", () => {
+		const errors = extractTurnErrors({
+			type: "agent_end",
+			messages: [
+				{ role: "user", content: [] },
+				{ role: "assistant", stopReason: "stop", content: [] },
+			],
+		});
+		expect(errors).toEqual([]);
+	});
+
+	it("falls back to a placeholder when errorMessage is missing", () => {
+		const errors = extractTurnErrors({
+			type: "agent_end",
+			messages: [{ role: "assistant", stopReason: "error" }],
+		});
+		expect(errors).toEqual(["unknown error"]);
 	});
 });
