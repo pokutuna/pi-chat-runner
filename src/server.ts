@@ -9,18 +9,14 @@
 
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import { Firestore } from "@google-cloud/firestore";
 import { WebClient } from "@slack/web-api";
-import type { ChatEvent } from "./ingress/chat-event.js";
-import type { Ack, EventSource } from "./ingress/event-source.js";
+import { startBridge } from "./bridge.js";
+import type { EventSource } from "./ingress/event-source.js";
 import { SocketEventSource } from "./ingress/event-source.js";
 import { HttpEventSource } from "./ingress/http-event-source.js";
 import { rootLogger } from "./logger.js";
-import { Reactions } from "./reply/reactions.js";
-import { ReplyRouter } from "./reply/router.js";
 import type { PiPermissionConfig } from "./session/runner.js";
-import { SessionRunner } from "./session/runner.js";
 import {
 	collectPassthroughEnv,
 	loadAgentConfig,
@@ -31,7 +27,6 @@ import { FirestoreStateStore } from "./store/firestore.js";
 import type { StateStore } from "./store/interfaces.js";
 import { InMemoryStateStore } from "./store/memory.js";
 import { SqliteStateStore } from "./store/sqlite.js";
-import { CopyWorkdirStorage } from "./store/workdir-storage.js";
 
 const logger = rootLogger.child({ component: "server" });
 
@@ -242,40 +237,26 @@ async function main() {
 	const web = new WebClient(botToken);
 	const eventSource = buildEventSource(slackMode, botUserId);
 
-	const runner = new SessionRunner({
-		configSource: new FileConfigSource(configDir),
+	logger.info(
+		{
+			storeBackend: process.env.STORE_BACKEND ?? "memory",
+			workdirArchiveDir: archiveDir,
+			configDir,
+			slackMode,
+		},
+		"state store configured",
+	);
+
+	await startBridge({
+		eventSource,
+		web,
 		store,
-		router: new ReplyRouter({
-			poster: {
-				async postMessage(channelId, threadTs, text) {
-					await web.chat.postMessage({
-						channel: channelId,
-						thread_ts: threadTs,
-						text,
-					});
-				},
-			},
-		}),
-		reactions: new Reactions({
-			add: (args) => web.reactions.add(args),
-		}),
-		// tsx 実行時は <repo>/src/../extensions、build 後は <repo>/dist/../extensions を指す。
-		// pi が --extension で TS ソースを直接ロードするためビルド対象外 (build-plan.md)。
-		// permission-gate は事故防止層 (docs/research/pi-tools-and-sandbox.md) として
-		// reply と同様に常時注入する
-		extensionPaths: [
-			fileURLToPath(new URL("../extensions/reply.ts", import.meta.url)),
-			fileURLToPath(
-				new URL("../extensions/permission-gate.ts", import.meta.url),
-			),
-		],
+		configSource: new FileConfigSource(configDir),
 		...(model !== undefined ? { model } : {}),
 		...(provider !== undefined ? { provider } : {}),
 		...(Object.keys(extraEnv).length > 0 ? { extraEnv } : {}),
 		// WORKDIR_ARCHIVE_DIR 未設定なら境界退避なし (Step 3 相当の挙動)
-		...(archiveDir !== undefined && archiveDir !== ""
-			? { workdirStorage: new CopyWorkdirStorage(archiveDir) }
-			: {}),
+		...(archiveDir !== undefined && archiveDir !== "" ? { archiveDir } : {}),
 		// PI_AGENT_UID/GID 未設定なら UID 分離なし (現状動作)
 		...(agentIds.uid !== undefined ? { agentUid: agentIds.uid } : {}),
 		...(agentIds.gid !== undefined ? { agentGid: agentIds.gid } : {}),
@@ -285,76 +266,8 @@ async function main() {
 		...(piPermission !== undefined ? { piPermission } : {}),
 		// TURN_TIMEOUT_MS 未設定なら SessionRunner の既定 (600_000ms) を使う
 		...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
+		logger,
 	});
-	logger.info(
-		{
-			storeBackend: process.env.STORE_BACKEND ?? "memory",
-			workdirArchiveDir: archiveDir,
-		},
-		"state store configured",
-	);
-
-	// Layer 0 (ハードフィルタ): 同一メッセージは app_mention と message の 2 イベントで
-	// 届く (event_id は別) ため、メッセージ ts で重複排除する。inbox の dedupe は
-	// event_id ベースなので、この二重配信はここでしか防げない
-	const seenMessages = new Set<string>();
-
-	await eventSource.start(async (event: ChatEvent, ack: Ack) => {
-		// 3 秒 ACK の意味は入口で違う (Socket Mode = ack コールバック, Events API = 200
-		// レスポンス) が、Ack で吸収されているのでここでは「積む前に ack する」だけ書けばよい
-		// (architecture.md §1)。以降の残処理は ack 後も継続する
-		await ack();
-
-		logger.debug(
-			{
-				kind: event.kind,
-				eventId: "id" in event ? event.id : undefined,
-				channelId: event.conversation?.channelId,
-				userId: "sender" in event ? event.sender.id : undefined,
-			},
-			"event received",
-		);
-
-		if (event.kind !== "message") {
-			logger.info(
-				{ reason: "unsupported_kind", kind: event.kind },
-				"event ignored",
-			);
-			return;
-		}
-
-		const messageKey = `${event.conversation.channelId}:${event.id}`;
-		if (seenMessages.has(messageKey)) {
-			logger.info(
-				{ reason: "duplicate_delivery", eventId: event.id },
-				"event ignored",
-			);
-			return;
-		}
-		seenMessages.add(messageKey);
-		if (seenMessages.size > 1000) {
-			seenMessages.clear();
-		}
-
-		if (event.sender.isBot) {
-			logger.info(
-				{ reason: "bot_message", eventId: event.id },
-				"event ignored",
-			);
-			return;
-		}
-
-		try {
-			await runner.handle(event);
-		} catch (err) {
-			logger.error({ eventId: event.id, err }, "failed to handle event");
-		}
-	});
-
-	logger.info(
-		{ configDir, slackMode },
-		"event source started; waiting for events",
-	);
 }
 
 main().catch((err) => {
