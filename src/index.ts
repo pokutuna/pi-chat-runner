@@ -23,8 +23,8 @@ export {
 // 自前 EventSource を書く利用者向け: raw Slack event → ChatEvent の正規化 codec
 // (mention 展開 / isDm 判定 / dedupeKey) を再実装せず使い回せるようにする
 export {
-	SlackIngressAdapter,
 	type SlackEventEnvelope,
+	SlackIngressAdapter,
 	type SlackMessageLikeEvent,
 	type SlackRawEvent,
 	type SlackReactionAddedEvent,
@@ -73,7 +73,6 @@ export {
 	DM_CHANNEL,
 	FileConfigSource,
 } from "./store/config-source.js";
-export { FirestoreStateStore } from "./store/firestore.js";
 export type {
 	InboxItem,
 	InboxStore,
@@ -84,4 +83,3 @@ export type {
 	StateStore,
 } from "./store/interfaces.js";
 export { InMemoryStateStore } from "./store/memory.js";
-export { SqliteStateStore } from "./store/sqlite.js";

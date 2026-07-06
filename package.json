@@ -9,6 +9,14 @@
 		".": {
 			"types": "./dist/index.d.mts",
 			"default": "./dist/index.mjs"
+		},
+		"./store/firestore": {
+			"types": "./dist/store/firestore.d.mts",
+			"default": "./dist/store/firestore.mjs"
+		},
+		"./store/sqlite": {
+			"types": "./dist/store/sqlite.d.mts",
+			"default": "./dist/store/sqlite.mjs"
 		}
 	},
 	"files": [

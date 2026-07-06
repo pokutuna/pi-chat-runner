@@ -1,7 +1,12 @@
 import { defineConfig } from "tsdown";
 
 export default defineConfig({
-	entry: ["src/server.ts", "src/index.ts"],
+	entry: [
+		"src/server.ts",
+		"src/index.ts",
+		"src/store/firestore.ts",
+		"src/store/sqlite.ts",
+	],
 	outDir: "dist",
 	format: "esm",
 	platform: "node",
