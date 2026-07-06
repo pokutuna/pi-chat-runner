@@ -96,7 +96,7 @@ compose.yaml (Firestore エミュレータ)。設計は [design/persistence.md](
 
 ## Step 6: 仕上げ (初期版ゴール)
 
-作るもの: UID 分離 + FUSE dir-mode ([design/session-runtime.md](design/session-runtime.md) §6)、`PI_ENV_PASSTHROUGH` ([design/session-runtime.md](design/session-runtime.md) §2)、
+作るもの: UID 分離 + FUSE dir-mode ([design/session-runtime.md](design/session-runtime.md) §6)、agent.yaml + `envPassthrough` ([design/config.md](design/config.md) §6, [design/session-runtime.md](design/session-runtime.md) §2)、
 turn timeout (10 分) + エラー投稿 + ❌、DM 既定 config (`dm`)、
 CLI (`apply` / `status` / `init`)、base image の公開。
 
