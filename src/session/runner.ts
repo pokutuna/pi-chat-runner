@@ -586,6 +586,13 @@ export class SessionRunner {
 					this.logger.warn({ threadKey, err }, "lease release failed");
 				});
 				this.logger.warn({ threadKey, code, signal }, "pi exited unexpectedly");
+				// pi のクラッシュはユーザーから見えない (返信なしで無音になる) ので、
+				// トリガーメッセージに ❌ を付けて失敗を伝える
+				void this.safeReact(
+					() => this.reactions.addX(current.channelId, current.triggerTs),
+					threadKey,
+					"x",
+				);
 			}
 		});
 
@@ -778,6 +785,11 @@ export class SessionRunner {
 			.catch((err) => {
 				this.logger.warn({ threadKey, err }, "failure notice delivery failed");
 			});
+		await this.safeReact(
+			() => this.reactions.addX(record.channelId, record.triggerTs),
+			threadKey,
+			"x",
+		);
 
 		await this.store.leases.release(record.lease).catch((err) => {
 			this.logger.warn({ threadKey, err }, "lease release failed");

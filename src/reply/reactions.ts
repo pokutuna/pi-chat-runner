@@ -1,4 +1,4 @@
-// リアクション操作の薄いラッパ — 👀 (処理中) / ✅ (完了)
+// リアクション操作の薄いラッパ — 👀 (処理中) / ✅ (完了) / ❌ (異常終了)
 //
 // docs/design/architecture.md §6: トリガー発言に :eyes:、完了で :white_check_mark:。
 // already_reacted (再実行・再送で同じリアクションを付けようとした) は冪等な成功として
@@ -24,6 +24,12 @@ export class Reactions {
 	/** 完了の合図 (トリガーメッセージに ✅) */
 	async addCheck(channelId: string, messageTs: string): Promise<void> {
 		await this.add(channelId, messageTs, "white_check_mark");
+	}
+
+	/** 異常終了の合図 (トリガーメッセージに ❌)。pi のクラッシュ・タイムアウト・
+	 * コマンド失敗などセッションが正常に完了しなかったことをユーザーに伝える */
+	async addX(channelId: string, messageTs: string): Promise<void> {
+		await this.add(channelId, messageTs, "x");
 	}
 
 	private async add(

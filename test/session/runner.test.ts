@@ -738,6 +738,11 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
 		// 未 ack の item は inbox に残っており、flush はされていない (異常終了なので
 		// このターンの入力は次の kick で再実行される)
 		expect((await h.store.inbox.drain(threadKey)).length).toBe(1);
+
+		// 異常終了はトリガーメッセージへの ❌ で見える化する
+		expect(
+			h.reactions.some((r) => r.name === "x" && r.timestamp === trigger.id),
+		).toBe(true);
 	});
 
 	it("kills pi and cleans up the session when a turn exceeds turnTimeoutMs", async () => {
