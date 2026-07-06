@@ -82,6 +82,12 @@ export function buildPiArgs(
 	>,
 ): string[] {
 	const args = ["--mode", "rpc", "--session", options.sessionPath];
+	// pi は起動時にバージョンチェックと install telemetry の外部通信を行う
+	// (dist/main.js の offlineMode 判定、docs/settings.md「Telemetry and update
+	// checks」)。毎 mention ごとに spawn する本設計ではその都度の通信が無駄で
+	// コールドスタート遅延の要因になるため常時止める。LLM 呼び出し (provider API)
+	// には影響しない (research/pi-config.md 含意 4)
+	args.push("--offline");
 	// pi の CLI は --extension を複数回受け付けるため、パスごとに 1 フラグ展開する
 	// (reply + permission-gate を常時両方注入するため)
 	for (const extensionPath of options.extensionPaths)

@@ -29,6 +29,7 @@ describe("buildPiArgs", () => {
 			"rpc",
 			"--session",
 			"/tmp/s/transcript.jsonl",
+			"--offline",
 			"--extension",
 			"/app/extensions/reply.ts",
 		]);
@@ -47,6 +48,7 @@ describe("buildPiArgs", () => {
 			"rpc",
 			"--session",
 			"/tmp/s/transcript.jsonl",
+			"--offline",
 			"--extension",
 			"/app/extensions/reply.ts",
 			"--extension",
