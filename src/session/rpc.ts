@@ -140,6 +140,51 @@ export function extractTurnErrors(event: AgentEndEvent): string[] {
 	return errors;
 }
 
+export interface UsageTotals {
+	input: number;
+	output: number;
+	cacheRead: number;
+	cacheWrite: number;
+	totalTokens: number;
+	costTotal: number;
+}
+
+function numberOrZero(value: unknown): number {
+	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+/**
+ * agent_end.messages (毎回「全履歴」を返す) から usage を合算する。
+ * そのため戻り値はターン単位の増分ではなく「セッション累計」になる点に注意。
+ */
+export function extractUsageTotals(event: AgentEndEvent): UsageTotals {
+	const totals: UsageTotals = {
+		input: 0,
+		output: 0,
+		cacheRead: 0,
+		cacheWrite: 0,
+		totalTokens: 0,
+		costTotal: 0,
+	};
+	for (const message of event.messages) {
+		if (typeof message !== "object" || message === null) continue;
+		const m = message as Record<string, unknown>;
+		if (m.role !== "assistant") continue;
+		if (typeof m.usage !== "object" || m.usage === null) continue;
+		const usage = m.usage as Record<string, unknown>;
+		totals.input += numberOrZero(usage.input);
+		totals.output += numberOrZero(usage.output);
+		totals.cacheRead += numberOrZero(usage.cacheRead);
+		totals.cacheWrite += numberOrZero(usage.cacheWrite);
+		totals.totalTokens += numberOrZero(usage.totalTokens);
+		const cost = usage.cost;
+		if (typeof cost === "object" && cost !== null) {
+			totals.costTotal += numberOrZero((cost as Record<string, unknown>).total);
+		}
+	}
+	return totals;
+}
+
 /**
  * 厳密 JSONL のインクリメンタルデコーダ。
  * rpc.md の指定どおり LF のみをレコード区切りにする (Node readline は

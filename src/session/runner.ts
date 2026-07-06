@@ -45,8 +45,10 @@ import type { WorkdirStorage } from "../store/workdir-storage.js";
 import {
 	extractReply,
 	extractTurnErrors,
+	extractUsageTotals,
 	isAgentEnd,
 	isToolExecutionEnd,
+	type UsageTotals,
 } from "./rpc.js";
 import { buildPiPermissionOptions, PiProcess } from "./runtime.js";
 
@@ -149,6 +151,9 @@ interface SessionRecord {
 	 * リセットし、agent_end 冒頭でクリアする。セッション終了パスでも必ずクリアする
 	 * (session-runtime.md §6 の turn timeout) */
 	turnTimeoutTimer: NodeJS.Timeout | undefined;
+	/** 直近の agent_end から集計した usage の累計 (agent_end.messages は毎回全履歴
+	 * を返すため、ターンごとの増分ではなくセッション累計になる) */
+	usageTotals?: UsageTotals;
 }
 
 /** thread_key の導出。スレッド外の発言はそのメッセージ自身が thread root になる */
@@ -158,7 +163,7 @@ export function threadKeyOf(event: InboundMessage): string {
 
 /** イベント 1 件のプロンプト描画 (session-runtime.md §4 の renderEvent) */
 export function renderEvent(event: InboundMessage): string {
-	return `<${event.sender.id}> のメッセージ:\n${event.text}`;
+	return `<${event.sender.displayName ?? event.sender.id}> のメッセージ:\n${event.text}`;
 }
 
 function renderItems(items: InboxItem[]): string {
@@ -541,6 +546,11 @@ export class SessionRunner {
 						"assistant turn ended with error",
 					);
 				}
+				// agent_end.messages は毎回全履歴を返すため、この totals はターンの増分では
+				// なくセッション累計 (rpc.ts extractUsageTotals)
+				const totals = extractUsageTotals(piEvent);
+				record.usageTotals = totals;
+				this.logger.info({ threadKey, ...totals }, "turn usage");
 				void this.onAgentEnd(threadKey, proc).catch((err) => {
 					this.logger.warn({ threadKey, err }, "agent_end handling failed");
 				});
@@ -710,7 +720,17 @@ export class SessionRunner {
 		await this.store.leases.release(record.lease);
 		this.sessions.delete(threadKey);
 		this.logger.info(
-			{ threadKey, durationMs: Date.now() - record.startedAt },
+			{
+				threadKey,
+				durationMs: Date.now() - record.startedAt,
+				...(record.usageTotals !== undefined
+					? {
+							totalTokens: record.usageTotals.totalTokens,
+							costTotal: record.usageTotals.costTotal,
+							cacheRead: record.usageTotals.cacheRead,
+						}
+					: {}),
+			},
 			"session finished",
 		);
 	}

@@ -12,6 +12,8 @@
 //     "HANG_FOREVER"   … response も agent_end も一切返さない (pi が無応答になる
 //                        ケース。runner の turn timeout 処理を検証する)
 //     それ以外          … `echo: <本文>` の reply → agent_end を吐く
+// - agent_end.messages には固定の usage 付き assistant message を 1 件含める
+//   (SessionRunner の usage 集計ロジックをテストから確認するため)
 // - thread_key は --append-system-prompt に埋め込まれた "thread_key: <key>" を拾う
 // - stdin が閉じたら終了する (PiProcess.stop の graceful パス)
 // - 起動時に <workdir>/env-seen.json へ process.env のスナップショットを書く
@@ -56,7 +58,22 @@ function emitReply(text) {
 }
 
 function emitAgentEnd() {
-	emit({ type: "agent_end", messages: [] });
+	emit({
+		type: "agent_end",
+		messages: [
+			{
+				role: "assistant",
+				usage: {
+					input: 100,
+					output: 50,
+					cacheRead: 10,
+					cacheWrite: 5,
+					totalTokens: 150,
+					cost: { total: 0.01 },
+				},
+			},
+		],
+	});
 }
 
 let waitingForSteer = false;

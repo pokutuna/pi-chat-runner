@@ -246,6 +246,36 @@ describe("SessionRunner (fake-pi integration)", () => {
 		expect((await h.store.sessions.get(threadKey))?.status).toBe("finished");
 	});
 
+	it("logs turn usage aggregated from agent_end.messages", async () => {
+		const h = await harness();
+		const trigger = message({ mentionsBot: true, text: "usage please" });
+
+		await h.runner.handle(trigger);
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+		const usageLogs = h.logLines().filter((line) => line.msg === "turn usage");
+		expect(usageLogs).toHaveLength(1);
+		expect(usageLogs[0]).toMatchObject({
+			input: 100,
+			output: 50,
+			cacheRead: 10,
+			cacheWrite: 5,
+			totalTokens: 150,
+			costTotal: 0.01,
+		});
+
+		// session finished ログにも累計 usage の一部が載る
+		const finishedLogs = h
+			.logLines()
+			.filter((line) => line.msg === "session finished");
+		expect(finishedLogs).toHaveLength(1);
+		expect(finishedLogs[0]).toMatchObject({
+			totalTokens: 150,
+			costTotal: 0.01,
+			cacheRead: 10,
+		});
+	});
+
 	it("does not react nor spawn when the gate rejects (default = mention only)", async () => {
 		const h = await harness();
 		await h.runner.handle(message({ text: "no mention here" }));

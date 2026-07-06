@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	extractReply,
 	extractTurnErrors,
+	extractUsageTotals,
 	isAgentEnd,
 	isToolExecutionEnd,
 	JsonlDecoder,
@@ -157,5 +158,119 @@ describe("extractTurnErrors", () => {
 			messages: [{ role: "assistant", stopReason: "error" }],
 		});
 		expect(errors).toEqual(["unknown error"]);
+	});
+});
+
+describe("extractUsageTotals", () => {
+	it("sums usage across multiple assistant messages", () => {
+		const totals = extractUsageTotals({
+			type: "agent_end",
+			messages: [
+				{
+					role: "assistant",
+					usage: {
+						input: 10,
+						output: 20,
+						cacheRead: 1,
+						cacheWrite: 2,
+						totalTokens: 30,
+						cost: { total: 0.01 },
+					},
+				},
+				{
+					role: "assistant",
+					usage: {
+						input: 5,
+						output: 15,
+						cacheRead: 3,
+						cacheWrite: 4,
+						totalTokens: 20,
+						cost: { total: 0.02 },
+					},
+				},
+			],
+		});
+		expect(totals).toEqual({
+			input: 15,
+			output: 35,
+			cacheRead: 4,
+			cacheWrite: 6,
+			totalTokens: 50,
+			costTotal: 0.03,
+		});
+	});
+
+	it("ignores assistant messages without a usage field", () => {
+		const totals = extractUsageTotals({
+			type: "agent_end",
+			messages: [
+				{ role: "assistant", content: [] },
+				{
+					role: "assistant",
+					usage: {
+						input: 1,
+						output: 2,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 3,
+						cost: { total: 0.001 },
+					},
+				},
+			],
+		});
+		expect(totals).toEqual({
+			input: 1,
+			output: 2,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 3,
+			costTotal: 0.001,
+		});
+	});
+
+	it("ignores non-assistant messages even if they carry usage", () => {
+		const totals = extractUsageTotals({
+			type: "agent_end",
+			messages: [
+				{
+					role: "user",
+					usage: {
+						input: 100,
+						output: 100,
+						cacheRead: 100,
+						cacheWrite: 100,
+						totalTokens: 100,
+						cost: { total: 100 },
+					},
+				},
+			],
+		});
+		expect(totals).toEqual({
+			input: 0,
+			output: 0,
+			cacheRead: 0,
+			cacheWrite: 0,
+			totalTokens: 0,
+			costTotal: 0,
+		});
+	});
+
+	it("treats a missing usage.cost.total as 0", () => {
+		const totals = extractUsageTotals({
+			type: "agent_end",
+			messages: [
+				{
+					role: "assistant",
+					usage: {
+						input: 1,
+						output: 1,
+						cacheRead: 0,
+						cacheWrite: 0,
+						totalTokens: 2,
+					},
+				},
+			],
+		});
+		expect(totals.costTotal).toBe(0);
 	});
 });
