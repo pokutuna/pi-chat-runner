@@ -6,6 +6,7 @@
  */
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import { dirname, join } from "node:path";
 import {
 	JsonlDecoder,
 	type PiEvent,
@@ -135,31 +136,46 @@ export function buildSpawnCommand(
 }
 
 /**
- * pi 起動時に cwd から `/` まで祖先ディレクトリを遡って existsSync するファイル名
- * (プロジェクト trust 判定・context ファイル探索。pi dist/core/trust-manager.js の
- * TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES と dist/core/resource-loader.js の
- * loadContextFileFromDir、および `.git` / `.agents/skills` の存在チェックを
- * docker で実測して特定した一覧)。workdir 配下は `--allow-fs-read` の glob
- * (`<dir>/*`) で祖先チェックも自動的に通るが、`/` 直下は glob を使わず個別に
- * 許可しないと Permission Model が existsSync 自体を拒否してしまう
- * (`--allow-fs-read=/` や `/*` は他ユーザーの読めるファイルまで丸ごと開けてしまい
- * 広すぎるため使わない。docker で確認済み)。
+ * pi 起動時に cwd から `/` まで祖先ディレクトリを 1 段ずつ遡って existsSync する
+ * ファイル名 (プロジェクト trust 判定・context ファイル探索。pi
+ * dist/core/trust-manager.js の TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES と
+ * dist/core/resource-loader.js の loadContextFileFromDir、および `.git` /
+ * `.agents/skills` の存在チェックを docker で実測して特定した一覧)。
+ * この probe は workdir だけでなく**全ての中間ディレクトリ**
+ * (/tmp/pi-chat-runner/sessions/<ch> など) で走るため、workdir の祖先すべてに
+ * ついてこのファイル名との直積を `--allow-fs-read` へ展開する必要がある —
+ * 1 つでも欠けると existsSync が ERR_ACCESS_DENIED を投げ pi が exit 1 で即死する
+ * (`--allow-fs-read=/` や `/*` の一括許可は他ユーザーの読めるファイルまで丸ごと
+ * 開けてしまい広すぎるため使わない。docker で確認済み)。
  */
-const PI_ROOT_TRUST_PROBE_PATHS = [
-	"/AGENTS.md",
-	"/AGENTS.MD",
-	"/CLAUDE.md",
-	"/CLAUDE.MD",
-	"/.git",
-	"/.pi/settings.json",
-	"/.pi/extensions",
-	"/.pi/skills",
-	"/.pi/prompts",
-	"/.pi/themes",
-	"/.pi/SYSTEM.md",
-	"/.pi/APPEND_SYSTEM.md",
-	"/.agents/skills",
+const PI_TRUST_PROBE_FILENAMES = [
+	"AGENTS.md",
+	"AGENTS.MD",
+	"CLAUDE.md",
+	"CLAUDE.MD",
+	".git",
+	".pi/settings.json",
+	".pi/extensions",
+	".pi/skills",
+	".pi/prompts",
+	".pi/themes",
+	".pi/SYSTEM.md",
+	".pi/APPEND_SYSTEM.md",
+	".agents/skills",
 ];
+
+/** dir 自身を含む `/` までの祖先ディレクトリ一覧 (純粋関数、テスト対象) */
+export function ancestorDirs(dir: string): string[] {
+	const dirs: string[] = [];
+	let current = dir;
+	while (true) {
+		dirs.push(current);
+		const parent = dirname(current);
+		if (parent === current) break;
+		current = parent;
+	}
+	return dirs;
+}
 
 /**
  * Node Permission Model 用の allow パス一覧の組み立て (純粋関数、テスト対象)。
@@ -190,7 +206,11 @@ export function buildPiPermissionOptions(options: {
 			`${options.appDir}/*`,
 			`${options.workdir}/*`,
 			`${options.home}/*`,
-			...PI_ROOT_TRUST_PROBE_PATHS,
+			// workdir の全祖先 (workdir 自身は上の glob で足りるが重複しても無害) ×
+			// trust probe ファイル名の直積。中間ディレクトリの existsSync を通すため
+			...ancestorDirs(options.workdir).flatMap((dir) =>
+				PI_TRUST_PROBE_FILENAMES.map((name) => join(dir, name)),
+			),
 		],
 		allowFsWrite: [
 			`${options.workdir}/*`,

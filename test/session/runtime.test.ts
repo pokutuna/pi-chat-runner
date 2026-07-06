@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { describe, expect, it, vi } from "vitest";
 import {
+	ancestorDirs,
 	buildPiArgs,
 	buildPiEnv,
 	buildPiPermissionOptions,
@@ -219,6 +220,22 @@ describe("buildSpawnCommand (Node Permission Model, session-runtime.md §6)", ()
 	});
 });
 
+describe("ancestorDirs", () => {
+	it("returns the dir itself and every ancestor up to /", () => {
+		expect(ancestorDirs("/tmp/pi-chat-runner/sessions/CH1")).toEqual([
+			"/tmp/pi-chat-runner/sessions/CH1",
+			"/tmp/pi-chat-runner/sessions",
+			"/tmp/pi-chat-runner",
+			"/tmp",
+			"/",
+		]);
+	});
+
+	it("returns just / for the root dir", () => {
+		expect(ancestorDirs("/")).toEqual(["/"]);
+	});
+});
+
 describe("buildPiPermissionOptions (session-runtime.md §6)", () => {
 	it("builds allow-fs-read/write lists scoped to workdir/home/node_modules/app", () => {
 		const options = buildPiPermissionOptions({
@@ -235,8 +252,14 @@ describe("buildPiPermissionOptions (session-runtime.md §6)", () => {
 		expect(options.allowFsRead).toContain("/app/*");
 		expect(options.allowFsRead).toContain("/tmp/workdir/*");
 		expect(options.allowFsRead).toContain("/home/agent/*");
-		// プロジェクト trust 判定の祖先チェック用パスも含む
+		// プロジェクト trust 判定の probe は workdir の全祖先で走るため、
+		// 各中間ディレクトリ × probe ファイル名の直積を含む必要がある
+		// (1 つでも欠けると existsSync が ERR_ACCESS_DENIED で pi が即死する)
+		expect(options.allowFsRead).toContain("/tmp/workdir/AGENTS.md");
+		expect(options.allowFsRead).toContain("/tmp/AGENTS.md");
 		expect(options.allowFsRead).toContain("/AGENTS.md");
+		expect(options.allowFsRead).toContain("/tmp/.pi/settings.json");
+		expect(options.allowFsRead).toContain("/.agents/skills");
 		expect(options.allowFsWrite).toEqual(["/tmp/workdir/*", "/home/agent/*"]);
 	});
 
