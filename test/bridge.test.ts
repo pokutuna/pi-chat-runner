@@ -151,4 +151,70 @@ describe("startBridge", () => {
 			"check reaction",
 		);
 	});
+
+	it("uses an injected poster instead of the web client's chat.postMessage", async () => {
+		const channelId = "C0000000002";
+		const triggerTs = "1700000000.000200";
+		const event: ChatEvent = {
+			kind: "message",
+			id: triggerTs,
+			conversation: { channelId },
+			sender: { id: "U01", isBot: false },
+			text: "hello injected poster",
+			mentionsBot: true,
+			attachments: [],
+			timestamp: new Date("2026-07-06T00:00:00Z"),
+			metadata: { eventId: "Ev-bridge-poster-test" },
+		};
+
+		const eventSource = new StubEventSource([event]);
+		const web = fakeWebClient();
+		const posted: { channelId: string; text: string; threadTs?: string }[] = [];
+		const injectedPoster = {
+			async postMessage(
+				postedChannelId: string,
+				text: string,
+				threadTs?: string,
+			) {
+				posted.push({
+					channelId: postedChannelId,
+					text,
+					...(threadTs !== undefined ? { threadTs } : {}),
+				});
+			},
+		};
+		const agentHome = await mkdtemp(
+			join(tmpdir(), "pi-chat-runner-bridge-poster-home-"),
+		);
+		const logger = pino({ level: "silent" });
+
+		const previousPiBin = process.env.PI_BIN;
+		process.env.PI_BIN = FAKE_PI;
+		try {
+			await startBridge({
+				eventSource,
+				web: web.client,
+				store: new InMemoryStateStore(),
+				configSource: new FileConfigSource(CONFIG_DIR),
+				agentHome,
+				logger,
+				poster: injectedPoster,
+			});
+		} finally {
+			if (previousPiBin === undefined) {
+				delete process.env.PI_BIN;
+			} else {
+				process.env.PI_BIN = previousPiBin;
+			}
+		}
+
+		expect(eventSource.acked).toBe(1);
+		await waitFor(() => posted.length === 1, "reply posted to injected poster");
+		expect(posted[0]).toMatchObject({
+			channelId,
+			threadTs: triggerTs,
+			text: expect.stringContaining("hello injected poster"),
+		});
+		expect(web.posted).toHaveLength(0);
+	});
 });

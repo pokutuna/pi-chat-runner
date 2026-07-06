@@ -12,16 +12,24 @@ import { fileURLToPath } from "node:url";
 import type { WebClient } from "@slack/web-api";
 import type { ChatEvent, InboundMessage } from "./ingress/chat-event.js";
 import type { Ack, EventSource } from "./ingress/event-source.js";
-import { enrichEvent, SlackUserResolver } from "./ingress/user-resolver.js";
+import {
+	enrichEvent,
+	SlackUserResolver,
+	type UserResolver,
+} from "./ingress/user-resolver.js";
 import type { Logger } from "./logger.js";
 import { rootLogger } from "./logger.js";
 import { Reactions } from "./reply/reactions.js";
+import type { ChatPoster } from "./reply/router.js";
 import { ReplyRouter } from "./reply/router.js";
 import type { PiPermissionConfig } from "./session/runner.js";
 import { SessionRunner } from "./session/runner.js";
 import type { ConfigSource } from "./store/config-source.js";
 import type { StateStore } from "./store/interfaces.js";
-import { CopyWorkdirStorage } from "./store/workdir-storage.js";
+import {
+	CopyWorkdirStorage,
+	type WorkdirStorage,
+} from "./store/workdir-storage.js";
 
 export interface BridgeOptions {
 	/** 受信の入口 (Socket Mode / Events API / 呼び出し側独自の実装)。ライブラリ利用の
@@ -41,6 +49,15 @@ export interface BridgeOptions {
 	agentHome?: string;
 	piPermission?: PiPermissionConfig;
 	logger?: Logger;
+	/** 返信投稿の注入口。省略時は web (WebClient) の chat.postMessage から内部構築する。 */
+	poster?: ChatPoster;
+	/** reaction 操作の注入口。省略時は web (WebClient) の reactions.add から内部構築する。 */
+	reactions?: Reactions;
+	/** UserID → 表示名解決の注入口。省略時は web (WebClient) の users.info から内部構築する。 */
+	userResolver?: UserResolver;
+	/** workdir の保存先の注入口。省略時は archiveDir があれば CopyWorkdirStorage を、
+	 * なければ境界退避なしで内部構築する。指定時は archiveDir より優先される。 */
+	workdirStorage?: WorkdirStorage;
 }
 
 /** SessionRunner を組み立て、eventSource を起動して配線する。呼び出し元 (server.ts の
@@ -49,28 +66,41 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 	const logger = options.logger ?? rootLogger.child({ component: "server" });
 	const { web, eventSource, store, configSource } = options;
 
-	// メッセージ描画時の UserID → 表示名解決 (renderEvent / mention 展開)
-	const resolver = new SlackUserResolver({
-		usersInfo: (userId) => web.users.info({ user: userId }),
-	});
+	// メッセージ描画時の UserID → 表示名解決 (renderEvent / mention 展開)。
+	// 注入があればそれを使い、なければ web (WebClient) の users.info から内部構築する
+	const resolver: UserResolver =
+		options.userResolver ??
+		new SlackUserResolver({
+			usersInfo: (userId) => web.users.info({ user: userId }),
+		});
+
+	// 注入があればそれを使い、なければ web (WebClient) から内部構築する
+	const poster: ChatPoster = options.poster ?? {
+		async postMessage(channelId, text, threadTs) {
+			await web.chat.postMessage({
+				channel: channelId,
+				text,
+				...(threadTs !== undefined ? { thread_ts: threadTs } : {}),
+			});
+		},
+	};
+	const reactions =
+		options.reactions ??
+		new Reactions({
+			add: (args) => web.reactions.add(args),
+		});
+	// workdirStorage 注入があれば archiveDir より優先する
+	const workdirStorage =
+		options.workdirStorage ??
+		(options.archiveDir !== undefined && options.archiveDir !== ""
+			? new CopyWorkdirStorage(options.archiveDir)
+			: undefined);
 
 	const runner = new SessionRunner({
 		configSource,
 		store,
-		router: new ReplyRouter({
-			poster: {
-				async postMessage(channelId, text, threadTs) {
-					await web.chat.postMessage({
-						channel: channelId,
-						text,
-						...(threadTs !== undefined ? { thread_ts: threadTs } : {}),
-					});
-				},
-			},
-		}),
-		reactions: new Reactions({
-			add: (args) => web.reactions.add(args),
-		}),
+		router: new ReplyRouter({ poster }),
+		reactions,
 		// tsx 実行時は <repo>/src/../extensions、build 後は <repo>/dist/../extensions を指す。
 		// pi が --extension で TS ソースを直接ロードするためビルド対象外 (build-plan.md)。
 		// permission-gate は事故防止層 (docs/research/pi-tools-and-sandbox.md) として
@@ -87,10 +117,8 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 		Object.keys(options.extraEnv).length > 0
 			? { extraEnv: options.extraEnv }
 			: {}),
-		// archiveDir 未設定なら境界退避なし (Step 3 相当の挙動)
-		...(options.archiveDir !== undefined && options.archiveDir !== ""
-			? { workdirStorage: new CopyWorkdirStorage(options.archiveDir) }
-			: {}),
+		// workdirStorage/archiveDir 未設定なら境界退避なし (Step 3 相当の挙動)
+		...(workdirStorage !== undefined ? { workdirStorage } : {}),
 		// agentUid/Gid 未設定なら UID 分離なし (現状動作)
 		...(options.agentUid !== undefined ? { agentUid: options.agentUid } : {}),
 		...(options.agentGid !== undefined ? { agentGid: options.agentGid } : {}),
