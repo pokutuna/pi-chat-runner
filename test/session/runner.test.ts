@@ -22,6 +22,7 @@ import { Reactions } from "../../src/reply/reactions.js";
 import { type ChatPoster, ReplyRouter } from "../../src/reply/router.js";
 import type { PiPermissionConfig } from "../../src/session/runner.js";
 import {
+	computeKickDelayMs,
 	isIdleExpired,
 	renderEvent,
 	replyThreadKeyOf,
@@ -1035,6 +1036,106 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
 		);
 		expect(commands[1]?.message).not.toContain("WAIT_FOR_STEER");
 	});
+
+	it("trigger.debounceSec: 連投バーストの 2 通が 1 回の kick にまとめられる", async () => {
+		const h = await harness({
+			C01: {
+				trigger: {
+					combinator: "any",
+					gates: [{ kind: "passthrough" }],
+					debounceSec: 0.2,
+				},
+			},
+		});
+		const first = message({ text: "first burst message" });
+		const threadKey = threadKeyOf(first);
+
+		await h.runner.handle(first);
+		// debounce 中はまだ kick されていない
+		expect(h.runner.activeSessionCount).toBe(0);
+
+		await sleep(50); // debounceSec (200ms) 未満のうちに 2 通目を送る
+		const second = message({
+			id: "1700000000.000700",
+			conversation: { channelId: "C01", threadTs: first.id },
+			text: "second burst message",
+		});
+		await h.runner.handle(second);
+		expect(h.runner.activeSessionCount).toBe(0);
+
+		await waitFor(
+			() => h.poster.calls.length === 1,
+			"reply posted after debounce",
+		);
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+		const commands = (await h.commandsLog("C01", first.id)).map((line) =>
+			JSON.parse(line),
+		);
+		// kick は 1 回だけ (prompt 1 件) で、初回 prompt に 2 通とも含まれる
+		expect(commands.map((c) => c.type)).toEqual(["prompt"]);
+		expect(commands[0]?.message).toContain("first burst message");
+		expect(commands[0]?.message).toContain("second burst message");
+		expect(await h.store.inbox.drain(threadKey)).toEqual([]);
+	});
+
+	it("trigger.debounceSec: mentionsBot のメッセージは debounce をバイパスして即 kick される", async () => {
+		const h = await harness({
+			C01: {
+				trigger: {
+					combinator: "any",
+					gates: [{ kind: "passthrough" }],
+					debounceSec: 5,
+				},
+			},
+		});
+		const trigger = message({
+			mentionsBot: true,
+			text: "mention bypasses debounce",
+		});
+
+		await h.runner.handle(trigger);
+
+		// debounceSec = 5s だが mentionsBot なので即座に kick される (待たない)
+		await waitFor(
+			() => h.poster.calls.length === 1,
+			"reply posted immediately",
+			2000,
+		);
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+		const commands = (await h.commandsLog("C01", trigger.id)).map((line) =>
+			JSON.parse(line),
+		);
+		expect(commands.map((c) => c.type)).toEqual(["prompt"]);
+	});
+
+	it("trigger.cooldownSec が設定されていたら未実装として warn する", async () => {
+		const h = await harness({
+			C01: {
+				trigger: {
+					combinator: "any",
+					gates: [{ kind: "mention" }],
+					cooldownSec: 30,
+				},
+			},
+		});
+		const trigger = message({ mentionsBot: true, text: "cooldown configured" });
+
+		await h.runner.handle(trigger);
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+		expect(
+			h
+				.logLines()
+				.some(
+					(line) =>
+						typeof line.msg === "string" &&
+						line.msg.includes("cooldownSec") &&
+						line.msg.includes("not implemented"),
+				),
+		).toBe(true);
+	});
 });
 
 describe("resolveSessionPolicy", () => {
@@ -1155,6 +1256,48 @@ describe("isIdleExpired", () => {
 		const lastUpdatedAt = new Date("2026-07-05T00:00:00Z");
 		const now = lastUpdatedAt.getTime() + 4 * 60_000;
 		expect(isIdleExpired(lastUpdatedAt, 5, now)).toBe(false);
+	});
+});
+
+describe("computeKickDelayMs", () => {
+	it("通常ケース: 残り debounceSec 分をそのまま返す (hard cap に届かない)", () => {
+		const nowMs = 1_000_000;
+		expect(
+			computeKickDelayMs({ nowMs, firstPendingAtMs: nowMs, debounceSec: 2 }),
+		).toBe(2000);
+	});
+
+	it("後続メッセージでスライドしても、firstPendingAt からの経過が hard cap 未満なら debounceSec 分を返す", () => {
+		const firstPendingAtMs = 1_000_000;
+		const nowMs = firstPendingAtMs + 3000; // 3s 経過(次の debounceSec=2s も cap=6s 未満)
+		expect(
+			computeKickDelayMs({ nowMs, firstPendingAtMs, debounceSec: 2 }),
+		).toBe(2000);
+	});
+
+	it("hard cap (firstPendingAt + debounceSec*3) を超えて延ばさない", () => {
+		const firstPendingAtMs = 1_000_000;
+		// cap = firstPendingAtMs + 6000。now が cap の 1000ms 手前なら残りは 1000ms
+		// (debounceSec 分の 2000ms を要求しても cap で切られる)
+		const nowMs = firstPendingAtMs + 5000;
+		expect(
+			computeKickDelayMs({ nowMs, firstPendingAtMs, debounceSec: 2 }),
+		).toBe(1000);
+	});
+
+	it("残りが 0 未満になるケースは 0 を返す (即 kick)", () => {
+		const firstPendingAtMs = 1_000_000;
+		const nowMs = firstPendingAtMs + 10_000; // hard cap (6000ms) を過ぎている
+		expect(
+			computeKickDelayMs({ nowMs, firstPendingAtMs, debounceSec: 2 }),
+		).toBe(0);
+	});
+
+	it("firstPendingAtMs と同時刻 (最初のメッセージ) では debounceSec がそのまま残り ms になる", () => {
+		const nowMs = 5000;
+		expect(
+			computeKickDelayMs({ nowMs, firstPendingAtMs: nowMs, debounceSec: 0.5 }),
+		).toBe(500);
 	});
 });
 

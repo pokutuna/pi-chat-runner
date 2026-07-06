@@ -160,6 +160,21 @@ interface SessionRecord {
 	usageTotals?: UsageTotals;
 }
 
+/** debounce 待機中のレーンの状態 (trigger.debounceSec。design 「連投バーストの途中で
+ * 不完全な入力のままセッションを起動しないよう、静まるまで kick を遅らせる」)。
+ * item は kick 前から inbox に enqueue 済みなので、この状態自体はプロセス死からの
+ * 復旧対象ではない (拾い直しは既存の inbox 経路に乗る) */
+interface PendingKick {
+	timer: NodeJS.Timeout;
+	/** hard cap 算出の基準 (最初に滞留させたメッセージの到着時刻) */
+	firstPendingAtMs: number;
+	debounceSec: number;
+	/** タイマー発火時に kick する対象。直近のイベントで都度更新する */
+	triggerEvent: InboundMessage;
+	doc: ChannelDoc | null;
+	channelId: string;
+}
+
 /** session.mode / reply.mode の実効値 (doc 未設定時の既定込み。session-model.md §3) */
 export interface SessionPolicy {
 	sessionMode: "thread" | "channel";
@@ -275,6 +290,22 @@ export function isIdleExpired(
 	return now - lastUpdatedAt.getTime() > idleResetMinutes * 60_000;
 }
 
+/** debounce の kick までの残り ms を求める (連投バーストの間、静まるまで kick を
+ * 遅らせるための純関数)。「最後のメッセージ + debounceSec」まで延ばすが、
+ * 「最初の滞留メッセージ + debounceSec*3」(hard cap) を超えない — 早い方を採用し、
+ * 負なら 0 (即 kick) を返す */
+export function computeKickDelayMs(args: {
+	nowMs: number;
+	firstPendingAtMs: number;
+	debounceSec: number;
+}): number {
+	const { nowMs, firstPendingAtMs, debounceSec } = args;
+	const slideUntil = nowMs + debounceSec * 1000;
+	const hardCapUntil = firstPendingAtMs + debounceSec * 3 * 1000;
+	const until = Math.min(slideUntil, hardCapUntil);
+	return Math.max(0, until - nowMs);
+}
+
 /** channel モードの idle リセット (session-model.md §3): workdir 直下の
  * transcript.jsonl が存在すれば transcript-<epoch ms>.jsonl にリネームして世代交代する。
  * pi は transcript が無ければ新規会話として開始する。workdir の他のファイルは残す */
@@ -327,6 +358,10 @@ async function chownRecursive(
 
 export class SessionRunner {
 	private readonly sessions = new Map<string, SessionRecord>();
+	/** debounceSec 待機中のレーン (sessionKey → 保留状態)。design 「セッション非稼働
+	 * レーンで gate 通過 → inbox enqueue した後、即 kick する代わりにレーンごとの
+	 * タイマーで kick を遅らせる」 */
+	private readonly pendingKicks = new Map<string, PendingKick>();
 	private readonly configSource: ConfigSource;
 	private readonly store: StateStore;
 	private readonly router: ReplyRouter;
@@ -426,7 +461,7 @@ export class SessionRunner {
 			return;
 		}
 
-		// 実行中でない: gate 評価 → trigger なら lease を取って kick
+		// 実行中でない: gate 評価 → trigger なら enqueue して kick (即 or debounce)
 		const { gates, combinator } = this.resolveGates(doc, isDm);
 		const decision = await evaluateTrigger(gates, combinator, {
 			event,
@@ -443,8 +478,11 @@ export class SessionRunner {
 			{ channelId, sessionKey, reason: decision.reason },
 			"gate triggered",
 		);
+		this.warnCooldownIfUnsupported(doc, sessionKey);
 
-		// gate 通過が確定してから耐久キューへ積む (dedupe = at-least-once の再送吸収)
+		// gate 通過が確定してから耐久キューへ積む (dedupe = at-least-once の再送吸収)。
+		// item はここで既に永続化されるため、この後 debounce タイマーで kick を遅らせても
+		// プロセス死で消えない (拾い直しは既存の inbox 経路に乗る)
 		const fresh = await this.store.inbox.enqueue(sessionKey, item);
 		if (!fresh) {
 			this.logger.debug(
@@ -458,6 +496,106 @@ export class SessionRunner {
 		// 上で enqueue した item はそのセッションの drain が拾う
 		if (this.sessions.has(sessionKey)) return;
 
+		const debounceSec = doc?.trigger?.debounceSec;
+		if (debounceSec !== undefined && event.mentionsBot !== true) {
+			this.scheduleDebouncedKick(
+				sessionKey,
+				channelId,
+				policy,
+				event,
+				doc,
+				debounceSec,
+			);
+			return;
+		}
+
+		// mentionsBot による即 kick バイパス: 同レーンの保留タイマーがあれば
+		// キャンセルする (item は inbox にあるので初回 prompt の drain がまとめて拾う)
+		this.clearPendingKick(sessionKey);
+		await this.acquireLeaseAndKick(sessionKey, channelId, policy, event, doc);
+	}
+
+	/** debounceSec のスライディングタイマーを (再)セットする。既存タイマーがあれば
+	 * firstPendingAtMs を維持したまま張り直し、無ければ新規に開始する
+	 * (design: 「後続メッセージが来るたび『最後のメッセージ + debounceSec』に延長。
+	 * ただし hard cap を超えては延ばさない」) */
+	private scheduleDebouncedKick(
+		sessionKey: string,
+		channelId: string,
+		policy: SessionPolicy,
+		event: InboundMessage,
+		doc: ChannelDoc | null,
+		debounceSec: number,
+	): void {
+		const existing = this.pendingKicks.get(sessionKey);
+		const nowMs = Date.now();
+		const firstPendingAtMs = existing?.firstPendingAtMs ?? nowMs;
+		if (existing !== undefined) clearTimeout(existing.timer);
+
+		const delayMs = computeKickDelayMs({
+			nowMs,
+			firstPendingAtMs,
+			debounceSec,
+		});
+		const timer = setTimeout(() => {
+			this.pendingKicks.delete(sessionKey);
+			void this.fireDebouncedKick(
+				sessionKey,
+				channelId,
+				policy,
+				event,
+				doc,
+			).catch((err) => {
+				this.logger.warn({ sessionKey, err }, "debounced kick failed");
+			});
+		}, delayMs);
+		timer.unref();
+		this.pendingKicks.set(sessionKey, {
+			timer,
+			firstPendingAtMs,
+			debounceSec,
+			triggerEvent: event,
+			doc,
+			channelId,
+		});
+		this.logger.debug(
+			{ sessionKey, delayMs, firstPendingAtMs },
+			"kick debounced",
+		);
+	}
+
+	/** debounce タイマー発火時の kick 試行。発火までの間に別経路 (mentionsBot バイパス
+	 * 等) で既にセッションが起動していたら何もしない — item は既存の drain が拾う */
+	private async fireDebouncedKick(
+		sessionKey: string,
+		channelId: string,
+		policy: SessionPolicy,
+		event: InboundMessage,
+		doc: ChannelDoc | null,
+	): Promise<void> {
+		if (this.sessions.has(sessionKey)) return;
+		await this.acquireLeaseAndKick(sessionKey, channelId, policy, event, doc);
+	}
+
+	/** 保留中の debounce タイマーがあればキャンセルして Map から消す (mentionsBot の
+	 * 即 kick バイパス、または debounce 前提が崩れた場合の後始末) */
+	private clearPendingKick(sessionKey: string): void {
+		const pending = this.pendingKicks.get(sessionKey);
+		if (pending === undefined) return;
+		clearTimeout(pending.timer);
+		this.pendingKicks.delete(sessionKey);
+	}
+
+	/** 実行ロックを取って kick する (即時 kick と debounce タイマー発火の両方から共有)。
+	 * lease が取れない・二重 kick になりそうなケースはログのみで戻る — item は
+	 * enqueue 済みなので保持者側の drain (steer / agent_end / linger) が拾う */
+	private async acquireLeaseAndKick(
+		sessionKey: string,
+		channelId: string,
+		policy: SessionPolicy,
+		event: InboundMessage,
+		doc: ChannelDoc | null,
+	): Promise<void> {
 		// 実行ロック。取れなければ別プロセスが保持中 — enqueue 済みなので
 		// 保持者側の drain (steer / agent_end / linger) が拾う
 		const lease = await this.store.leases.acquire(
@@ -467,7 +605,7 @@ export class SessionRunner {
 		);
 		if (lease === null) {
 			this.logger.info(
-				{ sessionKey, itemId: item.id },
+				{ sessionKey, itemId: inboxItemId(event) },
 				"lease held by another process; enqueued only",
 			);
 			return;
@@ -1131,6 +1269,19 @@ export class SessionRunner {
 			gates: specs.map((spec) => createGate(spec)),
 			combinator: doc.trigger.combinator,
 		};
+	}
+
+	/** trigger.cooldownSec は未実装。設定されていたら無視する旨を warn する
+	 * (toGateSpecs の unsupported gate kind の warn と同じ流儀。kick ごとに出て構わない) */
+	private warnCooldownIfUnsupported(
+		doc: ChannelDoc | null,
+		sessionKey: string,
+	): void {
+		if (doc?.trigger?.cooldownSec === undefined) return;
+		this.logger.warn(
+			{ sessionKey, cooldownSec: doc.trigger.cooldownSec },
+			"trigger.cooldownSec is not implemented; ignored",
+		);
 	}
 
 	/** リアクションは装飾なので、失敗してもセッションを止めない */
