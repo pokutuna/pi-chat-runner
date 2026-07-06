@@ -94,6 +94,22 @@ function parseAgentIds(): { uid?: number; gid?: number } {
 	return { uid, gid };
 }
 
+/** env TURN_TIMEOUT_MS (session-runtime.md §6 の turn timeout。既定 600_000ms =
+ * 10 分は SessionRunner の既定値に委ねる) をパースする。未設定なら undefined を返し
+ * SessionRunnerOptions.turnTimeoutMs を省略させる (既定値を server.ts と二重管理しない) */
+function parseTurnTimeoutMs(): number | undefined {
+	const raw = process.env.TURN_TIMEOUT_MS;
+	if (raw === undefined || raw === "") return undefined;
+	const value = Number.parseInt(raw, 10);
+	// 0 や負数は setTimeout が即発火して全ターンがタイムアウトになるため弾く
+	if (Number.isNaN(value) || value <= 0) {
+		throw new Error(
+			"TURN_TIMEOUT_MS must be a positive integer (milliseconds)",
+		);
+	}
+	return value;
+}
+
 /** env PI_PERMISSION_MODE=1 (session-runtime.md §6, pi-tools-and-sandbox.md
  * 「リーズナブルな sandbox レイヤ案」) で Node Permission Model 起動を opt-in する。
  * 未設定なら無効 (現状動作)。Cloud Run 実イメージでのみ有効化する想定 — ローカル開発・
@@ -156,6 +172,9 @@ function requireEnv(name: string): string {
 			"  PI_PERMISSION_MODE  1 で Node Permission Model 起動を有効化 (Cloud Run 実イメージ向け)",
 		);
 		console.error(
+			"  TURN_TIMEOUT_MS     1 ターンの上限 ms (既定 600000 = 10 分。超過で pi を kill してセッションを畳む)",
+		);
+		console.error(
 			"  PORT                events モードの listen ポート (既定 8080)",
 		);
 		console.error("");
@@ -206,6 +225,7 @@ async function main() {
 	const agentIds = parseAgentIds();
 	const piPermission = parsePiPermissionConfig();
 	const agentHome = process.env.PI_AGENT_HOME;
+	const turnTimeoutMs = parseTurnTimeoutMs();
 
 	const web = new WebClient(botToken);
 	const eventSource = buildEventSource(slackMode, botUserId);
@@ -251,6 +271,8 @@ async function main() {
 		...(agentHome !== undefined ? { agentHome } : {}),
 		// PI_PERMISSION_MODE=1 未設定なら Node Permission Model なし (現状動作)
 		...(piPermission !== undefined ? { piPermission } : {}),
+		// TURN_TIMEOUT_MS 未設定なら SessionRunner の既定 (600_000ms) を使う
+		...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
 	});
 	logger.info(
 		{

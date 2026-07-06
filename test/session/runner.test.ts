@@ -130,6 +130,7 @@ interface HarnessOptions {
 	agentGid?: number;
 	agentHome?: string;
 	piPermission?: PiPermissionConfig;
+	turnTimeoutMs?: number;
 }
 
 async function harness(
@@ -179,6 +180,9 @@ async function harness(
 		agentHome,
 		...(options.piPermission !== undefined
 			? { piPermission: options.piPermission }
+			: {}),
+		...(options.turnTimeoutMs !== undefined
+			? { turnTimeoutMs: options.turnTimeoutMs }
 			: {}),
 	});
 	return {
@@ -699,6 +703,61 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
 		// 未 ack の item は inbox に残っており、flush はされていない (異常終了なので
 		// このターンの入力は次の kick で再実行される)
 		expect((await h.store.inbox.drain(threadKey)).length).toBe(1);
+	});
+
+	it("kills pi and cleans up the session when a turn exceeds turnTimeoutMs", async () => {
+		// fake-pi の HANG_FOREVER は response も agent_end も返さない。runner が
+		// turnTimeoutMs (ここでは短く 100ms) 超過を検知して kill し、セッションを
+		// 異常終了として畳むことを確認する (session-runtime.md §6)
+		const h = await harness({}, { turnTimeoutMs: 100 });
+		const trigger = message({ mentionsBot: true, text: "HANG_FOREVER please" });
+		const threadKey = threadKeyOf(trigger);
+
+		await h.runner.handle(trigger);
+
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+		expect(h.logLines().some((line) => line.msg === "turn timed out")).toBe(
+			true,
+		);
+		expect(h.logLines().some((line) => line.msg === "session timed out")).toBe(
+			true,
+		);
+
+		// lease は解放されている
+		expect(
+			await h.store.leases.acquire(threadKey, "probe", 1000),
+		).not.toBeNull();
+
+		// timeout 通知がスレッドへ投稿されている (router.deliver 経由)
+		expect(h.poster.calls).toHaveLength(1);
+		expect(h.poster.calls[0]?.channelId).toBe("C01");
+		expect(h.poster.calls[0]?.threadTs).toBe(trigger.id);
+		expect(h.poster.calls[0]?.text).toContain(":warning:");
+
+		// timeout 時は flush も ack もしない — 未 ack の item は inbox に残り、
+		// 次の kick で再実行される (session-runtime.md §6 の不変条件)
+		expect((await h.store.inbox.drain(threadKey)).length).toBe(1);
+	});
+
+	it("does not fire the turn timeout when agent_end arrives before turnTimeoutMs", async () => {
+		// 通常のターン (fake-pi は即座に reply → agent_end を返す) では
+		// turnTimeoutMs (短く 200ms) が経過してもタイマーは発火しない
+		// (onAgentEnd 冒頭でクリアされているため)
+		const h = await harness({}, { turnTimeoutMs: 200 });
+		const trigger = message({ mentionsBot: true, text: "no timeout here" });
+
+		await h.runner.handle(trigger);
+		await waitFor(() => h.poster.calls.length === 1, "reply posted");
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+		// タイマーが発火していれば余分に 300ms 待った後もログに残るはずなので、
+		// 発火していないことを確認する
+		await sleep(300);
+		expect(h.logLines().some((line) => line.msg === "turn timed out")).toBe(
+			false,
+		);
+		expect(h.poster.calls).toHaveLength(1);
 	});
 
 	it("does not re-prompt items drained at kick when a later drain returns them (promptedIds)", async () => {

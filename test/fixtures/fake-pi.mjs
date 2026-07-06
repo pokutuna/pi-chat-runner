@@ -9,6 +9,8 @@
 //                        echo する reply → agent_end を吐く (steering ケース)
 //     "FAIL_PROMPT"    … success:false の response だけ返し、agent_end は吐かない
 //                        (pi 側が動けないケース。runner の異常終了処理を検証する)
+//     "HANG_FOREVER"   … response も agent_end も一切返さない (pi が無応答になる
+//                        ケース。runner の turn timeout 処理を検証する)
 //     それ以外          … `echo: <本文>` の reply → agent_end を吐く
 // - thread_key は --append-system-prompt に埋め込まれた "thread_key: <key>" を拾う
 // - stdin が閉じたら終了する (PiProcess.stop の graceful パス)
@@ -78,6 +80,11 @@ function handleCommand(command) {
 				success: false,
 				error: "No API key found for google-vertex",
 			});
+			return;
+		}
+		if (command.message.includes("HANG_FOREVER")) {
+			// 何も返さない。runner 側の turn timeout がタイマーで kill するまで
+			// このプロセスは生き続ける (SIGKILL を受けて終了する)
 			return;
 		}
 		emitReply(`echo: ${command.message}`);

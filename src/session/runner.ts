@@ -7,7 +7,8 @@
 // Step 4 のスコープ: lease による多重起動の排他、drain/ack 分離 (drain は非破壊。
 // プロンプト済み item の記憶と重複除外は runner のインメモリ責務)、agent_end 後の
 // linger による追いメッセージ拾い直し、WorkdirStorage による境界退避 (未指定なら
-// Step 3 相当のローカル置きっぱなし)。turn timeout は Step 6。
+// Step 3 相当のローカル置きっぱなし)。turn timeout (Step 6) もここで実装する
+// (session-runtime.md §6「ターンにタイムアウトを設け、超過したら pi を kill」)。
 
 import {
 	chmod,
@@ -114,6 +115,10 @@ export interface SessionRunnerOptions {
 	leaseTtlMs?: number;
 	/** agent_end 後に追いメッセージを待つ時間。既定 3_000ms */
 	lingerMs?: number;
+	/** 1 ターン (prompt/steer 送信から agent_end まで) の上限。既定 600_000ms (10 分)。
+	 * 超過したら pi を kill してセッションを異常終了として畳む
+	 * (session-runtime.md §6: 「ターンにタイムアウトを設け、超過したら pi を kill」) */
+	turnTimeoutMs?: number;
 	/** lease の owner 識別子。既定 `hostname:pid` */
 	owner?: string;
 	logger?: Logger;
@@ -140,6 +145,10 @@ interface SessionRecord {
 	 * 新しいターンが走り出しているので、終了判定をそのターンの agent_end に譲る */
 	turnEpoch: number;
 	renewTimer: NodeJS.Timeout | undefined;
+	/** 現ターンの timeout タイマー。prompt/steer 送信 (turnEpoch 増加箇所) ごとに
+	 * リセットし、agent_end 冒頭でクリアする。セッション終了パスでも必ずクリアする
+	 * (session-runtime.md §6 の turn timeout) */
+	turnTimeoutTimer: NodeJS.Timeout | undefined;
 }
 
 /** thread_key の導出。スレッド外の発言はそのメッセージ自身が thread root になる */
@@ -255,6 +264,7 @@ export class SessionRunner {
 	private readonly piPermission: PiPermissionConfig | undefined;
 	private readonly leaseTtlMs: number;
 	private readonly lingerMs: number;
+	private readonly turnTimeoutMs: number;
 	private readonly owner: string;
 	private readonly logger: Logger;
 
@@ -276,6 +286,7 @@ export class SessionRunner {
 		this.piPermission = options.piPermission;
 		this.leaseTtlMs = options.leaseTtlMs ?? 60_000;
 		this.lingerMs = options.lingerMs ?? 3_000;
+		this.turnTimeoutMs = options.turnTimeoutMs ?? 600_000;
 		this.owner = options.owner ?? `${hostname()}:${process.pid}`;
 		this.logger = options.logger ?? rootLogger.child({ component: "session" });
 	}
@@ -314,6 +325,7 @@ export class SessionRunner {
 				if (pending.length > 0) {
 					for (const p of pending) existing.promptedIds.add(p.id);
 					existing.turnEpoch += 1;
+					this.resetTurnTimeout(threadKey, existing);
 					existing.process.steer(renderItems(pending));
 					this.logger.info(
 						{ threadKey, items: pending.length },
@@ -388,6 +400,7 @@ export class SessionRunner {
 			promptedIds: new Set(),
 			turnEpoch: 0,
 			renewTimer: undefined,
+			turnTimeoutTimer: undefined,
 		};
 		this.sessions.set(threadKey, record);
 
@@ -398,6 +411,7 @@ export class SessionRunner {
 			// (または再送) で再 kick され拾い直される (persistence.md §4)
 			this.sessions.delete(threadKey);
 			this.stopRenewTimer(record);
+			this.clearTurnTimeout(record);
 			try {
 				await record.process?.stop();
 			} catch {
@@ -564,6 +578,7 @@ export class SessionRunner {
 			) {
 				this.sessions.delete(threadKey);
 				this.stopRenewTimer(current);
+				this.clearTurnTimeout(current);
 				void this.store.leases.release(current.lease).catch((err) => {
 					this.logger.warn({ threadKey, err }, "lease release failed");
 				});
@@ -600,6 +615,7 @@ export class SessionRunner {
 			body = renderEvent(triggerEvent);
 		}
 		record.turnEpoch += 1;
+		this.resetTurnTimeout(threadKey, record);
 		proc.prompt(prependContext(body, doc));
 
 		await this.store.sessions.put(threadKey, {
@@ -631,6 +647,9 @@ export class SessionRunner {
 		const record = this.sessions.get(threadKey);
 		if (record === undefined || record.process !== proc) return;
 		const epoch = record.turnEpoch;
+		// ターンが正常に終わったので timeout タイマーをクリア (リークさせない)。
+		// 以降 promptPending で継続する場合は都度リセットされる
+		this.clearTurnTimeout(record);
 
 		// 1. ターン境界の flush → 2. flush 成功後に ack (persistence.md §3)。
 		// ack 対象は flush 前のスナップショット — flush の await 中に steer が
@@ -673,6 +692,7 @@ export class SessionRunner {
 		});
 		await proc.stop();
 		this.stopRenewTimer(record);
+		this.clearTurnTimeout(record);
 		await this.store.leases.release(record.lease);
 		this.sessions.delete(threadKey);
 		this.logger.info(
@@ -684,30 +704,74 @@ export class SessionRunner {
 	/**
 	 * pi が response.success=false を返したときの異常終了処理 (例: Cloud Run で
 	 * ADC が見つからず認証エラーになるケース)。agent_end が来ない見込みなので
-	 * ここで能動的にセッションを畳む。exit ハンドラの「running のまま exit したら
-	 * 異常終了」と同じクリーンアップ (lease 解放 / renew 停止 / Map から削除) を行うが、
-	 * flush はしない (このターンの入力は inbox に残したまま次回に再実行させる)。
-	 * state を先に "stopping" にしておくことで、proc.stop() が引き起こす exit イベントが
-	 * 二重にクリーンアップを走らせない (exit ハンドラは state !== "stopping" のときだけ動く)
+	 * ここで能動的にセッションを畳む。pi は生きたまま次コマンドを待っているだけなので
+	 * graceful stop (proc.stop()) で十分止まる。クリーンアップの中身は abnormalShutdown
+	 * に共通化している (timeoutSession と共有)
 	 */
 	private async failSession(
 		threadKey: string,
 		proc: PiProcess,
 		error: string | undefined,
 	): Promise<void> {
+		await this.abnormalShutdown(threadKey, proc, {
+			noticeText: `:warning: セッションが異常終了しました: ${error ?? "unknown error"}`,
+			logMessage: "session failed",
+			stop: () => proc.stop(),
+		});
+	}
+
+	/**
+	 * ターンタイムアウト (turnTimeoutMs 超過) の異常終了処理。pi が応答しない可能性がある
+	 * ため graceful stop ではなく強制 kill する (session-runtime.md §6:
+	 * 「プロセスは使い捨て設計なので kill してよい。inbox の入力は残るため再実行可能」)。
+	 * クリーンアップの中身は failSession と共通 (abnormalShutdown)
+	 */
+	private async timeoutSession(
+		threadKey: string,
+		proc: PiProcess,
+	): Promise<void> {
+		this.logger.error(
+			{ threadKey, turnTimeoutMs: this.turnTimeoutMs },
+			"turn timed out",
+		);
+		await this.abnormalShutdown(threadKey, proc, {
+			noticeText: `:warning: ターンがタイムアウトしました (${this.turnTimeoutMs}ms)。セッションを終了します`,
+			logMessage: "session timed out",
+			stop: () => {
+				proc.kill();
+				return Promise.resolve();
+			},
+		});
+	}
+
+	/**
+	 * 異常終了の共通クリーンアップ (failSession / timeoutSession から呼ばれる)。
+	 * exit ハンドラの「running のまま exit したら異常終了」と同じ後始末 (lease 解放 /
+	 * renew・timeout タイマー停止 / Map から削除) を行うが、flush はしない (このターンの
+	 * 入力は inbox に残したまま次回に再実行させる)。state を先に "stopping" にしておくことで、
+	 * stop() が引き起こす exit イベントが二重にクリーンアップを走らせない
+	 * (exit ハンドラは state !== "stopping" のときだけ動く)
+	 */
+	private async abnormalShutdown(
+		threadKey: string,
+		proc: PiProcess,
+		options: {
+			noticeText: string;
+			logMessage: string;
+			stop: () => Promise<void>;
+		},
+	): Promise<void> {
 		const record = this.sessions.get(threadKey);
 		if (record === undefined || record.process !== proc) return;
 
 		record.state = "stopping";
 		this.stopRenewTimer(record);
+		this.clearTurnTimeout(record);
 
 		// register 済み (kick で必ず register している) なので deliver できる。
 		// Slack への通知が失敗してもセッションの畳み込みは続ける
 		await this.router
-			.deliver({
-				thread_key: threadKey,
-				text: `:warning: セッションが異常終了しました: ${error ?? "unknown error"}`,
-			})
+			.deliver({ thread_key: threadKey, text: options.noticeText })
 			.catch((err) => {
 				this.logger.warn({ threadKey, err }, "failure notice delivery failed");
 			});
@@ -715,10 +779,10 @@ export class SessionRunner {
 		await this.store.leases.release(record.lease).catch((err) => {
 			this.logger.warn({ threadKey, err }, "lease release failed");
 		});
-		await proc.stop();
+		await options.stop();
 		this.logger.warn(
 			{ threadKey, durationMs: Date.now() - record.startedAt },
-			"session failed",
+			options.logMessage,
 		);
 		// activeSessionCount (テストの waitFor 等) がこのログの後で 0 になるよう、
 		// Map からの削除はクリーンアップ完了後に行う
@@ -738,6 +802,7 @@ export class SessionRunner {
 		if (items.length === 0) return false;
 		for (const i of items) record.promptedIds.add(i.id);
 		record.turnEpoch += 1;
+		this.resetTurnTimeout(threadKey, record);
 		proc.prompt(renderItems(items));
 		this.logger.info({ threadKey, items: items.length }, "session continued");
 		return true;
@@ -760,6 +825,7 @@ export class SessionRunner {
 				record.state = "stopping";
 				this.sessions.delete(threadKey);
 				this.stopRenewTimer(record);
+				this.clearTurnTimeout(record);
 				await record.process?.stop();
 			})().catch((err) => {
 				this.logger.error({ threadKey, err }, "lease renew handling failed");
@@ -773,6 +839,28 @@ export class SessionRunner {
 		if (record.renewTimer !== undefined) {
 			clearInterval(record.renewTimer);
 			record.renewTimer = undefined;
+		}
+	}
+
+	/** turn timeout タイマーをリセットする (prompt/steer 送信ごとに呼ぶ。既存タイマーが
+	 * あれば止めて張り直す)。発火したら timeoutSession でセッションを異常終了させる */
+	private resetTurnTimeout(threadKey: string, record: SessionRecord): void {
+		this.clearTurnTimeout(record);
+		const timer = setTimeout(() => {
+			const proc = record.process;
+			if (proc === undefined) return;
+			void this.timeoutSession(threadKey, proc).catch((err) => {
+				this.logger.warn({ threadKey, err }, "timeoutSession handling failed");
+			});
+		}, this.turnTimeoutMs);
+		timer.unref();
+		record.turnTimeoutTimer = timer;
+	}
+
+	private clearTurnTimeout(record: SessionRecord): void {
+		if (record.turnTimeoutTimer !== undefined) {
+			clearTimeout(record.turnTimeoutTimer);
+			record.turnTimeoutTimer = undefined;
 		}
 	}
 
