@@ -38,7 +38,7 @@ import type {
 	ChannelDoc,
 	Gate as ChannelGateSpec,
 } from "../store/channel-doc.js";
-import type { ConfigSource } from "../store/config-source.js";
+import { type ConfigSource, DM_CHANNEL } from "../store/config-source.js";
 import { inboxItemId } from "../store/inbox-item.js";
 import type { InboxItem, Lease, StateStore } from "../store/interfaces.js";
 import type { WorkdirStorage } from "../store/workdir-storage.js";
@@ -341,7 +341,7 @@ export class SessionRunner {
 		const isDm = event.conversation.isDm === true;
 		// DM は channelId 個別の doc ではなく予約名 "dm" の doc を全 DM 共通で参照する
 		// (config.md §1, §2)。セッション自体は実 channelId (D...) で管理する
-		const doc = await this.loadChannelDoc(isDm ? "dm" : channelId);
+		const doc = await this.loadChannelDoc(isDm ? DM_CHANNEL : channelId);
 		const { gates, combinator } = this.resolveGates(doc, isDm);
 		const decision = await evaluateTrigger(gates, combinator, {
 			event,

@@ -30,6 +30,10 @@ const YAML_EXTENSIONS = [".yaml", ".yml"];
  * ChannelDoc (振る舞い定義) の解決にのみ作用する。 */
 export const DEFAULT_CHANNEL = "default";
 
+/** DM 用 ChannelDoc の予約名 (config.md §2)。全 DM 共通の振る舞い定義。
+ * 小文字なので実チャンネル ID (D...) と衝突しない。 */
+export const DM_CHANNEL = "dm";
+
 /** ローカル/お試し用の ConfigSource。config ディレクトリ (channels/*.yaml と
  * prompts/ を含む親) を受け取り、apply を経ずに直接 YAML を読む (config.md §6)。 */
 export class FileConfigSource implements ConfigSource {
@@ -53,7 +57,10 @@ export class FileConfigSource implements ConfigSource {
 				fallback = { doc, filePath };
 			}
 		}
-		if (fallback !== null) {
+		// DM (予約名 "dm") は default にフォールバックしない。default doc は通常チャンネル向けの
+		// フォールバックで、これを DM に適用すると DM の既定 (passthrough) が default の
+		// trigger (通常 mention) に上書きされてしまう (config.md §2)
+		if (fallback !== null && id !== DM_CHANNEL) {
 			return await resolveFileReferences(
 				fallback.doc,
 				fallback.filePath,

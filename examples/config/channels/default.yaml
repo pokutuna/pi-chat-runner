@@ -1,5 +1,6 @@
 # channel: "default" は予約値 — どの channels/*.yaml にも一致しないチャンネルの
 # フォールバック定義になる (このファイルが無ければ組み込み既定 = mention 起動のみ)。
+# DM には適用されない — DM の振る舞いは channels/dm.yaml (無ければ passthrough 起動)。
 # セッションやメッセージの管理は常に実チャンネル ID で行われ、ここは振る舞い定義のみ。
 # 注意: passthrough を書くと bot がいる全チャンネルで全発言に反応するため、
 # フォールバックは mention 起動に留めるのが安全。

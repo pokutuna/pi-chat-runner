@@ -64,7 +64,9 @@ interface ChannelDoc {
 DM は channelId 個別の doc ではなく、予約名 `dm` の doc (`channels/dm.yaml`) を
 全 DM 共通で参照する。doc が無ければ既定 trigger は passthrough (§1 の表の通り)。
 チャンネルの既定 (mention) と異なるのは、DM が 1:1 の明示的な話しかけであり
-メンションが自然な操作にならないため。
+メンションが自然な操作にならないため。`channel: "default"` のフォールバック doc は
+DM には適用しない — 通常チャンネル向けの trigger (多くは mention) が DM の既定
+(passthrough) を上書きしてしまうため。DM の振る舞いを変えるのは `dm.yaml` だけ。
 
 将来拡張 (必要になったら足す。§3 末尾):
 

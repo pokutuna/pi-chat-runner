@@ -48,6 +48,20 @@ describe("FileConfigSource", () => {
 		expect(doc?.systemPrompt).toBe("specific channel prompt");
 	});
 
+	it("does not fall back to the 'default' doc for the reserved DM name", async () => {
+		// default doc は通常チャンネル向けフォールバック。dm に適用すると DM の既定
+		// (passthrough) が default の trigger で上書きされてしまう (config.md §2)
+		const source = new FileConfigSource(join(FIXTURES_DIR, "config-default"));
+		const doc = await source.channel("dm");
+		expect(doc).toBeNull();
+	});
+
+	it("returns the 'dm' doc by exact match when present", async () => {
+		const source = new FileConfigSource(join(FIXTURES_DIR, "config-dm"));
+		const doc = await source.channel("dm");
+		expect(doc?.systemPrompt).toBe("dm prompt");
+	});
+
 	it("returns null when no channel doc matches", async () => {
 		const source = new FileConfigSource(join(FIXTURES_DIR, "config"));
 		const doc = await source.channel("C_NOT_FOUND");

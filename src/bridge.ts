@@ -118,6 +118,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 				kind: event.kind,
 				eventId: "id" in event ? event.id : undefined,
 				channelId: event.conversation?.channelId,
+				isDm: event.conversation?.isDm,
 				userId: "sender" in event ? event.sender.id : undefined,
 			},
 			"event received",
