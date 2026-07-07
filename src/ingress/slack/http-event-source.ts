@@ -9,10 +9,10 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import { Hono } from "hono";
-import type { Logger } from "../logger.js";
-import type { ChatEvent } from "./chat-event.js";
-import type { Ack, EventSource } from "./event-source.js";
-import { SlackIngressAdapter } from "./slack-adapter.js";
+import type { Logger } from "../../logger.js";
+import type { ChatEvent } from "../chat-event.js";
+import type { Ack, EventSource } from "../event-source.js";
+import { SlackIngressAdapter } from "./adapter.js";
 
 /** リプレイ対策の許容ずれ (Slack 公式ドキュメント推奨値) */
 const TIMESTAMP_TOLERANCE_SEC = 300;

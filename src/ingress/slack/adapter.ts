@@ -11,7 +11,7 @@ import type {
 	ConversationRef,
 	InboundMessage,
 	ReactionEvent,
-} from "./chat-event.js";
+} from "../chat-event.js";
 
 /** Slack Events API の envelope: `{ event_id, event: {...}, ... }` (簡略化した最小の型) */
 export interface SlackEventEnvelope {

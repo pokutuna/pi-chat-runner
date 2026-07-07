@@ -13,11 +13,8 @@ import type { WebClient } from "@slack/web-api";
 import type { ConfigSource } from "./config/config-source.js";
 import type { ChatEvent, InboundMessage } from "./ingress/chat-event.js";
 import type { Ack, EventSource } from "./ingress/event-source.js";
-import {
-	enrichEvent,
-	SlackUserResolver,
-	type UserResolver,
-} from "./ingress/user-resolver.js";
+import { SlackUserResolver } from "./ingress/slack/user-resolver.js";
+import { enrichEvent, type UserResolver } from "./ingress/user-resolver.js";
 import type { Logger } from "./logger.js";
 import { rootLogger } from "./logger.js";
 import { Reactions } from "./reply/reactions.js";

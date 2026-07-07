@@ -5,9 +5,9 @@ import { describe, expect, it } from "vitest";
 import type {
 	ChatEvent,
 	InboundMessage,
-} from "../../src/ingress/chat-event.js";
-import type { Ack } from "../../src/ingress/event-source.js";
-import { HttpEventSource } from "../../src/ingress/http-event-source.js";
+} from "../../../src/ingress/chat-event.js";
+import type { Ack } from "../../../src/ingress/event-source.js";
+import { HttpEventSource } from "../../../src/ingress/slack/http-event-source.js";
 
 const SIGNING_SECRET = "test-signing-secret";
 const BOT_USER_ID = "UBOT123";

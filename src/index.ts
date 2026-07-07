@@ -39,11 +39,6 @@ export type {
 	SystemEvent,
 } from "./ingress/chat-event.js";
 export type { Ack, EventSource } from "./ingress/event-source.js";
-export { SocketEventSource } from "./ingress/event-source.js";
-export {
-	HttpEventSource,
-	type HttpEventSourceOptions,
-} from "./ingress/http-event-source.js";
 // 自前 EventSource を書く利用者向け: raw Slack event → ChatEvent の正規化 codec
 // (mention 展開 / isDm 判定 / dedupeKey) を再実装せず使い回せるようにする
 export {
@@ -52,13 +47,15 @@ export {
 	type SlackMessageLikeEvent,
 	type SlackRawEvent,
 	type SlackReactionAddedEvent,
-} from "./ingress/slack-adapter.js";
-// 自前 EventSource を書く利用者向け: UserID → 表示名解決 (renderEvent / mention 展開の enrich)
+} from "./ingress/slack/adapter.js";
 export {
-	enrichEvent,
-	SlackUserResolver,
-	type UserResolver,
-} from "./ingress/user-resolver.js";
+	HttpEventSource,
+	type HttpEventSourceOptions,
+} from "./ingress/slack/http-event-source.js";
+export { SocketEventSource } from "./ingress/slack/socket-event-source.js";
+// 自前 EventSource を書く利用者向け: UserID → 表示名解決 (renderEvent / mention 展開の enrich)
+export { SlackUserResolver } from "./ingress/slack/user-resolver.js";
+export { enrichEvent, type UserResolver } from "./ingress/user-resolver.js";
 export type { Logger } from "./logger.js";
 export { type ReactionClient, Reactions } from "./reply/reactions.js";
 export {

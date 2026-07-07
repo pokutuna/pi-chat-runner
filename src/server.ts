@@ -19,8 +19,8 @@ import {
 } from "./config/agent-config.js";
 import { FileConfigSource } from "./config/config-source.js";
 import type { EventSource } from "./ingress/event-source.js";
-import { SocketEventSource } from "./ingress/event-source.js";
-import { HttpEventSource } from "./ingress/http-event-source.js";
+import { HttpEventSource } from "./ingress/slack/http-event-source.js";
+import { SocketEventSource } from "./ingress/slack/socket-event-source.js";
 import { rootLogger } from "./logger.js";
 import type { PiPermissionConfig } from "./session/runner.js";
 import { FirestoreStateStore } from "./store/firestore.js";
