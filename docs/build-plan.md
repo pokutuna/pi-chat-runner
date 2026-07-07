@@ -100,7 +100,7 @@ develop/compose.yaml (Firestore エミュレータ)。設計は [design/persiste
 turn timeout (10 分) + エラー投稿 + ❌、DM 既定 config (`dm`)、base image の公開。
 
 - [x] UID 分離: `PI_AGENT_UID`/`PI_AGENT_GID` (両方セットで有効) で pi を別 uid/gid で spawn し、workdir を chown/chmod 0700 する ([src/session/runner.ts](../src/session/runner.ts) の agentUid/chownRecursive)
-- [ ] pi の bash から /data が読めない・Runner の environ が読めない (実行環境での検証。UID 分離の実装自体は上記の通り済み)
+- [x] pi の bash から /data が読めない・Runner の environ が読めない (Cloud Run 実環境で検証済み: pi は uid=1001(agent) で spawn され、`/data` と `/proc/1/environ` はいずれも Permission denied。permission-gate ではなくカーネル権限で遮断)
 - [x] timeout 超過 → kill → ❌ + エラー投稿、再依頼で復帰 (`turnTimeoutMs`、既定 10 分)
 - [x] DM で passthrough 起動する (予約名 `dm` の doc が無ければ既定 passthrough)
 - [x] agent.yaml + `envPassthrough` (bridge 予約 prefix の拒否込み)
