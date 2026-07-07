@@ -57,12 +57,12 @@ RUN npm install -g @earendil-works/pi-coding-agent@0.79.9
 RUN groupadd --gid 1001 agent \
   && useradd --uid 1001 --gid 1001 --create-home --shell /usr/sbin/nologin agent
 
-# 既定 settings.json の焼き込み (agent-home/README.md、session-runtime.md §2)。
+# 既定 settings.json の焼き込み (session-runtime.md §2)。
 # steeringMode/followUpMode/compaction.enabled/enableInstallTelemetry など
 # runner の設計が依存する挙動だけをピン留めした最小構成。利用者は
 # FROM このイメージ 1 段で COPY --chown=1001:1001 <自分の settings.json>
 # /home/agent/.pi/agent/settings.json と上書きできる
-COPY --chown=1001:1001 agent-home/ /home/agent/
+COPY --chown=1001:1001 home/ /home/agent/
 
 WORKDIR /app
 

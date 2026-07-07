@@ -2,7 +2,7 @@
  * Step 2 検証用の使い捨て駆動スクリプト。Slack にはつながない。
  *
  * 使い方:
- *   pnpm exec tsx scripts/drive-pi.ts [--session /tmp/pi-drive/s1.jsonl] \
+ *   pnpm exec tsx develop/drive-pi.ts [--session /tmp/pi-drive/s1.jsonl] \
  *     [--model gemini-2.5-flash-lite] [--provider google-vertex] [--pi-bin pi] \
  *     "プロンプト本文"
  *
@@ -32,7 +32,7 @@ const { values, positionals } = parseArgs({
 
 const promptText = positionals.join(" ").trim();
 if (!promptText) {
-	console.error('usage: tsx scripts/drive-pi.ts [options] "prompt text"');
+	console.error('usage: tsx develop/drive-pi.ts [options] "prompt text"');
 	process.exit(1);
 }
 

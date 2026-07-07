@@ -50,10 +50,15 @@ Chat (e.g. Slack)
 | `src/store/` | Persistence: `state/` (DB) and `workdir.ts` (workdir archival) |
 | `src/reply/` | thread_key resolution and reaction handling |
 | `extensions/` | Extensions injected into pi |
+| `home/` | Baked into the base image as `/home/agent` (default `settings.json`, etc.) |
+| `skills/` | Baked into the base image as `/app/skills` (sample skills for pi; empty by default) |
 | `examples/config/` | Sample channel configuration and prompts |
 | `examples/service.yaml` | Cloud Run deployment template (copy and edit) |
 | `examples/slack-app-manifest.socket.yaml` | Slack App manifest template, Socket Mode |
 | `examples/slack-app-manifest.http.yaml` | Slack App manifest template, Events API |
+| `develop/` | This repo's own local dev tooling: `compose.yaml`, `drive-pi.ts` |
+
+A real deployment (your own Slack App, your own Cloud Run service) lives in a separate repo that extends the base image with `FROM` and fills in the `examples/` templates with real values — see [docs/design/session-runtime.md](docs/design/session-runtime.md) §5.
 
 ## Usage
 

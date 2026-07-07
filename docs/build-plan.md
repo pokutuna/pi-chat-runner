@@ -65,7 +65,7 @@ formatter フック (identity)、inbox はメモリ実装。**ここで「ロー
 作るもの: `InboxStore` (drain/ack 分離) / `SessionStore` / `LeaseStore` の
 インタフェースと 3 実装 (InMemory / SQLite / Firestore)、runner への lease + linger
 組み込み、`WorkdirStorage` (restore/flush、実装はファイルコピー 1 つ)、
-compose.yaml (Firestore エミュレータ)。設計は [design/persistence.md](design/persistence.md)。
+develop/compose.yaml (Firestore エミュレータ)。設計は [design/persistence.md](design/persistence.md)。
 
 実装選択は env (`STORE_BACKEND=memory|sqlite|firestore`、`WORKDIR_ARCHIVE_DIR`)。
 ローカル開発の既定は InMemory で、エミュレータ無しで動く。永続化・排他込みの
@@ -135,7 +135,6 @@ CLI (`apply` / `status` / `init`)、base image の公開。
 <repo>/
 ├── package.json            # npm パッケージ (Runner + CLI)
 ├── Dockerfile              # base image ([design/session-runtime.md](design/session-runtime.md) §5)
-├── compose.yaml            # Firestore エミュレータ (開発・テスト用)
 ├── src/
 │   ├── server.ts           # エントリポイント (EventSource 起動 + HTTP)
 │   ├── ingress/
@@ -169,10 +168,13 @@ CLI (`apply` / `status` / `init`)、base image の公開。
 ├── examples/
 │   ├── service.yaml        # Cloud Run 定義の雛形 (secretKeyRef / env、要編集)
 │   ├── slack-app-manifest.socket.yaml # Slack App 作成用 manifest、Socket Mode 版 (要編集)
-│   └── slack-app-manifest.http.yaml   # Slack App 作成用 manifest、Events API 版 (要編集)
+│   ├── slack-app-manifest.http.yaml   # Slack App 作成用 manifest、Events API 版 (要編集)
 │   └── config/
 │       ├── channels/       # ask-ai.yaml / dm.yaml
 │       └── prompts/        # *.md
+├── develop/                # このリポジトリ自身のローカル動作確認用ツール
+│   ├── compose.yaml        # Firestore エミュレータ (開発・テスト用)
+│   └── drive-pi.ts         # pi 単体駆動スクリプト (Step 2 検証用)
 └── test/
 ```
 
