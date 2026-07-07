@@ -140,23 +140,30 @@ CLI (`apply` / `status` / `init`)、base image の公開。
 ├── src/
 │   ├── server.ts           # エントリポイント (EventSource 起動 + HTTP)
 │   ├── ingress/
-│   │   ├── event-source.ts # EventSource IF + Http / Socket 実装
-│   │   └── slack-adapter.ts# IngressAdapter (署名検証・codec)
+│   │   ├── chat-event.ts   # InboundMessage 等、プラットフォーム中立のイベント型
+│   │   ├── event-source.ts # EventSource IF + Ack IF (プラットフォーム中立)
+│   │   ├── user-resolver.ts# UserResolver IF + enrichEvent (プラットフォーム中立)
+│   │   └── slack/          # adapter.ts / http-event-source.ts /
+│   │                       # socket-event-source.ts / user-resolver.ts (Slack 実装)
 │   ├── gate/
 │   │   ├── gate.ts         # Gate IF + registry + any/all
 │   │   └── gates/          # mention.ts / keyword.ts / passthrough.ts
+│   ├── config/             # agent-config.ts / channel-doc.ts / config-source.ts
 │   ├── session/
 │   │   ├── runner.ts       # lease → drain → kick のオーケストレーション
-│   │   ├── runtime.ts      # SessionRuntime: spawn / RPC / timeout
-│   │   ├── workdir.ts      # tmpfs 準備・restore・flush
-│   │   └── inbox.ts        # InboxStore (poll / 既読管理)
+│   │   ├── runtime.ts      # SessionRuntime: pi の spawn / RPC / timeout (pi 専用実装)
+│   │   ├── rpc.ts          # stdin/stdout JSONL のプロトコル層
+│   │   └── pi-events.ts    # pi のイベント型 (ドメイン層)
 │   ├── store/
-│   │   ├── firestore.ts    # ChannelDoc / SessionDoc / lease
-│   │   └── config-source.ts# ConfigSource IF (Firestore / File)
+│   │   ├── workdir.ts      # WorkdirStorage IF + Copy(退避) / Noop(退避なし) 実装
+│   │   └── state/
+│   │       ├── interfaces.ts # InboxStore / SessionStore / LeaseStore / StateStore IF
+│   │       ├── inbox-item.ts # inboxItemId
+│   │       └── backends/      # firestore.ts / sqlite.ts / memory.ts
 │   ├── reply/
 │   │   ├── router.ts       # thread_key → thread_ts、投稿、formatter フック
 │   │   └── reactions.ts    # 👀 / ✅ / ❌
-│   └── cli/                # apply.ts / status.ts / init.ts
+│   └── cli/                # 未実装 (apply.ts / status.ts / init.ts 予定)
 ├── extensions/
 │   └── reply.ts            # pi extension (イメージの /app/extensions/ へ)
 ├── skills/                 # サンプル skill (イメージの /app/skills/ へ)
