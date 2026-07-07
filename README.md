@@ -89,4 +89,4 @@ pnpm run lint
 
 ## Status
 
-Under active development. Currently Slack and Google Cloud (Cloud Run + Firestore + GCS) only — other chat platforms and cloud providers are not supported yet. Steps 0-5 of [docs/build-plan.md](docs/build-plan.md) are done; Step 6 is partial. CLI (`apply`/`status`/`init`) is not implemented yet.
+Under active development. Currently Slack and Google Cloud (Cloud Run + Firestore + GCS) only — other chat platforms and cloud providers are not supported yet. Steps 0-5 of [docs/build-plan.md](docs/build-plan.md) are done; Step 6 is nearly complete. The CLI (`apply`/`status`/`init`) is deferred — configuration is read directly from YAML via `FileConfigSource`, so `apply` (and a `FirestoreConfigSource`) are not needed for now.

@@ -13,11 +13,11 @@
 | HTTP | Hono | Events API エンドポイント + health check。軽量・TS ファースト |
 | Slack | @slack/web-api + @slack/socket-mode | Bolt は使わない — EventSource / IngressAdapter 抽象を自前で持つ設計 ([design/architecture.md](design/architecture.md) §1) と Bolt のリスナー層が二重になる。薄い SDK を素材として使い、署名検証は自前実装 |
 | dev 実行 | tsx | watch 起動 |
-| ビルド | tsdown | npm 配布 (Runner + CLI) の dist/ 生成。reply extension は pi が `--extension` で TS を直接ロードするためビルド対象外 (ソースのまま同梱) |
+| ビルド | tsdown | npm 配布 (Runner) の dist/ 生成。reply extension は pi が `--extension` で TS を直接ロードするためビルド対象外 (ソースのまま同梱) |
 | テスト | Vitest | Firestore エミュレータ (compose, Step 4) と組み合わせる |
 | スキーマ検証 | zod | channels/*.yaml の apply 時 strict 検証 ([design/config.md](design/config.md) §6) と ChannelDoc 型を単一ソース化 |
 | YAML | yaml | |
-| GCP | @google-cloud/firestore | GCS は FUSE 経由なので SDK 不要 (status CLI で必要になったら @google-cloud/storage) |
+| GCP | @google-cloud/firestore | GCS は FUSE 経由なので SDK 不要 (将来 status CLI を作るなら @google-cloud/storage) |
 | lint/format | Biome | 単一ツールで高速 |
 | パッケージ管理 | pnpm | 単一パッケージ。モノレポ化が必要になっても workspace 移行が容易 |
 
@@ -97,17 +97,17 @@ develop/compose.yaml (Firestore エミュレータ)。設計は [design/persiste
 ## Step 6: 仕上げ (初期版ゴール)
 
 作るもの: UID 分離 + FUSE dir-mode ([design/session-runtime.md](design/session-runtime.md) §6)、agent.yaml + `envPassthrough` ([design/config.md](design/config.md) §6, [design/session-runtime.md](design/session-runtime.md) §2)、
-turn timeout (10 分) + エラー投稿 + ❌、DM 既定 config (`dm`)、
-CLI (`apply` / `status` / `init`)、base image の公開。
+turn timeout (10 分) + エラー投稿 + ❌、DM 既定 config (`dm`)、base image の公開。
 
 - [x] UID 分離: `PI_AGENT_UID`/`PI_AGENT_GID` (両方セットで有効) で pi を別 uid/gid で spawn し、workdir を chown/chmod 0700 する ([src/session/runner.ts](../src/session/runner.ts) の agentUid/chownRecursive)
 - [ ] pi の bash から /data が読めない・Runner の environ が読めない (実行環境での検証。UID 分離の実装自体は上記の通り済み)
 - [x] timeout 超過 → kill → ❌ + エラー投稿、再依頼で復帰 (`turnTimeoutMs`、既定 10 分)
 - [x] DM で passthrough 起動する (予約名 `dm` の doc が無ければ既定 passthrough)
 - [x] agent.yaml + `envPassthrough` (bridge 予約 prefix の拒否込み)
-- [ ] `apply` → ChannelDoc 反映 → 次イベントから挙動が変わる (CLI 未実装。`src/cli/` はディレクトリのみ)
-- [ ] `status` で sessions 一覧と transcript dump が見える (CLI 未実装)
-- [ ] `init` の scaffold から利用者の拡張イメージがビルドできる (CLI 未実装)
+
+CLI (`apply` / `status` / `init`) は当面見送る (下記「未着手」参照)。設定はローカル・本番とも
+`FileConfigSource` の YAML 直読みで運用しており、`apply` (YAML → Firestore) を必要とする
+`FirestoreConfigSource` も併せて見送る。
 
 ## 実装済みの追加機能 (計画時に無かった、または前倒しで入ったもの)
 
@@ -123,6 +123,9 @@ CLI (`apply` / `status` / `init`)、base image の公開。
 
 ## 未着手 (将来。design にあるが計画に現れていない項目)
 
+- [ ] CLI (`apply` / `status` / `init`) と `FirestoreConfigSource` ([design/config.md](design/config.md) §6)。
+  当面は設定を `FileConfigSource` で YAML 直読み運用するため見送り。本番設定を Firestore を
+  実行時の正とする方式へ移す判断をしたら、`FirestoreConfigSource` → `apply` の順で着手する
 - [ ] classifier Gate / cooldown Gate ([design/session-model.md](design/session-model.md) §5)
 - [ ] resume_pending を伴う再開設計・鮮度窓・再開ループ遮断 ([design/session-model.md](design/session-model.md) §6)
 - [ ] SessionEntry (エントリ列) 台帳・artifact / outcome エントリ ([design/session-model.md](design/session-model.md) §2, §7, §8)
@@ -161,7 +164,7 @@ CLI (`apply` / `status` / `init`)、base image の公開。
 │   ├── reply/
 │   │   ├── router.ts       # thread_key → thread_ts、投稿、formatter フック
 │   │   └── reactions.ts    # 👀 / ✅ / ❌
-│   └── cli/                # 未実装 (apply.ts / status.ts / init.ts 予定)
+│   └── (cli/ は見送り — apply / status / init 予定だった)
 ├── extensions/
 │   └── reply.ts            # pi extension (イメージの /app/extensions/ へ)
 ├── skills/                 # サンプル skill (イメージの /app/skills/ へ)
@@ -180,4 +183,4 @@ CLI (`apply` / `status` / `init`)、base image の公開。
 
 ステップとの対応: Step 1 = ingress + reply の骨格、Step 2 = session/runtime +
 extensions/、Step 3 = gate + config-source(File) + examples/、Step 4 = store +
-workdir、Step 5 = Dockerfile + service.yaml、Step 6 = cli + 隔離まわり。
+workdir、Step 5 = Dockerfile + service.yaml、Step 6 = 隔離まわり (CLI は見送り)。

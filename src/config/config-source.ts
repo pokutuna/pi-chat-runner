@@ -1,7 +1,9 @@
 // ConfigSource(File) — docs/design/config.md §6
 //
-// 「Firestore が実行時の正」は変えず、ローカル/お試しでは同じ YAML をファイルから直接読む
-// (FirestoreConfigSource は Step 4 で実装する。ここでは作らない)。
+// 「Firestore が実行時の正」は元々の設計方針だが、当面はローカル・本番とも同じ YAML を
+// ファイルから直接読む FileConfigSource で運用する。FirestoreConfigSource と、それに YAML を
+// 書き込む apply CLI は見送り中 (build-plan.md「未着手」参照)。本番設定を Firestore を
+// 実行時の正とする方式へ移す判断をしたら FirestoreConfigSource を追加する。
 //
 // FileConfigSource は毎回読み直す (キャッシュしない)。ローカル用途なのでコストは無視できる。
 // これにより「YAML 編集 → 再起動なしで挙動が変わる」(build-plan.md Step 3) が
