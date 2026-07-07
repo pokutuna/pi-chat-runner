@@ -3,6 +3,13 @@
  * pi を `--mode rpc` で子プロセス起動し、stdin JSONL でコマンドを送り、
  * stdout JSONL のイベントを購読する。
  * 参照: docs/design/session-runtime.md §1-§2, §4
+ *
+ * TODO(将来): 現状は pi 専用実装で、AgentProcess のような抽象 interface は
+ * 切っていない (ingress/ の EventSource のような抽象/実装分離は未実施)。
+ * session-runtime.md §5 が「別の agent 実行コンテナ + RPC 相当のブリッジへの
+ * 差し替え」を昇格パスとして想定しているので、pi 以外の実装が実際に必要になった
+ * タイミングで、この境界をインタフェースとして切り出す (今は実装が1つしかなく、
+ * 可変点を想像で決めると手戻りするため見送っている)。
  */
 import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
