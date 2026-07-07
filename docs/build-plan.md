@@ -136,7 +136,6 @@ CLI (`apply` / `status` / `init`)、base image の公開。
 ├── package.json            # npm パッケージ (Runner + CLI)
 ├── Dockerfile              # base image ([design/session-runtime.md](design/session-runtime.md) §5)
 ├── compose.yaml            # Firestore エミュレータ (開発・テスト用)
-├── service.yaml            # Cloud Run 定義 (secretKeyRef / env)
 ├── src/
 │   ├── server.ts           # エントリポイント (EventSource 起動 + HTTP)
 │   ├── ingress/
@@ -168,6 +167,9 @@ CLI (`apply` / `status` / `init`)、base image の公開。
 │   └── reply.ts            # pi extension (イメージの /app/extensions/ へ)
 ├── skills/                 # サンプル skill (イメージの /app/skills/ へ)
 ├── examples/
+│   ├── service.yaml        # Cloud Run 定義の雛形 (secretKeyRef / env、要編集)
+│   ├── slack-app-manifest.socket.yaml # Slack App 作成用 manifest、Socket Mode 版 (要編集)
+│   └── slack-app-manifest.http.yaml   # Slack App 作成用 manifest、Events API 版 (要編集)
 │   └── config/
 │       ├── channels/       # ask-ai.yaml / dm.yaml
 │       └── prompts/        # *.md

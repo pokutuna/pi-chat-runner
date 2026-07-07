@@ -5,9 +5,6 @@ features:
   bot_user:
     display_name: pi-chat-runner
     always_online: true
-  # DM (im) を受けるための入力欄。これが無いと App の Messages タブが
-  # read-only になり、ユーザーが bot に DM を送れない (DM 自体の受信は
-  # im:history + message.im 側)。DM の起動既定は passthrough (docs/design/config.md §2)
   app_home:
     messages_tab_enabled: true
     messages_tab_read_only_enabled: false
@@ -20,10 +17,10 @@ oauth_config:
     - channels:history
     - groups:history
     - im:history
-    # メッセージ描画時の UserID → 表示名解決 (users.info)。追加後は再インストールが必要
     - users:read
 settings:
   event_subscriptions:
+    request_url: REPLACE_WITH_CLOUD_RUN_URL/slack/events
     bot_events:
     - app_mention
     - message.channels
@@ -32,5 +29,5 @@ settings:
   interactivity:
     is_enabled: false
   org_deploy_enabled: false
-  socket_mode_enabled: true
+  socket_mode_enabled: false
   token_rotation_enabled: false

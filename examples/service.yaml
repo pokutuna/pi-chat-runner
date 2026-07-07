@@ -1,0 +1,76 @@
+apiVersion: serving.knative.dev/v1
+kind: Service
+metadata:
+  name: pi-chat-runner
+spec:
+  template:
+    metadata:
+      annotations:
+        autoscaling.knative.dev/minScale: "0"
+        autoscaling.knative.dev/maxScale: "3"
+        run.googleapis.com/cpu-throttling: "false"
+        run.googleapis.com/execution-environment: gen2
+    spec:
+      timeoutSeconds: 3600
+      containerConcurrency: 10
+      containers:
+        # REPLACE: 実際にビルド・push したイメージの参照に置き換える
+        - image: gcr.io/PROJECT_ID/pi-chat-runner:latest
+          ports:
+            - name: http1
+              containerPort: 8080
+          env:
+            - name: SLACK_MODE
+              value: events
+            - name: STORE_BACKEND
+              value: firestore
+            - name: WORKDIR_ARCHIVE_DIR
+              value: /data
+            - name: PI_PERMISSION_MODE
+              value: "1"
+            - name: PI_AGENT_UID
+              value: "1001"
+            - name: PI_AGENT_GID
+              value: "1001"
+            - name: METADATA_SERVER_DETECTION
+              value: assume-present
+            # REPLACE: bot の User ID (自己エコー除外・mention 判定に使う)
+            - name: SLACK_BOT_USER_ID
+              value: "U0000000000"
+            # REPLACE: 実 GCP プロジェクト ID (Firestore/ADC が使用)
+            - name: GOOGLE_CLOUD_PROJECT
+              value: PROJECT_ID
+            # 任意: ChannelDoc.model 未指定時の既定モデル / provider
+            # - name: PI_MODEL
+            #   value: gemini-3-pro
+            # - name: PI_PROVIDER
+            #   value: google-vertex
+            # 任意: CONFIG_DIR (既定 examples/config。base image に同梱済み)
+            # - name: CONFIG_DIR
+            #   value: examples/config
+            # REPLACE: Secret Manager 上のシークレット名
+            - name: SLACK_BOT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: pi-chat-runner-slack-bot-token # REPLACE
+                  key: latest
+            - name: SLACK_SIGNING_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: pi-chat-runner-slack-signing-secret # REPLACE
+                  key: latest
+          resources:
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          csi:
+            driver: gcsfuse.run.googleapis.com
+            volumeAttributes:
+              # REPLACE: 実バケット名
+              bucketName: PROJECT_ID-pi-chat-runner-data
+              mountOptions: "uid=0,gid=0,dir-mode=0700,file-mode=0600"

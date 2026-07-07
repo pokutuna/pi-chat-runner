@@ -51,6 +51,9 @@ Chat (e.g. Slack)
 | `src/reply/` | thread_key resolution and reaction handling |
 | `extensions/` | Extensions injected into pi |
 | `examples/config/` | Sample channel configuration and prompts |
+| `examples/service.yaml` | Cloud Run deployment template (copy and edit) |
+| `examples/slack-app-manifest.socket.yaml` | Slack App manifest template, Socket Mode |
+| `examples/slack-app-manifest.http.yaml` | Slack App manifest template, Events API |
 
 ## Usage
 
