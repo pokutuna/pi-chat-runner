@@ -44,11 +44,10 @@ import {
 	extractReply,
 	extractTurnErrors,
 	extractUsageTotals,
-	isAgentEnd,
-	isToolExecutionEnd,
 	piEventLogFields,
 	type UsageTotals,
-} from "./rpc.js";
+} from "./pi-events.js";
+import { isAgentEnd, isToolExecutionEnd } from "./rpc.js";
 import { buildPiPermissionOptions, PiProcess } from "./runtime.js";
 
 /** app 共通プロンプトのプラットフォーム中立な固定部分。ChannelDoc.systemPrompt は
@@ -911,7 +910,7 @@ export class SessionRunner {
 			}
 			if (isAgentEnd(piEvent)) {
 				// ターン内の LLM 呼び出し失敗は agent_end としては正常終了になるので、
-				// ここで拾わないとログに一切残らない (rpc.ts extractTurnErrors)
+				// ここで拾わないとログに一切残らない (pi-events.ts extractTurnErrors)
 				for (const errorMessage of extractTurnErrors(piEvent)) {
 					this.logger.error(
 						{ sessionKey, errorMessage },
@@ -919,7 +918,7 @@ export class SessionRunner {
 					);
 				}
 				// agent_end.messages は毎回全履歴を返すため、この totals はターンの増分では
-				// なくセッション累計 (rpc.ts extractUsageTotals)
+				// なくセッション累計 (pi-events.ts extractUsageTotals)
 				const totals = extractUsageTotals(piEvent);
 				record.usageTotals = totals;
 				this.logger.info({ sessionKey, ...totals }, "turn usage");
