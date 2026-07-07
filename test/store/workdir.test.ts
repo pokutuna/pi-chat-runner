@@ -2,7 +2,11 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CopyWorkdirStorage } from "../../src/store/workdir.js";
+import {
+	CopyWorkdirStorage,
+	createWorkdirStorage,
+	NoopWorkdirStorage,
+} from "../../src/store/workdir.js";
 
 const THREAD_KEY = "C123ABC:1720000000.123456";
 
@@ -117,5 +121,39 @@ describe("CopyWorkdirStorage", () => {
 		expect(await readFile(expectedShelfTranscript, "utf8")).toBe(
 			'{"type":"turn"}\n',
 		);
+	});
+});
+
+describe("NoopWorkdirStorage", () => {
+	it("restore returns false and does not create the workdir", async () => {
+		const storage = new NoopWorkdirStorage();
+
+		const restored = await storage.restore(THREAD_KEY, workdir);
+
+		expect(restored).toBe(false);
+		await expect(
+			readFile(join(workdir, "transcript.jsonl"), "utf8"),
+		).rejects.toThrow();
+	});
+
+	it("flush does nothing", async () => {
+		const storage = new NoopWorkdirStorage();
+		await writeWorkdirFiles();
+
+		await expect(storage.flush(THREAD_KEY, workdir)).resolves.toBeUndefined();
+	});
+});
+
+describe("createWorkdirStorage", () => {
+	it("returns a NoopWorkdirStorage when archiveDir is undefined", () => {
+		expect(createWorkdirStorage(undefined)).toBeInstanceOf(NoopWorkdirStorage);
+	});
+
+	it("returns a NoopWorkdirStorage when archiveDir is an empty string", () => {
+		expect(createWorkdirStorage("")).toBeInstanceOf(NoopWorkdirStorage);
+	});
+
+	it("returns a CopyWorkdirStorage when archiveDir is set", () => {
+		expect(createWorkdirStorage(baseDir)).toBeInstanceOf(CopyWorkdirStorage);
 	});
 });

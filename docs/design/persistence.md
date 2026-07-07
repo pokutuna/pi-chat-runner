@@ -10,7 +10,7 @@ inbox / セッション状態 / lease (DB 系) と workdir の退避先 (Storage
 | 抽象 | インタフェース | 実装 | 本番 | ローカル |
 |---|---|---|---|---|
 | DB (状態) | `InboxStore` / `SessionStore` / `LeaseStore` | InMemory / SQLite / Firestore | Firestore | InMemory (既定) or SQLite |
-| Storage (workdir 退避) | `WorkdirStorage` | ファイルコピー実装 **1 つだけ** | ベース = GCS FUSE マウント | ベース = ローカルディレクトリ |
+| Storage (workdir 退避) | `WorkdirStorage` | ファイルコピー (Copy) / 退避なし (Noop) | ベース = GCS FUSE マウント | ベース = ローカルディレクトリ or 退避なし |
 
 - **DB はインタフェースが正、実装は差し込み**。SessionRunner はコンストラクタで
   Store 群を受け取るだけで、どの実装かを知らない (現行の `InboxStore` と同じ形)。
@@ -113,12 +113,15 @@ interface WorkdirStorage {
 }
 ```
 
-実装は**ファイルコピー 1 つだけ** (`CopyWorkdirStorage(baseDir)`)。
-`baseDir` がローカルの普通のディレクトリなら「ローカル永続化」、
-Cloud Run で GCS FUSE のマウントポイント (`/data`) なら「GCS 永続化」になり、
-コードは同一。GCS SDK 実装は作らない (必要になった時に足せる形は保たれる)。
+実装はファイルコピーの `CopyWorkdirStorage(baseDir)` と、退避なしの
+`NoopWorkdirStorage` の 2 つ。`baseDir` がローカルの普通のディレクトリなら
+「ローカル永続化」、Cloud Run で GCS FUSE のマウントポイント (`/data`) なら
+「GCS 永続化」になり、コードは同一。GCS SDK 実装は作らない (必要になった時に
+足せる形は保たれる)。
 
-選択は env `WORKDIR_ARCHIVE_DIR` (未設定なら退避なし = Step 3 相当の挙動)。
+選択は env `WORKDIR_ARCHIVE_DIR` から `createWorkdirStorage(archiveDir)` が
+決める (未設定/空文字なら `NoopWorkdirStorage` = 退避なし = Step 3 相当の挙動、
+設定時は `CopyWorkdirStorage`)。
 
 ### FUSE 前提の明記
 
