@@ -20,6 +20,9 @@ const GateSchema = z
 		]),
 		pattern: z.string().optional(),
 		criteria: z.string().optional(),
+		/** classifier gate の判定モデル上書き (省略時は agent.yaml の classifier.model /
+		 * コード既定を使う)。ChannelDocSchema.model (pi 用) とは別物。 */
+		model: z.string().optional(),
 	})
 	.strict()
 	.superRefine((gate, ctx) => {

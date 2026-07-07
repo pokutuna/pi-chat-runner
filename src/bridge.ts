@@ -10,6 +10,10 @@
 
 import { fileURLToPath } from "node:url";
 import type { WebClient } from "@slack/web-api";
+import {
+	type ClassifierClient,
+	GeminiClassifierClient,
+} from "./classifier/client.js";
 import type { ConfigSource } from "./config/config-source.js";
 import type { ChatEvent, InboundMessage } from "./ingress/chat-event.js";
 import type { Ack, EventSource } from "./ingress/event-source.js";
@@ -36,6 +40,12 @@ export interface BridgeOptions {
 	model?: string;
 	provider?: string;
 	turnTimeoutMs?: number;
+	/** classifier gate の既定モデル (agent.yaml classifier.model 由来)。未設定なら
+	 * コード既定 (gemini-3.1-flash-lite) を使う。 */
+	classifierModel?: string;
+	/** classifier gate 用 LLM client の注入口 (主にテスト用)。省略時は
+	 * GOOGLE_CLOUD_PROJECT があれば GeminiClassifierClient を内部構築する。 */
+	classifierClient?: ClassifierClient;
 	extraEnv?: Record<string, string>;
 	archiveDir?: string;
 	agentUid?: number;
@@ -87,6 +97,21 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 	const workdirStorage =
 		options.workdirStorage ?? createWorkdirStorage(options.archiveDir);
 
+	// classifier gate 用 LLM client。注入があればそれを使い、なければ
+	// GOOGLE_CLOUD_PROJECT があるときだけ GeminiClassifierClient を内部構築する
+	// (project 未設定なら undefined = classifier gate を使う channel で createGate が throw)。
+	const classifierClient: ClassifierClient | undefined =
+		options.classifierClient ??
+		(() => {
+			const project = process.env.GOOGLE_CLOUD_PROJECT;
+			if (project === undefined) return undefined;
+			return new GeminiClassifierClient({
+				project,
+				location: process.env.GOOGLE_CLOUD_LOCATION ?? "us-central1",
+				defaultModel: options.classifierModel ?? "gemini-3.1-flash-lite",
+			});
+		})();
+
 	const runner = new SessionRunner({
 		configSource,
 		store,
@@ -133,6 +158,8 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 		...(options.turnTimeoutMs !== undefined
 			? { turnTimeoutMs: options.turnTimeoutMs }
 			: {}),
+		// classifierClient 未構築なら classifier gate 非対応 (createGate が throw する)
+		...(classifierClient !== undefined ? { classifierClient } : {}),
 	});
 
 	// Layer 0 (ハードフィルタ): 同一メッセージは app_mention と message の 2 イベントで

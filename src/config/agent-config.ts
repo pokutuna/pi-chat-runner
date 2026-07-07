@@ -28,9 +28,18 @@ const AgentConfigPiSchema = z
 	})
 	.strict();
 
+/** classifier gate (session-model.md §5 Layer 2) の既定モデル。channel の gate.model
+ * が優先され、これは未指定 gate の service 単位の既定。未設定ならコード既定 (bridge) を使う。 */
+const AgentConfigClassifierSchema = z
+	.object({
+		model: z.string().optional(),
+	})
+	.strict();
+
 export const AgentConfigSchema = z
 	.object({
 		pi: AgentConfigPiSchema.optional(),
+		classifier: AgentConfigClassifierSchema.optional(),
 	})
 	.strict();
 
@@ -89,6 +98,9 @@ export interface ResolvedAgentConfig {
 	model?: string;
 	turnTimeoutMs?: number;
 	envPassthrough: string[];
+	/** classifier gate の既定モデル (agent.yaml classifier.model)。未設定なら undefined
+	 * のまま返し、コード既定は bridge の client 生成側に一箇所だけ置く。 */
+	classifierModel?: string;
 }
 
 /** env TURN_TIMEOUT_MS をパースする (旧 server.ts の parseTurnTimeoutMs をここへ移動)。
@@ -155,11 +167,15 @@ export function resolveAgentConfig(
 	}
 	const envPassthrough = envPassthroughFromEnv ?? fileEnvPassthrough ?? [];
 
+	// classifier.model は env 経路を設けない (config で指定する方針)。
+	const classifierModel = file.classifier?.model;
+
 	return {
 		...(provider !== undefined ? { provider } : {}),
 		...(model !== undefined ? { model } : {}),
 		...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
 		envPassthrough,
+		...(classifierModel !== undefined ? { classifierModel } : {}),
 	};
 }
 

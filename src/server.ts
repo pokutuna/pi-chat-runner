@@ -211,7 +211,7 @@ async function main() {
 	// agent.yaml (config.md §6) + env を解決する。優先順位は env > agent.yaml > コード既定
 	const agentConfigFile = await loadAgentConfig(configDir);
 	const agentConfig = resolveAgentConfig(agentConfigFile, process.env);
-	const { model, provider, turnTimeoutMs } = agentConfig;
+	const { model, provider, turnTimeoutMs, classifierModel } = agentConfig;
 	const passthrough = collectPassthroughEnv(
 		agentConfig.envPassthrough,
 		process.env,
@@ -266,6 +266,8 @@ async function main() {
 		...(piPermission !== undefined ? { piPermission } : {}),
 		// TURN_TIMEOUT_MS 未設定なら SessionRunner の既定 (600_000ms) を使う
 		...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
+		// agent.yaml classifier.model 未設定なら bridge のコード既定を使う
+		...(classifierModel !== undefined ? { classifierModel } : {}),
 		logger,
 	});
 }

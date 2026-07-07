@@ -47,6 +47,19 @@ describe("AgentConfigSchema", () => {
 			AgentConfigSchema.safeParse({ pi: { turnTimeoutMs: 1.5 } }).success,
 		).toBe(false);
 	});
+
+	it("accepts a classifier block with a model", () => {
+		expect(
+			AgentConfigSchema.safeParse({ classifier: { model: "gemini-x" } })
+				.success,
+		).toBe(true);
+	});
+
+	it("rejects unknown keys under classifier", () => {
+		expect(
+			AgentConfigSchema.safeParse({ classifier: { unknown: true } }).success,
+		).toBe(false);
+	});
 });
 
 describe("loadAgentConfig", () => {
@@ -168,6 +181,19 @@ describe("resolveAgentConfig", () => {
 		expect(() =>
 			resolveAgentConfig({}, { PI_ENV_PASSTHROUGH: "BRIDGE_SECRET,GH_TOKEN" }),
 		).toThrow(/BRIDGE_SECRET/);
+	});
+
+	it("resolves classifier.model from the file (no env path)", () => {
+		const resolved = resolveAgentConfig(
+			{ classifier: { model: "gemini-x" } },
+			{ CLASSIFIER_MODEL: "env-ignored" },
+		);
+		expect(resolved.classifierModel).toBe("gemini-x");
+	});
+
+	it("leaves classifierModel undefined when the classifier block is absent", () => {
+		const resolved = resolveAgentConfig({}, {});
+		expect(resolved.classifierModel).toBeUndefined();
 	});
 });
 

@@ -4,8 +4,15 @@
 // channel 設定 (criteria/pattern 等) は各 Gate のコンストラクタ引数で渡すため、
 // GateContext には event/recent のみを持たせる (architecture.md §2 の ChannelDoc.trigger
 // が gates: Array<{kind, ...params}> を持ち、それをここで Gate インスタンスへ組み立てる)。
+//
+// classifier は LLM 呼び出しを要するため ClassifierClient を deps で注入する
+// (createGate の第 2 引数)。mention/keyword/passthrough は deps 不要。cooldown は
+// 初期スコープ外のため registry 未登録 (createGate はエラーを投げる)。
 
+import type { ClassifierClient } from "../classifier/client.js";
 import type { ChatEvent } from "../ingress/chat-event.js";
+import type { Logger } from "../logger.js";
+import { ClassifierGate } from "./gates/classifier.js";
 import { KeywordGate } from "./gates/keyword.js";
 import { MentionGate } from "./gates/mention.js";
 import { PassthroughGate } from "./gates/passthrough.js";
@@ -29,14 +36,23 @@ export interface Gate {
 export type GateCombinator = "any" | "all";
 
 /** ChannelDoc.trigger.gates の 1 要素 (YAML 由来)。kind ごとに要るパラメータだけ持つ。
- * classifier/cooldown は初期スコープ外のため registry 未登録 (createGate はエラーを投げる)。 */
+ * classifier は criteria 必須 + model 任意 (per-gate モデル上書き)。cooldown は初期
+ * スコープ外のため registry 未登録 (createGate はエラーを投げる)。 */
 export type GateSpec =
 	| { kind: "mention" }
 	| { kind: "keyword"; pattern: string }
-	| { kind: "passthrough" };
+	| { kind: "passthrough" }
+	| { kind: "classifier"; criteria: string; model?: string };
 
-/** GateSpec (YAML 由来のデータ) から Gate インスタンスを組み立てる registry */
-export function createGate(spec: GateSpec): Gate {
+/** createGate に注入する依存。classifier gate のみが必要とする (LLM client + logger)。 */
+export interface GateDeps {
+	classifierClient?: ClassifierClient;
+	logger?: Logger;
+}
+
+/** GateSpec (YAML 由来のデータ) から Gate インスタンスを組み立てる registry。
+ * deps は classifier のためのもの。他 kind は無視するため既定 {} で source 互換。 */
+export function createGate(spec: GateSpec, deps: GateDeps = {}): Gate {
 	switch (spec.kind) {
 		case "mention":
 			return new MentionGate();
@@ -44,6 +60,17 @@ export function createGate(spec: GateSpec): Gate {
 			return new KeywordGate(spec.pattern);
 		case "passthrough":
 			return new PassthroughGate();
+		case "classifier": {
+			if (deps.classifierClient === undefined) {
+				throw new Error(
+					'createGate: gate kind "classifier" requires a classifierClient (none injected)',
+				);
+			}
+			return new ClassifierGate(spec.criteria, deps.classifierClient, {
+				...(spec.model !== undefined ? { model: spec.model } : {}),
+				...(deps.logger !== undefined ? { logger: deps.logger } : {}),
+			});
+		}
 		default: {
 			const unknown: { kind: string } = spec;
 			throw new Error(`createGate: unknown gate kind "${unknown.kind}"`);

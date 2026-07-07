@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import type { ClassifierClient } from "../../src/classifier/client.js";
 import {
 	createGate,
 	defaultGates,
@@ -6,6 +7,7 @@ import {
 	type Gate,
 	type GateContext,
 } from "../../src/gate/gate.js";
+import { ClassifierGate } from "../../src/gate/gates/classifier.js";
 import { KeywordGate } from "../../src/gate/gates/keyword.js";
 import { MentionGate } from "../../src/gate/gates/mention.js";
 import { PassthroughGate } from "../../src/gate/gates/passthrough.js";
@@ -46,10 +48,27 @@ describe("createGate (registry)", () => {
 		expect(gate).toBeInstanceOf(PassthroughGate);
 	});
 
+	it("creates a ClassifierGate for kind=classifier when a client is injected", () => {
+		const client: ClassifierClient = {
+			classify: async () => ({ result: true, reason: "ok" }),
+		};
+		const gate = createGate(
+			{ kind: "classifier", criteria: "trigger on tasks" },
+			{ classifierClient: client },
+		);
+		expect(gate).toBeInstanceOf(ClassifierGate);
+	});
+
+	it("throws for kind=classifier without an injected client", () => {
+		expect(() => createGate({ kind: "classifier", criteria: "c" })).toThrow(
+			/requires a classifierClient/,
+		);
+	});
+
 	it("throws for unknown kind", () => {
 		expect(() =>
 			// @ts-expect-error intentionally invalid kind for the error-path test
-			createGate({ kind: "classifier" }),
+			createGate({ kind: "cooldown" }),
 		).toThrow(/unknown gate kind/);
 	});
 });

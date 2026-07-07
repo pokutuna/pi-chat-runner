@@ -22,6 +22,7 @@ import {
 } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join } from "node:path";
+import type { ClassifierClient } from "../classifier/client.js";
 import type { ChannelDoc, GateConfig } from "../config/channel-doc.js";
 import { type ConfigSource, DM_CHANNEL } from "../config/config-source.js";
 import {
@@ -30,6 +31,7 @@ import {
 	evaluateTrigger,
 	type Gate,
 	type GateCombinator,
+	type GateDeps,
 	type GateSpec,
 } from "../gate/gate.js";
 import type { InboundMessage } from "../ingress/chat-event.js";
@@ -151,6 +153,9 @@ export interface SessionRunnerOptions {
 	 * bridge 以外の利用者は自分で実装を渡す) */
 	mentionFormat: MentionFormat;
 	logger?: Logger;
+	/** classifier gate 用の LLM client。省略時は classifier gate を使う channel で
+	 * createGate が throw する (session-model.md §5 Layer 2)。 */
+	classifierClient?: ClassifierClient;
 }
 
 interface SessionRecord {
@@ -262,9 +267,9 @@ function renderItems(items: InboxItem[]): string {
 }
 
 /**
- * ChannelDoc.trigger.gates (kind に classifier/cooldown も含む広い型) を
- * Step 3 で実装済みの GateSpec へ narrowing する。未対応 kind は warn してスキップ
- * (YAML に classifier を書いても動き続ける。fail-loud にはしない)。
+ * ChannelDoc.trigger.gates (kind に cooldown も含む広い型) を GateSpec へ narrowing する。
+ * mention/keyword/passthrough/classifier を対応。未対応 kind (cooldown) は warn して
+ * スキップ (YAML に書いても動き続ける。fail-loud にはしない)。
  */
 export function toGateSpecs(
 	gates: GateConfig[],
@@ -286,6 +291,18 @@ export function toGateSpecs(
 				break;
 			case "passthrough":
 				specs.push({ kind: "passthrough" });
+				break;
+			case "classifier":
+				// schema 上 criteria 必須だが、型の narrowing のため明示的に確認する
+				if (gate.criteria === undefined) {
+					warn("classifier gate without criteria; skipped");
+					break;
+				}
+				specs.push({
+					kind: "classifier",
+					criteria: gate.criteria,
+					...(gate.model !== undefined ? { model: gate.model } : {}),
+				});
 				break;
 			default:
 				warn(`unsupported gate kind "${gate.kind}"; skipped`);
@@ -424,6 +441,7 @@ export class SessionRunner {
 	private readonly owner: string;
 	private readonly mentionFormat: MentionFormat;
 	private readonly logger: Logger;
+	private readonly classifierClient: ClassifierClient | undefined;
 
 	constructor(options: SessionRunnerOptions) {
 		this.configSource = options.configSource;
@@ -448,6 +466,7 @@ export class SessionRunner {
 		this.owner = options.owner ?? `${hostname()}:${process.pid}`;
 		this.mentionFormat = options.mentionFormat;
 		this.logger = options.logger ?? rootLogger.child({ component: "session" });
+		this.classifierClient = options.classifierClient;
 	}
 
 	/** 実行中 (起動中含む) のセッション数。テスト・観測用 */
@@ -1343,8 +1362,14 @@ export class SessionRunner {
 		const specs = toGateSpecs(doc.trigger.gates, (message) =>
 			this.logger.warn(message),
 		);
+		const deps: GateDeps = {
+			...(this.classifierClient !== undefined
+				? { classifierClient: this.classifierClient }
+				: {}),
+			logger: this.logger,
+		};
 		return {
-			gates: specs.map((spec) => createGate(spec)),
+			gates: specs.map((spec) => createGate(spec, deps)),
 			combinator: doc.trigger.combinator,
 		};
 	}

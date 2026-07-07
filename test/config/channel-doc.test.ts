@@ -94,6 +94,22 @@ describe("ChannelDocSchema", () => {
 		}
 	});
 
+	it("accepts a classifier gate with a per-gate model override", () => {
+		const result = ChannelDocSchema.safeParse({
+			trigger: {
+				combinator: "any",
+				gates: [
+					{ kind: "classifier", criteria: "infra alert", model: "gemini-x" },
+				],
+			},
+		});
+		expect(result.success).toBe(true);
+		if (result.success) {
+			const gate = result.data.trigger?.gates[0];
+			expect(gate).toMatchObject({ kind: "classifier", model: "gemini-x" });
+		}
+	});
+
 	it("accepts mention/passthrough/cooldown gates without extra params", () => {
 		const result = ChannelDocSchema.safeParse({
 			trigger: {

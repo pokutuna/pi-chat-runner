@@ -1489,6 +1489,8 @@ describe("toGateSpecs", () => {
 					{ kind: "mention" },
 					{ kind: "keyword", pattern: "foo" },
 					{ kind: "passthrough" },
+					{ kind: "classifier", criteria: "is it a question?" },
+					{ kind: "classifier", criteria: "urgent?", model: "gemini-x" },
 				],
 				() => {},
 			),
@@ -1496,21 +1498,30 @@ describe("toGateSpecs", () => {
 			{ kind: "mention" },
 			{ kind: "keyword", pattern: "foo" },
 			{ kind: "passthrough" },
+			{ kind: "classifier", criteria: "is it a question?" },
+			{ kind: "classifier", criteria: "urgent?", model: "gemini-x" },
 		]);
 	});
 
 	it("skips unsupported kinds with a warning instead of throwing", () => {
 		const warnings: string[] = [];
 		const specs = toGateSpecs(
-			[
-				{ kind: "classifier", criteria: "is it a question?" },
-				{ kind: "cooldown" },
-				{ kind: "mention" },
-			],
+			[{ kind: "cooldown" }, { kind: "mention" }],
 			(message) => warnings.push(message),
 		);
 		expect(specs).toEqual([{ kind: "mention" }]);
-		expect(warnings).toHaveLength(2);
+		expect(warnings).toHaveLength(1);
+		expect(warnings[0]).toContain("cooldown");
+	});
+
+	it("skips a classifier gate missing criteria with a warning", () => {
+		const warnings: string[] = [];
+		const specs = toGateSpecs(
+			[{ kind: "classifier" }, { kind: "mention" }],
+			(message) => warnings.push(message),
+		);
+		expect(specs).toEqual([{ kind: "mention" }]);
+		expect(warnings).toHaveLength(1);
 		expect(warnings[0]).toContain("classifier");
 	});
 });
