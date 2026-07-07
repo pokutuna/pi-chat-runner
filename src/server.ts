@@ -12,17 +12,17 @@ import { dirname } from "node:path";
 import { Firestore } from "@google-cloud/firestore";
 import { WebClient } from "@slack/web-api";
 import { startBridge } from "./bridge.js";
+import {
+	collectPassthroughEnv,
+	loadAgentConfig,
+	resolveAgentConfig,
+} from "./config/agent-config.js";
+import { FileConfigSource } from "./config/config-source.js";
 import type { EventSource } from "./ingress/event-source.js";
 import { SocketEventSource } from "./ingress/event-source.js";
 import { HttpEventSource } from "./ingress/http-event-source.js";
 import { rootLogger } from "./logger.js";
 import type { PiPermissionConfig } from "./session/runner.js";
-import {
-	collectPassthroughEnv,
-	loadAgentConfig,
-	resolveAgentConfig,
-} from "./store/agent-config.js";
-import { FileConfigSource } from "./store/config-source.js";
 import { FirestoreStateStore } from "./store/firestore.js";
 import type { StateStore } from "./store/interfaces.js";
 import { InMemoryStateStore } from "./store/memory.js";

@@ -22,6 +22,8 @@ import {
 } from "node:fs/promises";
 import { hostname } from "node:os";
 import { join } from "node:path";
+import type { ChannelDoc, GateConfig } from "../config/channel-doc.js";
+import { type ConfigSource, DM_CHANNEL } from "../config/config-source.js";
 import {
 	createGate,
 	defaultGates,
@@ -35,8 +37,6 @@ import type { Logger } from "../logger.js";
 import { rootLogger } from "../logger.js";
 import type { Reactions } from "../reply/reactions.js";
 import type { ReplyRouter } from "../reply/router.js";
-import type { ChannelDoc, GateConfig } from "../store/channel-doc.js";
-import { type ConfigSource, DM_CHANNEL } from "../store/config-source.js";
 import { inboxItemId } from "../store/inbox-item.js";
 import type { InboxItem, Lease, StateStore } from "../store/interfaces.js";
 import type { WorkdirStorage } from "../store/workdir-storage.js";

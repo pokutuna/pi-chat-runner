@@ -4,6 +4,30 @@
 // server.ts (CLI/bin) はこのファイルを経由せず直接内部モジュールを import する。
 
 export { type BridgeOptions, startBridge } from "./bridge.js";
+export {
+	type AgentConfig,
+	AgentConfigSchema,
+	type CollectedPassthroughEnv,
+	collectPassthroughEnv,
+	loadAgentConfig,
+	type ResolvedAgentConfig,
+	resolveAgentConfig,
+} from "./config/agent-config.js";
+// 自前 ConfigSource を書く利用者向け: 戻り値の型・検証スキーマ・予約名
+export {
+	type ChannelDoc,
+	type ChannelDocFile,
+	ChannelDocFileSchema,
+	ChannelDocSchema,
+	type GateConfig,
+	type Trigger,
+} from "./config/channel-doc.js";
+export {
+	type ConfigSource,
+	DEFAULT_CHANNEL,
+	DM_CHANNEL,
+	FileConfigSource,
+} from "./config/config-source.js";
 export type {
 	Attachment,
 	ChatEvent,
@@ -49,30 +73,6 @@ export {
 	SessionRunner,
 	type SessionRunnerOptions,
 } from "./session/runner.js";
-export {
-	type AgentConfig,
-	AgentConfigSchema,
-	type CollectedPassthroughEnv,
-	collectPassthroughEnv,
-	loadAgentConfig,
-	type ResolvedAgentConfig,
-	resolveAgentConfig,
-} from "./store/agent-config.js";
-// 自前 ConfigSource を書く利用者向け: 戻り値の型・検証スキーマ・予約名
-export {
-	type ChannelDoc,
-	type ChannelDocFile,
-	ChannelDocFileSchema,
-	ChannelDocSchema,
-	type GateConfig,
-	type Trigger,
-} from "./store/channel-doc.js";
-export {
-	type ConfigSource,
-	DEFAULT_CHANNEL,
-	DM_CHANNEL,
-	FileConfigSource,
-} from "./store/config-source.js";
 export type {
 	InboxItem,
 	InboxStore,

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	ChannelDocFileSchema,
 	ChannelDocSchema,
-} from "../../src/store/channel-doc.js";
+} from "../../src/config/channel-doc.js";
 
 describe("ChannelDocSchema", () => {
 	it("accepts a minimal empty doc", () => {

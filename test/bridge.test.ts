@@ -14,9 +14,9 @@ import type { WebClient } from "@slack/web-api";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 import { startBridge } from "../src/bridge.js";
+import { FileConfigSource } from "../src/config/config-source.js";
 import type { ChatEvent } from "../src/ingress/chat-event.js";
 import type { Ack, EventSource } from "../src/ingress/event-source.js";
-import { FileConfigSource } from "../src/store/config-source.js";
 import { InMemoryStateStore } from "../src/store/memory.js";
 
 /** BridgeOptions.web が要求する @slack/web-api の WebClient のうち、bridge が実際に

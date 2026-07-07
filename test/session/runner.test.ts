@@ -17,6 +17,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
+import type { ChannelDoc } from "../../src/config/channel-doc.js";
+import type { ConfigSource } from "../../src/config/config-source.js";
 import type { InboundMessage } from "../../src/ingress/chat-event.js";
 import { Reactions } from "../../src/reply/reactions.js";
 import { type ChatPoster, ReplyRouter } from "../../src/reply/router.js";
@@ -36,8 +38,6 @@ import {
 	sessionKeyOf,
 	toGateSpecs,
 } from "../../src/session/runner.js";
-import type { ChannelDoc } from "../../src/store/channel-doc.js";
-import type { ConfigSource } from "../../src/store/config-source.js";
 import { inboxItemId } from "../../src/store/inbox-item.js";
 import type { StateStore } from "../../src/store/interfaces.js";
 import { InMemoryStateStore } from "../../src/store/memory.js";

@@ -7,7 +7,7 @@ import {
 	collectPassthroughEnv,
 	loadAgentConfig,
 	resolveAgentConfig,
-} from "../../src/store/agent-config.js";
+} from "../../src/config/agent-config.js";
 
 describe("AgentConfigSchema", () => {
 	it("accepts a fully populated config", () => {
