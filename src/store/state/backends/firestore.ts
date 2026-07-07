@@ -19,7 +19,7 @@
 
 import type { Firestore, Transaction } from "@google-cloud/firestore";
 import { Timestamp } from "@google-cloud/firestore";
-import type { InboundMessage } from "../ingress/chat-event.js";
+import type { InboundMessage } from "../../../ingress/chat-event.js";
 import type {
 	InboxItem,
 	InboxStore,
@@ -28,7 +28,7 @@ import type {
 	SessionDoc,
 	SessionStore,
 	StateStore,
-} from "./interfaces.js";
+} from "../interfaces.js";
 
 /** Firestore の gRPC ステータスコード。ALREADY_EXISTS = 6。
  * https://cloud.google.com/apis/design/errors#error_model */

@@ -37,9 +37,13 @@ import type { Logger } from "../logger.js";
 import { rootLogger } from "../logger.js";
 import type { Reactions } from "../reply/reactions.js";
 import type { ReplyRouter } from "../reply/router.js";
-import { inboxItemId } from "../store/inbox-item.js";
-import type { InboxItem, Lease, StateStore } from "../store/interfaces.js";
-import type { WorkdirStorage } from "../store/workdir-storage.js";
+import { inboxItemId } from "../store/state/inbox-item.js";
+import type {
+	InboxItem,
+	Lease,
+	StateStore,
+} from "../store/state/interfaces.js";
+import type { WorkdirStorage } from "../store/workdir.js";
 import {
 	extractReply,
 	extractTurnErrors,
@@ -99,8 +103,8 @@ export interface SessionRunnerOptions {
 	store: StateStore;
 	router: ReplyRouter;
 	reactions: Reactions;
-	/** workdir の境界退避。未指定なら restore/flush をスキップ (Step 3 相当) */
-	workdirStorage?: WorkdirStorage;
+	/** workdir の境界退避。 */
+	workdirStorage: WorkdirStorage;
 	/** pi の `--extension` に渡す extension の絶対パス群 (reply + permission-gate 等)。
 	 * すべて常時注入する (permission-gate は事故防止層なので無効化オプションは持たない) */
 	extensionPaths: string[];
@@ -402,7 +406,7 @@ export class SessionRunner {
 	private readonly store: StateStore;
 	private readonly router: ReplyRouter;
 	private readonly reactions: Reactions;
-	private readonly workdirStorage: WorkdirStorage | undefined;
+	private readonly workdirStorage: WorkdirStorage;
 	private readonly extensionPaths: string[];
 	private readonly skillsDir: string | undefined;
 	private readonly workdirRoot: string;
@@ -753,9 +757,7 @@ export class SessionRunner {
 		// 同 sessionKey は常に同じ workdir/transcript.jsonl を使う。再 trigger 時は
 		// 同じパスで再 spawn され、pi が JSONL を読んで文脈を継続する (再開の専用フローなし)
 		await mkdir(workdir, { recursive: true });
-		if (this.workdirStorage !== undefined) {
-			await this.workdirStorage.restore(sessionKey, workdir);
-		}
+		await this.workdirStorage.restore(sessionKey, workdir);
 		// channel モードの世代交代 (session-model.md §3): idle 超過 または transcript
 		// サイズ超過のいずれかで transcript を世代交代する。rotate は chown より前
 		// (rotate されたファイルの所有権も chown で揃うため)。判定は idle → size の順で
@@ -1064,9 +1066,7 @@ export class SessionRunner {
 		// ack 対象は flush 前のスナップショット — flush の await 中に steer が
 		// promptedIds へ追加した item を「そのターンの flush 前」に ack しない
 		const toAck = [...record.promptedIds];
-		if (this.workdirStorage !== undefined) {
-			await this.workdirStorage.flush(sessionKey, record.workdir);
-		}
+		await this.workdirStorage.flush(sessionKey, record.workdir);
 		if (toAck.length > 0) {
 			await this.store.inbox.ack(sessionKey, toAck);
 			for (const id of toAck) record.promptedIds.delete(id);

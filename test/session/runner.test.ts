@@ -38,10 +38,13 @@ import {
 	sessionKeyOf,
 	toGateSpecs,
 } from "../../src/session/runner.js";
-import { inboxItemId } from "../../src/store/inbox-item.js";
-import type { StateStore } from "../../src/store/interfaces.js";
-import { InMemoryStateStore } from "../../src/store/memory.js";
-import type { WorkdirStorage } from "../../src/store/workdir-storage.js";
+import { InMemoryStateStore } from "../../src/store/state/backends/memory.js";
+import { inboxItemId } from "../../src/store/state/inbox-item.js";
+import type { StateStore } from "../../src/store/state/interfaces.js";
+import {
+	NoopWorkdirStorage,
+	type WorkdirStorage,
+} from "../../src/store/workdir.js";
 
 const FAKE_PI = fileURLToPath(
 	new URL("../fixtures/fake-pi.mjs", import.meta.url),
@@ -203,9 +206,7 @@ async function harness(
 		lingerMs: options.lingerMs ?? 30,
 		logger,
 		...(options.extraEnv !== undefined ? { extraEnv: options.extraEnv } : {}),
-		...(options.workdirStorage !== undefined
-			? { workdirStorage: options.workdirStorage }
-			: {}),
+		workdirStorage: options.workdirStorage ?? new NoopWorkdirStorage(),
 		...(options.leaseTtlMs !== undefined
 			? { leaseTtlMs: options.leaseTtlMs }
 			: {}),

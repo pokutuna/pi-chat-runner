@@ -12,7 +12,7 @@ import type {
 	SessionDoc,
 	SessionStore,
 	StateStore,
-} from "./interfaces.js";
+} from "../interfaces.js";
 
 class InMemoryInboxStore implements InboxStore {
 	private readonly queues = new Map<string, InboxItem[]>();

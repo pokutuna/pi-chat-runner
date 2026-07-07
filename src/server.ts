@@ -23,10 +23,10 @@ import { HttpEventSource } from "./ingress/slack/http-event-source.js";
 import { SocketEventSource } from "./ingress/slack/socket-event-source.js";
 import { rootLogger } from "./logger.js";
 import type { PiPermissionConfig } from "./session/runner.js";
-import { FirestoreStateStore } from "./store/firestore.js";
-import type { StateStore } from "./store/interfaces.js";
-import { InMemoryStateStore } from "./store/memory.js";
-import { SqliteStateStore } from "./store/sqlite.js";
+import { FirestoreStateStore } from "./store/state/backends/firestore.js";
+import { InMemoryStateStore } from "./store/state/backends/memory.js";
+import { SqliteStateStore } from "./store/state/backends/sqlite.js";
+import type { StateStore } from "./store/state/interfaces.js";
 
 const logger = rootLogger.child({ component: "server" });
 

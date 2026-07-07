@@ -1,5 +1,5 @@
-import { InMemoryStateStore } from "../../src/store/memory.js";
-import { describeStateStoreContract } from "./contract.js";
+import { InMemoryStateStore } from "../../../../src/store/state/backends/memory.js";
+import { describeStateStoreContract } from "../contract.js";
 
 describeStateStoreContract("InMemoryStateStore", async () => {
 	let now = 0;

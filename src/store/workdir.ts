@@ -63,6 +63,23 @@ export class CopyWorkdirStorage implements WorkdirStorage {
 	}
 }
 
+/** 境界退避なし (アーカイブ先未設定時の既定)。restore は常に false、flush は何もしない。 */
+export class NoopWorkdirStorage implements WorkdirStorage {
+	async restore(_threadKey: string, _workdir: string): Promise<boolean> {
+		return false;
+	}
+	async flush(_threadKey: string, _workdir: string): Promise<void> {}
+}
+
+/** archiveDir の設定値から対応する WorkdirStorage を選ぶ。未設定/空文字なら Noop。 */
+export function createWorkdirStorage(
+	archiveDir: string | undefined,
+): WorkdirStorage {
+	return archiveDir !== undefined && archiveDir !== ""
+		? new CopyWorkdirStorage(archiveDir)
+		: new NoopWorkdirStorage();
+}
+
 async function readEntriesOrEmpty(dir: string): Promise<string[]> {
 	try {
 		return await readdir(dir);

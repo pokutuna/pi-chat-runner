@@ -70,6 +70,7 @@ export {
 	SessionRunner,
 	type SessionRunnerOptions,
 } from "./session/runner.js";
+export { InMemoryStateStore } from "./store/state/backends/memory.js";
 export type {
 	InboxItem,
 	InboxStore,
@@ -78,9 +79,5 @@ export type {
 	SessionDoc,
 	SessionStore,
 	StateStore,
-} from "./store/interfaces.js";
-export { InMemoryStateStore } from "./store/memory.js";
-export {
-	CopyWorkdirStorage,
-	type WorkdirStorage,
-} from "./store/workdir-storage.js";
+} from "./store/state/interfaces.js";
+export { CopyWorkdirStorage, type WorkdirStorage } from "./store/workdir.js";

@@ -4,7 +4,7 @@
 // (1 つの巨大な Store にしない。実装体は 1 つのクラスが 3 つを implements してよい)。
 // SessionRunner はこれらを受け取るだけで、どの実装かを知らない。
 
-import type { InboundMessage } from "../ingress/chat-event.js";
+import type { InboundMessage } from "../../ingress/chat-event.js";
 
 /** InboxStore が保持する 1 件の入力イベント。 */
 export interface InboxItem {

@@ -22,11 +22,8 @@ import type { ChatPoster } from "./reply/router.js";
 import { ReplyRouter } from "./reply/router.js";
 import type { PiPermissionConfig } from "./session/runner.js";
 import { SessionRunner } from "./session/runner.js";
-import type { StateStore } from "./store/interfaces.js";
-import {
-	CopyWorkdirStorage,
-	type WorkdirStorage,
-} from "./store/workdir-storage.js";
+import type { StateStore } from "./store/state/interfaces.js";
+import { createWorkdirStorage, type WorkdirStorage } from "./store/workdir.js";
 
 export interface BridgeOptions {
 	/** 受信の入口 (Socket Mode / Events API / 呼び出し側独自の実装)。ライブラリ利用の
@@ -88,10 +85,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 		});
 	// workdirStorage 注入があれば archiveDir より優先する
 	const workdirStorage =
-		options.workdirStorage ??
-		(options.archiveDir !== undefined && options.archiveDir !== ""
-			? new CopyWorkdirStorage(options.archiveDir)
-			: undefined);
+		options.workdirStorage ?? createWorkdirStorage(options.archiveDir);
 
 	const runner = new SessionRunner({
 		configSource,
@@ -123,7 +117,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 			? { extraEnv: options.extraEnv }
 			: {}),
 		// workdirStorage/archiveDir 未設定なら境界退避なし (Step 3 相当の挙動)
-		...(workdirStorage !== undefined ? { workdirStorage } : {}),
+		workdirStorage,
 		// agentUid/Gid 未設定なら UID 分離なし (現状動作)
 		...(options.agentUid !== undefined ? { agentUid: options.agentUid } : {}),
 		...(options.agentGid !== undefined ? { agentGid: options.agentGid } : {}),
