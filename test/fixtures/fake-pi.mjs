@@ -11,6 +11,8 @@
 //                        (pi 側が動けないケース。runner の異常終了処理を検証する)
 //     "HANG_FOREVER"   … response も agent_end も一切返さない (pi が無応答になる
 //                        ケース。runner の turn timeout 処理を検証する)
+//     "CRASH_NOW"      … running のまま即 process.exit(1) する (pi プロセスの
+//                        クラッシュ。runner の proc.on("exit") 異常分岐を検証する)
 //     それ以外          … `echo: <本文>` の reply → agent_end を吐く
 // - agent_end.messages には固定の usage 付き assistant message を 1 件含める
 //   (SessionRunner の usage 集計ロジックをテストから確認するため)
@@ -121,6 +123,11 @@ function handleCommand(command) {
 			// 何も返さない。runner 側の turn timeout がタイマーで kill するまで
 			// このプロセスは生き続ける (SIGKILL を受けて終了する)
 			return;
+		}
+		if (command.message.includes("CRASH_NOW")) {
+			// response も agent_end も返さず、running のまま即クラッシュする。
+			// runner の proc.on("exit") 異常分岐 (item を捨てる処理) を検証する
+			process.exit(1);
 		}
 		emitReply(
 			threadKeyFromMessage(command.message),

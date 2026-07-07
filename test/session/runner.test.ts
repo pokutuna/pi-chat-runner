@@ -1043,11 +1043,42 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
 			"No API key found for google-vertex",
 		);
 
-		// 未 ack の item は inbox に残っており、flush はされていない (異常終了なので
-		// このターンの入力は次の kick で再実行される)
-		expect((await h.store.inbox.drain(threadKey)).length).toBe(1);
+		// command failed (認証エラー等) はこのターンの入力を ack して捨てる (retry しない。
+		// session-model.md §6)。捨てないと未 ack のまま次の新規イベントの drain が巻き込み、
+		// 同じ入力で再び失敗するループになりうる。flush はしない (workdir は退避させない)
+		expect((await h.store.inbox.drain(threadKey)).length).toBe(0);
 
 		// 異常終了はトリガーメッセージへの ❌ で見える化する
+		expect(
+			h.reactions.some((r) => r.name === "x" && r.timestamp === trigger.id),
+		).toBe(true);
+	});
+
+	it("drops the prompted item when pi crashes (process exit while running)", async () => {
+		const h = await harness();
+		const trigger = message({ mentionsBot: true, text: "CRASH_NOW please" });
+		const threadKey = threadKeyOf(trigger);
+
+		await h.runner.handle(trigger);
+
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+		// running のまま exit したので異常終了として処理されていること
+		expect(
+			h.logLines().some((line) => line.msg === "pi exited unexpectedly"),
+		).toBe(true);
+
+		// lease は解放されている
+		expect(
+			await h.store.leases.acquire(threadKey, "probe", 1000),
+		).not.toBeNull();
+
+		// クラッシュは workdir/transcript の破損を疑うため、このターンの入力は ack して
+		// 捨てる (retry しない。session-model.md §6)。捨てないと次の新規イベントの drain が
+		// 巻き込んで同じ状態から再 spawn し、決定的に再クラッシュしうる
+		expect((await h.store.inbox.drain(threadKey)).length).toBe(0);
+
+		// クラッシュはユーザーから見えないので ❌ で見える化する
 		expect(
 			h.reactions.some((r) => r.name === "x" && r.timestamp === trigger.id),
 		).toBe(true);

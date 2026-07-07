@@ -958,8 +958,8 @@ export class SessionRunner {
 		});
 		proc.on("exit", (code, signal) => {
 			// 正常終了パス (onAgentEnd) では state を stopping にしてから stop している。
-			// running のまま exit したら異常終了: 未 ack の item は inbox に残っているので、
-			// lease を解いて次のイベントで拾い直せるようにする (flush はしない)
+			// running のまま exit したら異常終了。lease を解いて次のイベントで拾い直せるようにする
+			// (flush はしない)
 			const current = this.sessions.get(sessionKey);
 			if (
 				current !== undefined &&
@@ -969,6 +969,17 @@ export class SessionRunner {
 				this.sessions.delete(sessionKey);
 				this.stopRenewTimer(current);
 				this.clearTurnTimeout(current);
+				// このターンで prompt 済みだった item は ack して捨てる。retry しない
+				// (session-model.md §6)。捨てないと未 ack のまま inbox に残り、次の新規
+				// イベントの drain が巻き込んで再 prompt するため、workdir/transcript を
+				// 使い回す構造上「同じ入力で pi が再クラッシュし続ける」ループになりうる。
+				// 異常終了はユーザーに ❌ で伝わるので、必要なら本人が言い直せばよい
+				const toAck = [...current.promptedIds];
+				if (toAck.length > 0) {
+					void this.store.inbox.ack(sessionKey, toAck).catch((err) => {
+						this.logger.warn({ sessionKey, err }, "inbox ack failed");
+					});
+				}
 				void this.store.leases.release(current.lease).catch((err) => {
 					this.logger.warn({ sessionKey, err }, "lease release failed");
 				});
@@ -1136,6 +1147,8 @@ export class SessionRunner {
 			noticeText: `:warning: セッションが異常終了しました: ${error ?? "unknown error"}`,
 			logMessage: "session failed",
 			stop: () => proc.stop(),
+			// 認証エラー等は再実行しても同じく失敗するので、このターンの入力は捨てる
+			dropPromptedItems: true,
 		});
 	}
 
@@ -1156,6 +1169,8 @@ export class SessionRunner {
 		await this.abnormalShutdown(sessionKey, proc, {
 			noticeText: `:warning: ターンがタイムアウトしました (${this.turnTimeoutMs}ms)。セッションを終了します`,
 			logMessage: "session timed out",
+			// timeout は「重い処理で時間切れ」= 再実行で完了しうるため入力は残す (retry させる)
+			dropPromptedItems: false,
 			stop: () => {
 				proc.kill();
 				return Promise.resolve();
@@ -1178,6 +1193,10 @@ export class SessionRunner {
 			noticeText: string;
 			logMessage: string;
 			stop: () => Promise<void>;
+			/** このターンで prompt 済みだった item を ack して捨てるか (session-model.md §6)。
+			 * command failed (認証エラー等、再実行しても同じく失敗) は捨てる。turn timeout は
+			 * 「重い処理で時間切れ」= 再実行で完了しうるため残し、次イベントで拾い直させる */
+			dropPromptedItems: boolean;
 		},
 	): Promise<void> {
 		const record = this.sessions.get(sessionKey);
@@ -1200,6 +1219,14 @@ export class SessionRunner {
 			"x",
 		);
 
+		if (options.dropPromptedItems) {
+			const toAck = [...record.promptedIds];
+			if (toAck.length > 0) {
+				await this.store.inbox.ack(sessionKey, toAck).catch((err) => {
+					this.logger.warn({ sessionKey, err }, "inbox ack failed");
+				});
+			}
+		}
 		await this.store.leases.release(record.lease).catch((err) => {
 			this.logger.warn({ sessionKey, err }, "lease release failed");
 		});
