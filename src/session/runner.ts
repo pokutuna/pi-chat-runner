@@ -21,7 +21,7 @@ import {
 	stat,
 } from "node:fs/promises";
 import { hostname } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type { ClassifierClient } from "../classifier/client.js";
 import type { ChannelDoc } from "../config/channel-doc.js";
 import { type ConfigSource, DM_CHANNEL } from "../config/config-source.js";
@@ -670,6 +670,33 @@ export class SessionRunner {
 		return key;
 	}
 
+	/** reply の files (agent が渡した workdir 相対パス) を workdirReal 基準の絶対パスへ
+	 * 解決し、workdir 外へ出るパス (`../` エスケープ、絶対パス指定) は除外して warn する
+	 * (trust boundary: agent は semi-trusted)。files 未指定、または全件除外後に空なら
+	 * undefined を返し、text だけの従来 payload として deliver させる */
+	private resolveReplyFiles(
+		sessionKey: string,
+		workdirReal: string,
+		files: string[] | undefined,
+	): string[] | undefined {
+		if (files === undefined) return undefined;
+		const resolved: string[] = [];
+		for (const file of files) {
+			const abs = resolve(workdirReal, file);
+			const rel = relative(workdirReal, abs);
+			const inside = rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
+			if (!inside) {
+				this.logger.warn(
+					{ sessionKey, path: file },
+					"reply file path escapes workdir; dropped",
+				);
+				continue;
+			}
+			resolved.push(abs);
+		}
+		return resolved.length > 0 ? resolved : undefined;
+	}
+
 	/** kick シーケンス (session-runtime.md §1: restore → spawn → prompt) */
 	private async kick(
 		sessionKey: string,
@@ -846,12 +873,26 @@ export class SessionRunner {
 			if (isToolExecutionEnd(piEvent)) {
 				const payload = extractReply(piEvent);
 				if (payload !== null) {
-					this.router.deliver(payload).catch((err) => {
-						this.logger.warn(
-							{ sessionKey, threadKeyPayload: payload.thread_key, err },
-							"reply delivery failed",
-						);
-					});
+					const files = this.resolveReplyFiles(
+						sessionKey,
+						workdirReal,
+						payload.files,
+					);
+					// files は必ず resolveReplyFiles の結果で上書きする。payload.files には
+					// agent が渡した生の相対パスが残っているため、全件除外時 (files === undefined)
+					// にそれをそのまま poster へ流すと境界チェックを素通りしてしまう
+					this.router
+						.deliver({
+							thread_key: payload.thread_key,
+							text: payload.text,
+							...(files !== undefined ? { files } : {}),
+						})
+						.catch((err) => {
+							this.logger.warn(
+								{ sessionKey, threadKeyPayload: payload.thread_key, err },
+								"reply delivery failed",
+							);
+						});
 				}
 				return;
 			}

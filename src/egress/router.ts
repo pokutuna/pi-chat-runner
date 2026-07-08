@@ -8,10 +8,12 @@
 import type { Logger } from "../logger.js";
 import { rootLogger } from "../logger.js";
 
-/** reply ツールの引数 (extensions/reply.ts が details に詰めて返す形) */
+/** reply ツールの引数 (extensions/reply.ts が details に詰めて返す形)。
+ * files は runner が workdir 境界チェック済みの絶対パスに解決してから積む */
 export interface EgressPayload {
 	thread_key: string;
 	text: string;
+	files?: string[];
 }
 
 /** 投稿先。Slack の会話座標は (channelId, threadTs) の 2 つだけ (architecture.md §0)。
@@ -21,12 +23,14 @@ export interface EgressDestination {
 	threadTs?: string;
 }
 
-/** WebClient.chat.postMessage の薄い IF。テストではフェイクを注入する */
+/** WebClient.chat.postMessage の薄い IF。テストではフェイクを注入する。
+ * files は添付するローカルファイルの絶対パス配列 */
 export interface ChatPoster {
 	postMessage(
 		channelId: string,
 		text: string,
 		threadTs?: string,
+		files?: string[],
 	): Promise<void>;
 }
 
@@ -70,9 +74,14 @@ export class EgressRouter {
 				destination.channelId,
 				this.formatter(payload.text),
 				destination.threadTs,
+				payload.files,
 			);
 			this.logger.info(
-				{ threadKey: payload.thread_key, textLength: payload.text.length },
+				{
+					threadKey: payload.thread_key,
+					textLength: payload.text.length,
+					filesCount: payload.files?.length ?? 0,
+				},
 				"reply delivered",
 			);
 		} catch (err) {

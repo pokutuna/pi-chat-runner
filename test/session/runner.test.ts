@@ -55,12 +55,23 @@ const PERMISSION_GATE_EXTENSION = fileURLToPath(
 );
 
 class FakePoster implements ChatPoster {
-	calls: { channelId: string; threadTs?: string; text: string }[] = [];
-	async postMessage(channelId: string, text: string, threadTs?: string) {
+	calls: {
+		channelId: string;
+		threadTs?: string;
+		text: string;
+		files?: string[];
+	}[] = [];
+	async postMessage(
+		channelId: string,
+		text: string,
+		threadTs?: string,
+		files?: string[],
+	) {
 		this.calls.push({
 			channelId,
 			text,
 			...(threadTs !== undefined ? { threadTs } : {}),
+			...(files !== undefined ? { files } : {}),
 		});
 	}
 }
@@ -287,6 +298,46 @@ describe("SessionRunner (fake-pi integration)", () => {
 			await h.store.leases.acquire(threadKey, "probe", 1000),
 		).not.toBeNull();
 		expect((await h.store.sessions.get(threadKey))?.status).toBe("finished");
+	});
+
+	it("reply files outside the workdir are dropped; in-workdir files resolve to absolute paths", async () => {
+		const h = await harness();
+		const trigger = message({ mentionsBot: true, text: "WITH_FILES" });
+
+		await h.runner.handle(trigger);
+
+		await waitFor(() => h.poster.calls.length === 1, "reply posted");
+		// macOS では /tmp が /private/tmp への symlink で、runner は workdir を
+		// realpath 済みの絶対パスとして扱う (kick 内の workdirReal)。テスト側の
+		// workdirRoot も同様に realpath してから比較する
+		const workdirReal = await realpath(join(h.workdirRoot, "C01", trigger.id));
+		// fake-pi は ["ok.txt", "../escape.txt", "/etc/passwd"] の 3 件を渡す。
+		// workdir 外の 2 件は除外され、ok.txt だけが絶対パスへ解決されて残る
+		expect(h.poster.calls[0]?.files).toEqual([join(workdirReal, "ok.txt")]);
+
+		const warnings = h
+			.logLines()
+			.filter((l) => l.msg === "reply file path escapes workdir; dropped");
+		expect(warnings.map((w) => w.path)).toEqual([
+			"../escape.txt",
+			"/etc/passwd",
+		]);
+
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+	});
+
+	it("when every reply file escapes the workdir, files is omitted (raw relative paths are not leaked)", async () => {
+		const h = await harness();
+		const trigger = message({ mentionsBot: true, text: "ALL_ESCAPE_FILES" });
+
+		await h.runner.handle(trigger);
+
+		await waitFor(() => h.poster.calls.length === 1, "reply posted");
+		// 全件除外されたら text だけの投稿になり、agent の渡した生の相対パスが
+		// poster へ漏れない (境界チェックの素通り防止)
+		expect(h.poster.calls[0]?.files).toBeUndefined();
+
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
 	});
 
 	it("mentionFormat に Slack の記法を渡すと、system prompt にその記法の説明が含まれる", async () => {

@@ -42,6 +42,43 @@ describe("extractReply", () => {
 			}),
 		).toBeNull();
 	});
+
+	it("extracts files when details.files is a string array", () => {
+		const event = {
+			...base,
+			result: {
+				...base.result,
+				details: { thread_key: "t1", text: "hello", files: ["a.txt", "b.png"] },
+			},
+		};
+		expect(extractReply(event)).toEqual({
+			thread_key: "t1",
+			text: "hello",
+			files: ["a.txt", "b.png"],
+		});
+	});
+
+	it("omits files when details.files is not an array", () => {
+		const event = {
+			...base,
+			result: {
+				...base.result,
+				details: { thread_key: "t1", text: "hello", files: "a.txt" },
+			},
+		};
+		expect(extractReply(event)).toEqual({ thread_key: "t1", text: "hello" });
+	});
+
+	it("omits files when an element is not a string", () => {
+		const event = {
+			...base,
+			result: {
+				...base.result,
+				details: { thread_key: "t1", text: "hello", files: ["a.txt", 1] },
+			},
+		};
+		expect(extractReply(event)).toEqual({ thread_key: "t1", text: "hello" });
+	});
 });
 
 describe("extractTurnErrors", () => {

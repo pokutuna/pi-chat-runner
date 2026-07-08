@@ -24,17 +24,24 @@ function collectingLogger(): { logger: pino.Logger; lines: () => unknown[] } {
 }
 
 class FakePoster implements ChatPoster {
-	calls: { channelId: string; threadTs?: string; text: string }[] = [];
+	calls: {
+		channelId: string;
+		threadTs?: string;
+		text: string;
+		files?: string[];
+	}[] = [];
 
 	async postMessage(
 		channelId: string,
 		text: string,
 		threadTs?: string,
+		files?: string[],
 	): Promise<void> {
 		this.calls.push({
 			channelId,
 			text,
 			...(threadTs !== undefined ? { threadTs } : {}),
+			...(files !== undefined ? { files } : {}),
 		});
 	}
 }
@@ -99,5 +106,40 @@ describe("EgressRouter", () => {
 		await router.deliver({ thread_key: "k", text: "flat reply" });
 
 		expect(poster.calls).toEqual([{ channelId: "C01", text: "flat reply" }]);
+	});
+
+	it("passes payload.files through to the poster", async () => {
+		const poster = new FakePoster();
+		const router = new EgressRouter({ poster });
+		router.register("k", { channelId: "C01", threadTs: "1" });
+
+		await router.deliver({
+			thread_key: "k",
+			text: "see attached",
+			files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
+		});
+
+		expect(poster.calls).toEqual([
+			{
+				channelId: "C01",
+				threadTs: "1",
+				text: "see attached",
+				files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
+			},
+		]);
+	});
+
+	it("omits files from the poster call when the payload has none", async () => {
+		const poster = new FakePoster();
+		const router = new EgressRouter({ poster });
+		router.register("k", { channelId: "C01", threadTs: "1" });
+
+		await router.deliver({ thread_key: "k", text: "no attachment" });
+
+		expect(poster.calls[0]).toEqual({
+			channelId: "C01",
+			threadTs: "1",
+			text: "no attachment",
+		});
 	});
 });

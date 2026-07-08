@@ -7,7 +7,9 @@
 import type { EgressPayload } from "../egress/router.js";
 import type { AgentEndEvent, PiEvent, ToolExecutionEndEvent } from "./rpc.js";
 
-/** tool_execution_end イベントから reply の引数を取り出す。reply 以外や形不正は null */
+/** tool_execution_end イベントから reply の引数を取り出す。reply 以外や形不正は null。
+ * files はこの時点では agent が渡した生の workdir 相対パス — 解決・境界チェックは
+ * runner が行う (extensions/reply.ts の details 形と対応) */
 export function extractReply(
 	event: ToolExecutionEndEvent,
 ): EgressPayload | null {
@@ -17,7 +19,15 @@ export function extractReply(
 	const d = details as Record<string, unknown>;
 	if (typeof d.thread_key !== "string" || typeof d.text !== "string")
 		return null;
-	return { thread_key: d.thread_key, text: d.text };
+	const files =
+		Array.isArray(d.files) && d.files.every((f) => typeof f === "string")
+			? (d.files as string[])
+			: undefined;
+	return {
+		thread_key: d.thread_key,
+		text: d.text,
+		...(files !== undefined ? { files } : {}),
+	};
 }
 
 /**

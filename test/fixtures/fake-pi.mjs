@@ -13,6 +13,11 @@
 //                        ケース。runner の turn timeout 処理を検証する)
 //     "CRASH_NOW"      … running のまま即 process.exit(1) する (pi プロセスの
 //                        クラッシュ。runner の proc.on("exit") 異常分岐を検証する)
+//     "WITH_FILES"     … reply の details.files に ["ok.txt", "../escape.txt",
+//                        "/etc/passwd"] を積む (runner の workdir 境界チェックを検証する)
+//     "ALL_ESCAPE_FILES" … reply の details.files が全件 workdir 外 (["../escape.txt",
+//                        "/etc/passwd"])。全件除外後に files を素の相対パスへ戻さない
+//                        ことを検証する
 //     それ以外          … `echo: <本文>` の reply → agent_end を吐く
 // - agent_end.messages には固定の usage 付き assistant message を 1 件含める
 //   (SessionRunner の usage 集計ロジックをテストから確認するため)
@@ -64,14 +69,18 @@ function emit(event) {
 	process.stdout.write(`${JSON.stringify(event)}\n`);
 }
 
-function emitReply(threadKey, text) {
+function emitReply(threadKey, text, files) {
 	emit({
 		type: "tool_execution_end",
 		toolCallId: `tc-${Date.now()}`,
 		toolName: "reply",
 		result: {
 			content: [{ type: "text", text: "Reply queued." }],
-			details: { thread_key: threadKey, text },
+			details: {
+				thread_key: threadKey,
+				text,
+				...(files !== undefined ? { files } : {}),
+			},
 		},
 		isError: false,
 	});
@@ -128,6 +137,24 @@ function handleCommand(command) {
 			// response も agent_end も返さず、running のまま即クラッシュする。
 			// runner の proc.on("exit") 異常分岐 (item を捨てる処理) を検証する
 			process.exit(1);
+		}
+		if (command.message.includes("WITH_FILES")) {
+			emitReply(
+				threadKeyFromMessage(command.message),
+				`echo: ${command.message}`,
+				["ok.txt", "../escape.txt", "/etc/passwd"],
+			);
+			emitAgentEnd();
+			return;
+		}
+		if (command.message.includes("ALL_ESCAPE_FILES")) {
+			emitReply(
+				threadKeyFromMessage(command.message),
+				`echo: ${command.message}`,
+				["../escape.txt", "/etc/passwd"],
+			);
+			emitAgentEnd();
+			return;
 		}
 		emitReply(
 			threadKeyFromMessage(command.message),

@@ -8,6 +8,7 @@
 // 外せない安全方針 (docs/design/config.md §5「reply tool の注入・RPC 結線 | コード」)。
 // この 2 extension は常にここで import.meta.url 相対に解決する。
 
+import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { WebClient } from "@slack/web-api";
 import {
@@ -79,9 +80,22 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 			usersInfo: (userId) => web.users.info({ user: userId }),
 		});
 
-	// 注入があればそれを使い、なければ web (WebClient) から内部構築する
+	// 注入があればそれを使い、なければ web (WebClient) から内部構築する。files 指定時は
+	// files.uploadV2 (initial_comment に text を乗せる)、無指定時は従来の chat.postMessage
 	const poster: ChatPoster = options.poster ?? {
-		async postMessage(channelId, text, threadTs) {
+		async postMessage(channelId, text, threadTs, files) {
+			if (files !== undefined && files.length > 0) {
+				await web.files.uploadV2({
+					channel_id: channelId,
+					...(threadTs !== undefined ? { thread_ts: threadTs } : {}),
+					...(text ? { initial_comment: text } : {}),
+					file_uploads: files.map((path) => ({
+						file: path,
+						filename: basename(path),
+					})),
+				});
+				return;
+			}
 			await web.chat.postMessage({
 				channel: channelId,
 				text,
