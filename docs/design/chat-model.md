@@ -305,8 +305,10 @@ type AgentStreamEvent =
 ```typescript
 /** エージェントの出力ツール。「どのスレッドに何を返すか」を thread_key で指定して呼ぶ。
  *  1 ターンの中で 何度でも・任意のタイミングで 呼べる (ストリーミングの一段ではなく、
- *  「言いたいことがまとまった単位」で明示的に呼ぶ)。thread_key はホストに不透明 (§5.3) */
-reply(thread_key: string, text: string): void
+ *  「言いたいことがまとまった単位」で明示的に呼ぶ)。thread_key はホストに不透明 (§5.3)。
+ *  files は任意の添付。workdir 相対パスで渡し、ホストが workdir 基準で解決する。
+ *  workdir 外へ出るパス (../ エスケープ・絶対パス) はホストが除外する (trust boundary) */
+reply(thread_key: string, text: string, files?: string[]): void
 ```
 
 **reply は「停止時に 1 回」ではなく、逐次の出力手段**である。これが本設計の要点:
