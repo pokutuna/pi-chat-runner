@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
 	AgentConfigSchema,
-	collectPassthroughEnv,
 	loadAgentConfig,
 	resolveAgentConfig,
 } from "../../src/config/agent-config.js";
@@ -15,7 +14,15 @@ describe("AgentConfigSchema", () => {
 			pi: {
 				provider: "google-vertex",
 				turnTimeoutMs: 600000,
-				envPassthrough: ["GH_TOKEN"],
+			},
+			agent: {
+				env: { GH_TOKEN: "${env.GH_TOKEN}" },
+				runtime: {
+					uid: 1001,
+					gid: 1001,
+					permissionMode: true,
+					home: "/home/agent",
+				},
 			},
 		});
 		expect(result.success).toBe(true);
@@ -51,6 +58,66 @@ describe("AgentConfigSchema", () => {
 		expect(
 			AgentConfigSchema.safeParse({ pi: { model: "gemini-x" } }).success,
 		).toBe(false);
+	});
+
+	it("rejects envPassthrough under pi (removed in favor of agent.env)", () => {
+		expect(
+			AgentConfigSchema.safeParse({ pi: { envPassthrough: ["GH_TOKEN"] } })
+				.success,
+		).toBe(false);
+	});
+
+	it("rejects unknown keys under agent", () => {
+		expect(
+			AgentConfigSchema.safeParse({ agent: { unknown: true } }).success,
+		).toBe(false);
+	});
+
+	it("rejects unknown keys under agent.runtime", () => {
+		expect(
+			AgentConfigSchema.safeParse({ agent: { runtime: { unknown: true } } })
+				.success,
+		).toBe(false);
+	});
+
+	it("rejects non-string values in agent.env", () => {
+		expect(
+			AgentConfigSchema.safeParse({ agent: { env: { FOO: 1 } } }).success,
+		).toBe(false);
+	});
+
+	it("coerces string uid/gid/permissionMode under agent.runtime", () => {
+		const result = AgentConfigSchema.safeParse({
+			agent: {
+				runtime: { uid: "1001", gid: "1001", permissionMode: "true" },
+			},
+		});
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data.agent?.runtime?.uid).toBe(1001);
+			expect(result.data.agent?.runtime?.gid).toBe(1001);
+			expect(result.data.agent?.runtime?.permissionMode).toBe(true);
+		}
+	});
+
+	// ${env.X} 参照は文字列で来るため、"false"/"0"/"" を false と解釈できないと
+	// sandbox を OFF にできない。z.coerce.boolean() だとこれらが truthy に化ける
+	// (PermissionModeSchema がその罠を回避している)。
+	it.each([
+		["false", false],
+		["0", false],
+		["", false],
+		["FALSE", false],
+		["true", true],
+		["1", true],
+	])("interprets permissionMode string %j as %s", (input, expected) => {
+		const result = AgentConfigSchema.safeParse({
+			agent: { runtime: { permissionMode: input } },
+		});
+		expect(result.success).toBe(true);
+		if (result.success) {
+			expect(result.data.agent?.runtime?.permissionMode).toBe(expected);
+		}
 	});
 });
 
@@ -93,6 +160,31 @@ describe("loadAgentConfig", () => {
 		await writeFile(join(dir, "agent.yaml"), "pi:\n  unknownKey: 1\n");
 		await expect(loadAgentConfig(dir)).rejects.toThrow(/agent\.yaml/);
 	});
+
+	it("resolves ${env.X} references in agent.env before schema validation", async () => {
+		await writeFile(
+			join(dir, "agent.yaml"),
+			'agent:\n  env:\n    GH_TOKEN: "${env.TEST_GH_TOKEN}"\n',
+		);
+		const original = process.env.TEST_GH_TOKEN;
+		process.env.TEST_GH_TOKEN = "resolved-secret";
+		try {
+			const config = await loadAgentConfig(dir);
+			expect(config.agent?.env).toEqual({ GH_TOKEN: "resolved-secret" });
+		} finally {
+			if (original === undefined) delete process.env.TEST_GH_TOKEN;
+			else process.env.TEST_GH_TOKEN = original;
+		}
+	});
+
+	it("throws when a required ${env.X} reference is unset", async () => {
+		await writeFile(
+			join(dir, "agent.yaml"),
+			'agent:\n  env:\n    GH_TOKEN: "${env.TEST_UNSET_TOKEN_XYZ}"\n',
+		);
+		delete process.env.TEST_UNSET_TOKEN_XYZ;
+		await expect(loadAgentConfig(dir)).rejects.toThrow(/agent\.yaml/);
+	});
 });
 
 describe("resolveAgentConfig", () => {
@@ -116,7 +208,19 @@ describe("resolveAgentConfig", () => {
 		const resolved = resolveAgentConfig({}, {});
 		expect(resolved.provider).toBeUndefined();
 		expect(resolved.turnTimeoutMs).toBeUndefined();
-		expect(resolved.envPassthrough).toEqual([]);
+	});
+
+	it("defaults env to {} when agent.env is omitted", () => {
+		const resolved = resolveAgentConfig({}, {});
+		expect(resolved.env).toEqual({});
+	});
+
+	it("uses agent.env as-is (additive model, no process.env merge)", () => {
+		const resolved = resolveAgentConfig(
+			{ agent: { env: { GH_TOKEN: "gh-secret" } } },
+			{ GH_TOKEN: "should-not-be-used", UNRELATED: "x" },
+		);
+		expect(resolved.env).toEqual({ GH_TOKEN: "gh-secret" });
 	});
 
 	it("parses TURN_TIMEOUT_MS from env and prefers it over file", () => {
@@ -136,67 +240,101 @@ describe("resolveAgentConfig", () => {
 		).toThrow(/TURN_TIMEOUT_MS/);
 	});
 
-	it("replaces the file envPassthrough list wholesale with PI_ENV_PASSTHROUGH", () => {
-		const resolved = resolveAgentConfig(
-			{ pi: { envPassthrough: ["FILE_TOKEN"] } },
-			{ PI_ENV_PASSTHROUGH: "ENV_TOKEN_A, ENV_TOKEN_B" },
-		);
-		expect(resolved.envPassthrough).toEqual(["ENV_TOKEN_A", "ENV_TOKEN_B"]);
-	});
-
-	it("trims and drops empty elements in PI_ENV_PASSTHROUGH", () => {
-		const resolved = resolveAgentConfig(
-			{},
-			{ PI_ENV_PASSTHROUGH: " A , ,B ,," },
-		);
-		expect(resolved.envPassthrough).toEqual(["A", "B"]);
-	});
-
-	it("uses the file envPassthrough when PI_ENV_PASSTHROUGH is unset", () => {
-		const resolved = resolveAgentConfig(
-			{ pi: { envPassthrough: ["GH_TOKEN"] } },
-			{},
-		);
-		expect(resolved.envPassthrough).toEqual(["GH_TOKEN"]);
-	});
-
-	it("throws when a SLACK_-prefixed name is listed via agent.yaml", () => {
-		expect(() =>
-			resolveAgentConfig({ pi: { envPassthrough: ["SLACK_BOT_TOKEN"] } }, {}),
-		).toThrow(/SLACK_BOT_TOKEN/);
-	});
-
-	it("throws when a BRIDGE_-prefixed name is listed via env", () => {
-		expect(() =>
-			resolveAgentConfig({}, { PI_ENV_PASSTHROUGH: "BRIDGE_SECRET,GH_TOKEN" }),
-		).toThrow(/BRIDGE_SECRET/);
-	});
-});
-
-describe("collectPassthroughEnv", () => {
-	it("resolves listed names to their values", () => {
-		const result = collectPassthroughEnv(["GH_TOKEN", "FOO_API_KEY"], {
-			GH_TOKEN: "gh-secret",
-			FOO_API_KEY: "foo-secret",
+	describe("runtime.permissionMode", () => {
+		it("defaults to true when neither env nor file set it", () => {
+			expect(resolveAgentConfig({}, {}).runtime.permissionMode).toBe(true);
 		});
-		expect(result.env).toEqual({
-			GH_TOKEN: "gh-secret",
-			FOO_API_KEY: "foo-secret",
+
+		it("can be disabled via agent.yaml agent.runtime.permissionMode: false", () => {
+			const resolved = resolveAgentConfig(
+				{ agent: { runtime: { permissionMode: false } } },
+				{},
+			);
+			expect(resolved.runtime.permissionMode).toBe(false);
 		});
-		expect(result.missing).toEqual([]);
+
+		it("disables via env PI_PERMISSION_MODE=0", () => {
+			const resolved = resolveAgentConfig({}, { PI_PERMISSION_MODE: "0" });
+			expect(resolved.runtime.permissionMode).toBe(false);
+		});
+
+		it("env PI_PERMISSION_MODE overrides file value", () => {
+			const resolved = resolveAgentConfig(
+				{ agent: { runtime: { permissionMode: false } } },
+				{ PI_PERMISSION_MODE: "1" },
+			);
+			expect(resolved.runtime.permissionMode).toBe(true);
+		});
+
+		it("any non-'0' env value enables permission mode", () => {
+			const resolved = resolveAgentConfig({}, { PI_PERMISSION_MODE: "yes" });
+			expect(resolved.runtime.permissionMode).toBe(true);
+		});
 	});
 
-	it("reports missing names without including them in env", () => {
-		const result = collectPassthroughEnv(["GH_TOKEN", "MISSING_KEY"], {
-			GH_TOKEN: "gh-secret",
+	describe("runtime.home", () => {
+		it("defaults to /home/agent", () => {
+			expect(resolveAgentConfig({}, {}).runtime.home).toBe("/home/agent");
 		});
-		expect(result.env).toEqual({ GH_TOKEN: "gh-secret" });
-		expect(result.missing).toEqual(["MISSING_KEY"]);
+
+		it("falls back to file value when env is unset", () => {
+			const resolved = resolveAgentConfig(
+				{ agent: { runtime: { home: "/custom/home" } } },
+				{},
+			);
+			expect(resolved.runtime.home).toBe("/custom/home");
+		});
+
+		it("prefers env PI_AGENT_HOME over file", () => {
+			const resolved = resolveAgentConfig(
+				{ agent: { runtime: { home: "/custom/home" } } },
+				{ PI_AGENT_HOME: "/env/home" },
+			);
+			expect(resolved.runtime.home).toBe("/env/home");
+		});
 	});
 
-	it("returns empty results for an empty name list", () => {
-		const result = collectPassthroughEnv([], { GH_TOKEN: "gh-secret" });
-		expect(result.env).toEqual({});
-		expect(result.missing).toEqual([]);
+	describe("runtime.uid/gid", () => {
+		it("are undefined when neither env nor file set them", () => {
+			const resolved = resolveAgentConfig({}, {});
+			expect(resolved.runtime.uid).toBeUndefined();
+			expect(resolved.runtime.gid).toBeUndefined();
+		});
+
+		it("falls back to file values", () => {
+			const resolved = resolveAgentConfig(
+				{ agent: { runtime: { uid: 1001, gid: 1001 } } },
+				{},
+			);
+			expect(resolved.runtime.uid).toBe(1001);
+			expect(resolved.runtime.gid).toBe(1001);
+		});
+
+		it("prefers env PI_AGENT_UID/GID over file", () => {
+			const resolved = resolveAgentConfig(
+				{ agent: { runtime: { uid: 1001, gid: 1001 } } },
+				{ PI_AGENT_UID: "2000", PI_AGENT_GID: "2000" },
+			);
+			expect(resolved.runtime.uid).toBe(2000);
+			expect(resolved.runtime.gid).toBe(2000);
+		});
+
+		it("throws when only PI_AGENT_UID is set", () => {
+			expect(() => resolveAgentConfig({}, { PI_AGENT_UID: "1001" })).toThrow(
+				/PI_AGENT_UID and PI_AGENT_GID/,
+			);
+		});
+
+		it("throws when only PI_AGENT_GID is set", () => {
+			expect(() => resolveAgentConfig({}, { PI_AGENT_GID: "1001" })).toThrow(
+				/PI_AGENT_UID and PI_AGENT_GID/,
+			);
+		});
+
+		it("throws when PI_AGENT_UID/GID are not integers", () => {
+			expect(() =>
+				resolveAgentConfig({}, { PI_AGENT_UID: "abc", PI_AGENT_GID: "abc" }),
+			).toThrow(/must be integers/);
+		});
 	});
 });

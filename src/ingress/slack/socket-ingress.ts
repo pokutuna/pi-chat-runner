@@ -1,13 +1,13 @@
-// SocketEventSource — Slack Socket Mode 経由の EventSource — docs/design/architecture.md §1
+// SocketIngress — Slack Socket Mode 経由の Ingress — docs/design/architecture.md §1
 
 import { SocketModeClient } from "@slack/socket-mode";
 import type { ChatEvent } from "../chat-event.js";
-import type { Ack, EventSource } from "../event-source.js";
+import type { Ack, Ingress } from "../ingress.js";
 import { SlackIngressAdapter, type SlackRawEvent } from "./adapter.js";
 
-/** Slack Socket Mode 経由の EventSource。ローカル確認・お試し用途
+/** Slack Socket Mode 経由の Ingress。ローカル確認・お試し用途
  * (architecture.md §1)。SlackIngressAdapter で正規化し、envelope の ack を Ack として渡す。 */
-export class SocketEventSource implements EventSource {
+export class SocketIngress implements Ingress {
 	private readonly client: SocketModeClient;
 	private readonly adapter: SlackIngressAdapter;
 

@@ -287,11 +287,10 @@ describe("ancestorDirs", () => {
 });
 
 describe("buildPiPermissionOptions (session-runtime.md §6)", () => {
-	it("builds allow-fs-read/write lists scoped to workdir/home/node_modules/app", () => {
+	it("builds allow-fs-read/write lists scoped to workdir/home/node_modules", () => {
 		const options = buildPiPermissionOptions({
 			entrypoint: "/usr/local/lib/node_modules/pi/dist/cli.js",
 			nodeModulesDir: "/usr/local/lib/node_modules",
-			appDir: "/app",
 			workdir: "/tmp/workdir",
 			home: "/home/agent",
 		});
@@ -299,7 +298,6 @@ describe("buildPiPermissionOptions (session-runtime.md §6)", () => {
 			"/usr/local/lib/node_modules/pi/dist/cli.js",
 		);
 		expect(options.allowFsRead).toContain("/usr/local/lib/node_modules/*");
-		expect(options.allowFsRead).toContain("/app/*");
 		expect(options.allowFsRead).toContain("/tmp/workdir/*");
 		expect(options.allowFsRead).toContain("/home/agent/*");
 		// プロジェクト trust 判定の probe は workdir の全祖先で走るため、
@@ -323,11 +321,21 @@ describe("buildPiPermissionOptions (session-runtime.md §6)", () => {
 		]);
 	});
 
+	it("does not grant a blanket /app read (appDir 廃止。extension read は runner.ts の extraRead 経由)", () => {
+		const options = buildPiPermissionOptions({
+			entrypoint: "/usr/local/lib/node_modules/pi/dist/cli.js",
+			nodeModulesDir: "/usr/local/lib/node_modules",
+			workdir: "/tmp/workdir",
+			home: "/home/agent",
+		});
+		expect(options.allowFsRead).not.toContain("/app/*");
+		expect(options.allowFsRead).not.toContain("/app");
+	});
+
 	it("appends extraWrite paths when specified", () => {
 		const options = buildPiPermissionOptions({
 			entrypoint: "/e.js",
 			nodeModulesDir: "/nm",
-			appDir: "/app",
 			workdir: "/wd",
 			home: "/home/agent",
 			extraWrite: ["/tmp/*"],
@@ -340,19 +348,20 @@ describe("buildPiPermissionOptions (session-runtime.md §6)", () => {
 		expect(options.allowFsWrite.at(-1)).toBe("/tmp/*");
 	});
 
-	it("appends extraRead paths when specified (e.g. GOOGLE_APPLICATION_CREDENTIALS)", () => {
+	it("appends extraRead paths when specified (e.g. GOOGLE_APPLICATION_CREDENTIALS, extension dirs)", () => {
 		const options = buildPiPermissionOptions({
 			entrypoint: "/e.js",
 			nodeModulesDir: "/nm",
-			appDir: "/app",
 			workdir: "/wd",
 			home: "/home/agent",
 			extraRead: [
 				"/Users/me/.config/gcloud/application_default_credentials.json",
+				"/repo/extensions/*",
 			],
 		});
 		expect(options.allowFsRead).toContain(
 			"/Users/me/.config/gcloud/application_default_credentials.json",
 		);
+		expect(options.allowFsRead).toContain("/repo/extensions/*");
 	});
 });

@@ -1,4 +1,4 @@
-// startBridge — composition root (SessionRunner の組み立てと EventSource の配線)。
+// startBridge — composition root (SessionRunner の組み立てと Ingress の配線)。
 //
 // server.ts (CLI/bin) と、npm パッケージとして import して起動するライブラリ利用
 // (docs/design/config.md §6) の両方から呼ばれる共通の起動シーケンス。env パース・
@@ -15,15 +15,15 @@ import {
 	GeminiClassifierClient,
 } from "./classifier/client.js";
 import type { ConfigSource } from "./config/config-source.js";
+import { Reactions } from "./egress/reactions.js";
+import type { ChatPoster } from "./egress/router.js";
+import { EgressRouter } from "./egress/router.js";
 import type { ChatEvent, InboundMessage } from "./ingress/chat-event.js";
-import type { Ack, EventSource } from "./ingress/event-source.js";
+import type { Ack, Ingress } from "./ingress/ingress.js";
 import { SlackUserResolver } from "./ingress/slack/user-resolver.js";
 import { enrichEvent, type UserResolver } from "./ingress/user-resolver.js";
 import type { Logger } from "./logger.js";
 import { rootLogger } from "./logger.js";
-import { Reactions } from "./reply/reactions.js";
-import type { ChatPoster } from "./reply/router.js";
-import { ReplyRouter } from "./reply/router.js";
 import type { PiPermissionConfig } from "./session/runner.js";
 import { SessionRunner } from "./session/runner.js";
 import type { StateStore } from "./store/state/interfaces.js";
@@ -35,8 +35,8 @@ const CODE_DEFAULT_CLASSIFIER_MODEL = "gemini-3.1-flash-lite";
 
 export interface BridgeOptions {
 	/** 受信の入口 (Socket Mode / Events API / 呼び出し側独自の実装)。ライブラリ利用の
-	 * 本命 seam — 別の Slack app 実装から独自 EventSource を差し込める。 */
-	eventSource: EventSource;
+	 * 本命 seam — 別の Slack app 実装から独自 Ingress を差し込める。 */
+	eventSource: Ingress;
 	/** 返信投稿 (chat.postMessage) と reaction (reactions.add) に使う。 */
 	web: WebClient;
 	store: StateStore;
@@ -115,7 +115,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 	const runner = new SessionRunner({
 		configSource,
 		store,
-		router: new ReplyRouter({ poster }),
+		router: new EgressRouter({ poster }),
 		reactions,
 		// tsx 実行時は <repo>/src/../extensions、build 後は <repo>/dist/../extensions を指す。
 		// pi が --extension で TS ソースを直接ロードするためビルド対象外 (build-plan.md)。
@@ -127,10 +127,6 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 				new URL("../extensions/permission-gate.ts", import.meta.url),
 			),
 		],
-		// tsx 実行時は <repo>/src/../skills、build 後は <repo>/dist/../skills を指す。
-		// 固定パス規約 (session-runtime.md §5) — 空ディレクトリなら SessionRunner 側で
-		// --skill を渡さない判断をするため、ここでは常にこのパスを渡す
-		skillsDir: fileURLToPath(new URL("../skills", import.meta.url)),
 		// mentionFormat は必須 (SessionRunner はプラットフォーム中立で既定値を
 		// 持たない)。bridge.ts は Slack 専用モジュールなので、Slack の mrkdwn
 		// mention 記法をここで注入する
@@ -222,5 +218,5 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 		}
 	});
 
-	logger.info({}, "event source started; waiting for events");
+	logger.info({}, "ingress started; waiting for events");
 }

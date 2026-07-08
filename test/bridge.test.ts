@@ -1,6 +1,6 @@
 // startBridge の配線を検証する統合テスト。
 //
-// eventSource.start() が呼ばれたら ChatEvent を 1 個流すスタブ EventSource +
+// eventSource.start() が呼ばれたら ChatEvent を 1 個流すスタブ Ingress +
 // InMemoryStateStore + FileConfigSource (test/fixtures/config) + fake-pi
 // (test/fixtures/fake-pi.mjs。test/session/runner.test.ts の harness と同じ方法) で、
 // mention イベント → 返信が WebClient 相当の poster に届くことを 1 本だけ確認する。
@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest";
 import { startBridge } from "../src/bridge.js";
 import { FileConfigSource } from "../src/config/config-source.js";
 import type { ChatEvent } from "../src/ingress/chat-event.js";
-import type { Ack, EventSource } from "../src/ingress/event-source.js";
+import type { Ack, Ingress } from "../src/ingress/ingress.js";
 import { InMemoryStateStore } from "../src/store/state/backends/memory.js";
 
 /** BridgeOptions.web が要求する @slack/web-api の WebClient のうち、bridge が実際に
@@ -29,8 +29,8 @@ const FAKE_PI = fileURLToPath(
 const CONFIG_DIR = fileURLToPath(new URL("./fixtures/config", import.meta.url));
 
 /** eventSource.start() が呼ばれたら onEvent に渡された events を順に流すだけの
- * スタブ EventSource。ack は呼ばれたことだけ記録する。 */
-class StubEventSource implements EventSource {
+ * スタブ Ingress。ack は呼ばれたことだけ記録する。 */
+class StubIngress implements Ingress {
 	acked = 0;
 	constructor(private readonly events: ChatEvent[]) {}
 
@@ -108,7 +108,7 @@ describe("startBridge", () => {
 			metadata: { eventId: "Ev-bridge-test" },
 		};
 
-		const eventSource = new StubEventSource([event]);
+		const eventSource = new StubIngress([event]);
 		const web = fakeWebClient();
 		const agentHome = await mkdtemp(
 			join(tmpdir(), "pi-chat-runner-bridge-home-"),
@@ -167,7 +167,7 @@ describe("startBridge", () => {
 			metadata: { eventId: "Ev-bridge-poster-test" },
 		};
 
-		const eventSource = new StubEventSource([event]);
+		const eventSource = new StubIngress([event]);
 		const web = fakeWebClient();
 		const posted: { channelId: string; text: string; threadTs?: string }[] = [];
 		const injectedPoster = {

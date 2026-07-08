@@ -1,27 +1,36 @@
 // エントリポイント (Step 5: Cloud Run デプロイ / Events API)
 //
-// EventSource (Socket Mode / Events API) で受けたイベントをハードフィルタ (Layer 0)
-// だけ通し、SessionRunner に渡す。入口の選択は SLACK_MODE (env) で行い、後段
-// (gate 評価・inbox・lease・pi の kick/steer。すべて SessionRunner の中,
-// src/session/runner.ts) には入口の別を漏らさない (architecture.md §1)。
-// Store/Storage の実装選択 (env) も同様にここで行う (persistence.md §1)。
-// docs/build-plan.md Step 4-5 / docs/design/architecture.md §1, §6。
+// Ingress (Socket Mode / Events API) で受けたイベントをハードフィルタ (Layer 0)
+// だけ通し、SessionRunner に渡す。入口の選択は connector.slack.mode (agent.yaml /
+// SLACK_MODE env) で行い、後段 (gate 評価・inbox・lease・pi の kick/steer。すべて
+// SessionRunner の中, src/session/runner.ts) には入口の別を漏らさない
+// (architecture.md §1)。Store の実装選択 (store.backend, agent.yaml) も同様にここで行う
+// (persistence.md §1)。docs/build-plan.md Step 4-5 / docs/design/architecture.md §1, §6。
 
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Firestore } from "@google-cloud/firestore";
 import { WebClient } from "@slack/web-api";
 import { startBridge } from "./bridge.js";
 import {
-	collectPassthroughEnv,
 	loadAgentConfig,
+	type ResolvedAgentRuntime,
 	resolveAgentConfig,
 } from "./config/agent-config.js";
 import { FileConfigSource, loadChannelsFile } from "./config/config-source.js";
+import {
+	loadConnectorConfig,
+	type SlackConnectorConfig,
+} from "./config/connector-config.js";
 import { formatEffectiveConfig } from "./config/dump.js";
-import type { EventSource } from "./ingress/event-source.js";
-import { HttpEventSource } from "./ingress/slack/http-event-source.js";
-import { SocketEventSource } from "./ingress/slack/socket-event-source.js";
+import {
+	loadStoreConfig,
+	type ResolvedStoreConfig,
+} from "./config/store-config.js";
+import type { Ingress } from "./ingress/ingress.js";
+import { HttpIngress } from "./ingress/slack/http-ingress.js";
+import { SocketIngress } from "./ingress/slack/socket-ingress.js";
 import { rootLogger } from "./logger.js";
 import type { PiPermissionConfig } from "./session/runner.js";
 import { FirestoreStateStore } from "./store/state/backends/firestore.js";
@@ -52,17 +61,15 @@ function collectGcpEnv(): Record<string, string> {
 	return env;
 }
 
-/** env STORE_BACKEND (既定 memory) で永続化バックエンドを選ぶ (persistence.md §1)。
+/** store.backend (agent.yaml, 既定 memory) で永続化バックエンドを選ぶ (persistence.md §1)。
  * SessionRunner 以下には実装の別を漏らさない。 */
-function buildStateStore(): StateStore {
-	const backend = process.env.STORE_BACKEND ?? "memory";
-	switch (backend) {
+function buildStateStore(store: ResolvedStoreConfig): StateStore {
+	switch (store.backend) {
 		case "memory":
 			return new InMemoryStateStore();
 		case "sqlite": {
-			const path = process.env.SQLITE_PATH ?? "/tmp/pi-chat-runner/state.db";
-			mkdirSync(dirname(path), { recursive: true });
-			return new SqliteStateStore(path);
+			mkdirSync(dirname(store.sqlitePath), { recursive: true });
+			return new SqliteStateStore(store.sqlitePath);
 		}
 		case "firestore":
 			// projectId は GOOGLE_CLOUD_PROJECT / エミュレータは FIRESTORE_EMULATOR_HOST
@@ -70,135 +77,150 @@ function buildStateStore(): StateStore {
 			return new FirestoreStateStore(new Firestore());
 		default:
 			throw new Error(
-				`Unknown STORE_BACKEND "${backend}" (expected memory|sqlite|firestore)`,
+				`Unknown store.backend "${store.backend}" (expected memory|sqlite|firestore)`,
 			);
 	}
 }
 
-/** env PI_AGENT_UID / PI_AGENT_GID (session-runtime.md §6: UID 分離) を数値として
- * パースする。どちらも省略時は無効 (現状動作 = pi は Runner と同一 uid で動く)。
- * 片方だけ設定されているのは誤設定なので fail-loud にする */
-function parseAgentIds(): { uid?: number; gid?: number } {
-	const uidRaw = process.env.PI_AGENT_UID;
-	const gidRaw = process.env.PI_AGENT_GID;
-	if (uidRaw === undefined && gidRaw === undefined) return {};
-	if (uidRaw === undefined || gidRaw === undefined) {
-		throw new Error(
-			"PI_AGENT_UID and PI_AGENT_GID must be set together (or both omitted)",
-		);
-	}
-	const uid = Number.parseInt(uidRaw, 10);
-	const gid = Number.parseInt(gidRaw, 10);
-	if (Number.isNaN(uid) || Number.isNaN(gid)) {
-		throw new Error("PI_AGENT_UID and PI_AGENT_GID must be integers");
-	}
-	return { uid, gid };
+/** pi 本体パッケージを import.meta.resolve で解決し、Node Permission Model 用の
+ * entrypoint (bin.pi の絶対パス) と nodeModulesDir (パッケージがインストールされて
+ * いる node_modules ルート) を自動検出する。決め打ちパス (旧 PI_ENTRYPOINT/
+ * PI_NODE_MODULES_DIR env) を廃止し、実際にインストールされた場所から常に正しい
+ * 値を導く。
+ *
+ * require.resolve(`${pkg}/package.json`) ではなく import.meta.resolve(pkg) (パッケージ
+ * ルート "." の解決) を使う: pi 本体は ESM 専用で package.json の exports に "."
+ * (→ dist/index.js) しか定義しておらず "./package.json" は公開していないため、
+ * require.resolve 経由のサブパス解決は ERR_PACKAGE_PATH_NOT_EXPORTED で必ず失敗する
+ * (exports map が定義された ESM パッケージは CJS の require.resolve では解決不能)。
+ * import.meta.resolve は ESM の解決アルゴリズムを使うため "." の import 条件を
+ * 正しく解決できる。dist/index.js から dist/cli.js (bin.pi) 及び node_modules
+ * ルートを相対で導出する。パッケージ構成は `<nodeModulesDir>/@earendil-works/
+ * pi-coding-agent/dist/{index.js,cli.js}` 前提。 */
+const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
+
+function resolvePiPaths(): { entrypoint: string; nodeModulesDir: string } {
+	const indexUrl = import.meta.resolve(PI_PACKAGE_NAME);
+	const indexPath = fileURLToPath(indexUrl);
+	// indexPath = <nodeModulesDir>/@earendil-works/pi-coding-agent/dist/index.js
+	const packageDir = dirname(dirname(indexPath));
+	const entrypoint = join(packageDir, "dist/cli.js");
+	// <nodeModulesDir>/@earendil-works/pi-coding-agent → 2 段上が node_modules ルート
+	const nodeModulesDir = dirname(dirname(packageDir));
+	return { entrypoint, nodeModulesDir };
 }
 
-/** env PI_PERMISSION_MODE=1 (session-runtime.md §6, pi-tools-and-sandbox.md
- * 「リーズナブルな sandbox レイヤ案」) で Node Permission Model 起動を opt-in する。
- * 未設定なら無効 (現状動作)。Cloud Run 実イメージでのみ有効化する想定 — ローカル開発・
- * テストの fake pi (test/fixtures/fake-pi.mjs) はこの機構を使わなくても動く。
- * entrypoint/nodeModulesDir は npm -g インストール先の実体パス (docker で
- * `readlink -f $(which pi)` / `npm root -g` を実測して決めた既定値。イメージの
- * レイアウトを変えた場合は env で上書きする) */
-function parsePiPermissionConfig(): PiPermissionConfig | undefined {
-	if (process.env.PI_PERMISSION_MODE !== "1") return undefined;
+/** agent.yaml の agent.runtime.permissionMode (既定 true, agent-config.ts) で Node
+ * Permission Model 起動を切り替える (session-runtime.md §6, pi-tools-and-sandbox.md
+ * 「リーズナブルな sandbox レイヤ案」)。コード既定は ON — 何も書かなければ隔離が効く。
+ * false のときだけ無効化する (ローカル開発・テストの fake pi (test/fixtures/fake-pi.mjs)
+ * はこの機構を使わなくても動く)。entrypoint/nodeModulesDir は resolvePiPaths の
+ * 自動検出値を使う。 */
+function buildPiPermissionConfig(
+	runtime: ResolvedAgentRuntime,
+): PiPermissionConfig | undefined {
+	if (!runtime.permissionMode) return undefined;
 	// HOME を agentHome に固定するとローカルのユーザー ADC ($HOME/.config/gcloud) は
 	// HOME 経由で見えなくなるため、GOOGLE_APPLICATION_CREDENTIALS で明示された
 	// ファイルだけ read を許可する
 	const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
 	return {
-		entrypoint:
-			process.env.PI_ENTRYPOINT ??
-			"/usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js",
-		nodeModulesDir:
-			process.env.PI_NODE_MODULES_DIR ?? "/usr/local/lib/node_modules",
-		appDir: process.env.PI_APP_DIR ?? "/app",
+		...resolvePiPaths(),
 		...(credentialsPath !== undefined ? { extraRead: [credentialsPath] } : {}),
 	};
 }
 
-function requireEnv(name: string): string {
-	const value = process.env[name];
-	if (value === undefined || value === "") {
-		console.error(`Missing required environment variable: ${name}`);
-		console.error("");
-		console.error("起動には以下の環境変数が必要です:");
-		console.error(
-			"  SLACK_BOT_TOKEN     xoxb-... (OAuth & Permissions で取得)",
-		);
-		console.error(
-			"  SLACK_BOT_USER_ID   U...     (bot の User ID。App Home や `auth.test` で確認可能)",
-		);
-		console.error(
-			"  SLACK_MODE          socket|events (既定 socket。architecture.md §1)",
-		);
-		console.error(
-			"    socket 時 -> SLACK_APP_TOKEN      xapp-... (Basic Information > App-Level Tokens, connections:write scope)",
-		);
-		console.error(
-			"    events 時 -> SLACK_SIGNING_SECRET Basic Information > Signing Secret",
-		);
-		console.error("");
-		console.error("任意:");
-		console.error(
-			"  CONFIG_DIR          channels.yaml と agent.yaml の親 (既定 examples/config)",
-		);
-		console.error("  PI_PROVIDER         pi の --provider");
-		console.error(
-			"  PI_AGENT_UID/GID    pi を落とす実行 uid/gid (session-runtime.md §6 の UID 分離。両方セットで有効)",
-		);
-		console.error(
-			"  PI_AGENT_HOME       pi 子プロセスへ常に HOME として渡すディレクトリ (既定 /home/agent)",
-		);
-		console.error(
-			"  PI_PERMISSION_MODE  1 で Node Permission Model 起動を有効化 (Cloud Run 実イメージ向け)",
-		);
-		console.error(
-			"  TURN_TIMEOUT_MS     1 ターンの上限 ms (既定 600000 = 10 分。超過で pi を kill してセッションを畳む)",
-		);
-		console.error(
-			"  PI_ENV_PASSTHROUGH  pi へ継承する env 名の追加 allowlist (カンマ区切り。SLACK_/BRIDGE_ prefix は拒否)",
-		);
-		console.error(
-			"  上記 PI_PROVIDER/TURN_TIMEOUT_MS/PI_ENV_PASSTHROUGH は CONFIG_DIR/agent.yaml でも設定可 (env が優先)",
-		);
-		console.error(
-			"  PORT                events モードの listen ポート (既定 8080)",
-		);
-		console.error("");
-		console.error("例 (.env ファイル推奨):");
-		console.error("  cp .env.example .env  # 値を埋める");
-		console.error(
-			"  pnpm run dev          # --env-file-if-exists=.env で読み込まれる",
-		);
-		process.exit(1);
-	}
-	return value;
+function missingConnectorConfig(configDir: string): never {
+	console.error("Missing or incomplete connector.slack config");
+	console.error("");
+	console.error(
+		`起動には ${configDir}/agent.yaml の connector.slack ブロックが必要です:`,
+	);
+	console.error("");
+	console.error("connector:");
+	console.error("  slack:");
+	console.error(
+		"    mode: ${env.SLACK_MODE:-socket}         # socket | events (既定 socket。architecture.md §1)",
+	);
+	console.error(
+		"    appToken: ${env.SLACK_APP_TOKEN}        # socket 時必須 (xapp-...)",
+	);
+	console.error(
+		"    signingSecret: ${env.SLACK_SIGNING_SECRET}  # events 時必須",
+	);
+	console.error(
+		"    port: ${env.PORT:-8080}                 # events 時の listen ポート",
+	);
+	console.error(
+		"    botToken: ${env.SLACK_BOT_TOKEN}        # 必須 (xoxb-...)",
+	);
+	console.error("    botUserId: ${env.SLACK_BOT_USER_ID}     # 必須 (U...)");
+	console.error("");
+	console.error("任意 (agent.yaml でも設定可。詳細は config.md §6):");
+	console.error("  PI_PROVIDER         pi の --provider");
+	console.error(
+		"  PI_AGENT_UID/GID    pi を落とす実行 uid/gid (session-runtime.md §6 の UID 分離。両方セットで有効。agent.yaml の agent.runtime.uid/gid でも指定可)",
+	);
+	console.error(
+		"  PI_AGENT_HOME       pi 子プロセスへ常に HOME として渡すディレクトリ (既定 /home/agent。agent.yaml の agent.runtime.home でも指定可)",
+	);
+	console.error(
+		"  PI_PERMISSION_MODE  0 で Node Permission Model 起動を無効化 (既定 ON。agent.yaml の agent.runtime.permissionMode: false でも無効化可)",
+	);
+	console.error(
+		"  TURN_TIMEOUT_MS     1 ターンの上限 ms (既定 600000 = 10 分。超過で pi を kill してセッションを畳む)",
+	);
+	console.error(
+		"  上記 PI_PROVIDER/TURN_TIMEOUT_MS は CONFIG_DIR/agent.yaml でも設定可 (env が優先)。pi へ渡す追加 env は agent.yaml の agent.env で明示列挙する",
+	);
+	console.error("");
+	console.error("例 (.env ファイル推奨):");
+	console.error("  cp .env.example .env  # 値を埋める");
+	console.error(
+		"  pnpm run dev          # --env-file-if-exists=.env で読み込まれる",
+	);
+	process.exit(1);
 }
 
-/** SLACK_MODE (既定 socket) で入口を切り替える (architecture.md §1)。両モードとも
+/** connector.slack.mode (既定 socket) で入口を切り替える (architecture.md §1)。両モードとも
  * dedupe・起動判定・inbox 積みの後段は共通で、「受け取り方 / ACK の意味」だけが違う。
- * モード別必須 env (SLACK_APP_TOKEN / SLACK_SIGNING_SECRET) もここで振り分ける。 */
-function buildEventSource(mode: string, botUserId: string): EventSource {
+ * モード別必須項目 (appToken / signingSecret) もここで振り分ける。connector.slack 自体が
+ * 無い、またはモード別必須項目が欠けている場合は fail-loud で使い方を表示して exit する。 */
+function buildConnector(
+	slack: SlackConnectorConfig | undefined,
+	configDir: string,
+): { ingress: Ingress; botToken: string } {
+	if (slack === undefined) {
+		missingConnectorConfig(configDir);
+	}
+	const { mode, botToken, botUserId, port } = slack;
 	switch (mode) {
 		case "socket": {
-			const appToken = requireEnv("SLACK_APP_TOKEN");
-			return new SocketEventSource({ appToken, botUserId });
+			if (slack.appToken === undefined || slack.appToken === "") {
+				missingConnectorConfig(configDir);
+			}
+			const ingress = new SocketIngress({
+				appToken: slack.appToken,
+				botUserId,
+			});
+			return { ingress, botToken };
 		}
 		case "events": {
-			const signingSecret = requireEnv("SLACK_SIGNING_SECRET");
-			const port = Number.parseInt(process.env.PORT ?? "8080", 10);
-			return new HttpEventSource({
-				signingSecret,
+			if (slack.signingSecret === undefined || slack.signingSecret === "") {
+				missingConnectorConfig(configDir);
+			}
+			const ingress = new HttpIngress({
+				signingSecret: slack.signingSecret,
 				botUserId,
 				port,
 				logger: rootLogger.child({ component: "http" }),
 			});
+			return { ingress, botToken };
 		}
 		default:
-			throw new Error(`Unknown SLACK_MODE "${mode}" (expected socket|events)`);
+			throw new Error(
+				`Unknown connector.slack.mode "${mode}" (expected socket|events)`,
+			);
 	}
 }
 
@@ -231,52 +253,49 @@ async function main() {
 		return;
 	}
 
-	const slackMode = process.env.SLACK_MODE ?? "socket";
-	const botToken = requireEnv("SLACK_BOT_TOKEN");
-	const botUserId = requireEnv("SLACK_BOT_USER_ID");
 	const configDir = process.env.CONFIG_DIR ?? "examples/config";
+
+	// connector.slack (agent.yaml 内, ${env.X} 参照解決済み) を読む。SLACK_MODE 等の
+	// env 直読みはやめ、connector 経由に一本化する (connector-config.ts)
+	const connectorConfig = await loadConnectorConfig(configDir);
+	const { ingress, botToken } = buildConnector(
+		connectorConfig.slack,
+		configDir,
+	);
+
+	// store.backend/sqlitePath (agent.yaml 内, ${env.X} 参照解決済み) を読む。
+	// STORE_BACKEND/SQLITE_PATH env 直読みはやめ、store 経由に一本化する (store-config.ts)
+	const storeConfig = await loadStoreConfig(configDir);
 
 	// agent.yaml (config.md §6) + env を解決する。優先順位は env > agent.yaml > コード既定
 	const agentConfigFile = await loadAgentConfig(configDir);
 	const agentConfig = resolveAgentConfig(agentConfigFile, process.env);
-	const { provider, turnTimeoutMs } = agentConfig;
-	const passthrough = collectPassthroughEnv(
-		agentConfig.envPassthrough,
-		process.env,
-	);
-	if (passthrough.missing.length > 0) {
-		logger.warn(
-			{ missing: passthrough.missing },
-			"envPassthrough names not found in process.env",
-		);
-	}
+	const { provider, turnTimeoutMs, runtime } = agentConfig;
 
 	const gcpEnv = collectGcpEnv();
-	// GCP env と envPassthrough が同じ名前を持つことは想定していない (allowlist の
-	// 対象が重ならない) が、衝突したら GCP 側を後勝ちにする — pi の google-vertex
-	// プロバイダの認証に必須の値をユーザー設定の envPassthrough で上書きさせない
-	const extraEnv = { ...passthrough.env, ...gcpEnv };
-	const store = buildStateStore();
+	// 足し算モデル (config.md §6): pi に渡る env は「コード既定 (gcpEnv) + agent.env に
+	// 明示列挙したものだけ」。agent.env はレイヤ③ (ユーザー明示) としてレイヤ②
+	// (gcpEnv, コード既定) を上書きできる — pi の実行に必須な GOOGLE_CLOUD_PROJECT 等を
+	// 利用者が意図して差し替えるケースを許すため、後勝ちで agent.env を上に重ねる
+	const extraEnv = { ...gcpEnv, ...agentConfig.env };
+	const store = buildStateStore(storeConfig);
 	const archiveDir = process.env.WORKDIR_ARCHIVE_DIR;
-	const agentIds = parseAgentIds();
-	const piPermission = parsePiPermissionConfig();
-	const agentHome = process.env.PI_AGENT_HOME;
+	const piPermission = buildPiPermissionConfig(runtime);
 
 	const web = new WebClient(botToken);
-	const eventSource = buildEventSource(slackMode, botUserId);
 
 	logger.info(
 		{
-			storeBackend: process.env.STORE_BACKEND ?? "memory",
+			storeBackend: storeConfig.backend,
 			workdirArchiveDir: archiveDir,
 			configDir,
-			slackMode,
+			slackMode: connectorConfig.slack?.mode,
 		},
 		"state store configured",
 	);
 
 	await startBridge({
-		eventSource,
+		eventSource: ingress,
 		web,
 		store,
 		configSource: new FileConfigSource(configDir),
@@ -284,12 +303,13 @@ async function main() {
 		...(Object.keys(extraEnv).length > 0 ? { extraEnv } : {}),
 		// WORKDIR_ARCHIVE_DIR 未設定なら境界退避なし (Step 3 相当の挙動)
 		...(archiveDir !== undefined && archiveDir !== "" ? { archiveDir } : {}),
-		// PI_AGENT_UID/GID 未設定なら UID 分離なし (現状動作)
-		...(agentIds.uid !== undefined ? { agentUid: agentIds.uid } : {}),
-		...(agentIds.gid !== undefined ? { agentGid: agentIds.gid } : {}),
-		// PI_AGENT_HOME 未設定なら SessionRunner の既定 (/home/agent) を使う
-		...(agentHome !== undefined ? { agentHome } : {}),
-		// PI_PERMISSION_MODE=1 未設定なら Node Permission Model なし (現状動作)
+		// agent.runtime.uid/gid (env PI_AGENT_UID/GID) 未設定なら UID 分離なし (現状動作)
+		...(runtime.uid !== undefined ? { agentUid: runtime.uid } : {}),
+		...(runtime.gid !== undefined ? { agentGid: runtime.gid } : {}),
+		// home は resolveAgentConfig が既定 "/home/agent" を埋めて返すので常に渡す
+		agentHome: runtime.home,
+		// permissionMode: false (env PI_PERMISSION_MODE=0 または agent.yaml) なら
+		// Node Permission Model なし。コード既定は ON
 		...(piPermission !== undefined ? { piPermission } : {}),
 		// TURN_TIMEOUT_MS 未設定なら SessionRunner の既定 (600_000ms) を使う
 		...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),

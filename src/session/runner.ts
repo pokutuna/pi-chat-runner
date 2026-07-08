@@ -21,10 +21,12 @@ import {
 	stat,
 } from "node:fs/promises";
 import { hostname } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ClassifierClient } from "../classifier/client.js";
 import type { ChannelDoc } from "../config/channel-doc.js";
 import { type ConfigSource, DM_CHANNEL } from "../config/config-source.js";
+import type { Reactions } from "../egress/reactions.js";
+import type { EgressRouter } from "../egress/router.js";
 import {
 	buildWhen,
 	defaultWhen,
@@ -35,8 +37,6 @@ import {
 import type { InboundMessage } from "../ingress/chat-event.js";
 import type { Logger } from "../logger.js";
 import { rootLogger } from "../logger.js";
-import type { Reactions } from "../reply/reactions.js";
-import type { ReplyRouter } from "../reply/router.js";
 import { inboxItemId } from "../store/state/inbox-item.js";
 import type {
 	InboxItem,
@@ -82,18 +82,20 @@ function mentionInstruction(mentionFormat: MentionFormat): string {
  * workdir / home はセッションごとに決まるため kick 時に buildPiPermissionOptions
  * へ都度渡す — ここに載るのはイメージ内で固定のパスだけ */
 export interface PiPermissionConfig {
-	/** pi 本体のエントリポイント JS の絶対パス (npm -g 実体。docker で
-	 * `readlink -f $(which pi)` して確定させる) */
+	/** pi 本体のエントリポイント JS の絶対パス (require.resolve で自動検出する。
+	 * server.ts 参照) */
 	entrypoint: string;
-	/** pi 本体・依存が入る npm global の node_modules ルート (`npm root -g`) */
+	/** pi 本体・依存が入る npm パッケージの node_modules ルート (require.resolve で
+	 * 自動検出する。server.ts 参照) */
 	nodeModulesDir: string;
-	/** `/app` 相当 (extension・skill 焼き込み先) */
-	appDir: string;
 	/** 追加で write を許可したいパス (例 "/tmp/*")。既定なし */
 	extraWrite?: string[];
 	/** 追加で read を許可したいパス (例 GOOGLE_APPLICATION_CREDENTIALS のファイル
-	 * パス。HOME を agentHome に固定するとローカルのユーザー ADC は HOME 経由で
-	 * 見えなくなるため、明示指定されたファイルだけ個別に許可する)。既定なし */
+	 * パス)。HOME を agentHome に固定するとローカルのユーザー ADC は HOME 経由で
+	 * 見えなくなるため、明示指定されたファイルだけ個別に許可する用途。既定なし。
+	 * extension (reply / permission-gate) の読み込みに必要な read 許可は kick 時に
+	 * extensionPaths の dirname から自動導出してここへ足すため、呼び出し側が
+	 * 明示する必要はない (appDir 包括許可の廃止に伴う対応) */
 	extraRead?: string[];
 }
 
@@ -101,18 +103,13 @@ export interface SessionRunnerOptions {
 	configSource: ConfigSource;
 	/** 永続化 Store 群 (inbox / sessions / leases)。persistence.md §1 */
 	store: StateStore;
-	router: ReplyRouter;
+	router: EgressRouter;
 	reactions: Reactions;
 	/** workdir の境界退避。 */
 	workdirStorage: WorkdirStorage;
 	/** pi の `--extension` に渡す extension の絶対パス群 (reply + permission-gate 等)。
 	 * すべて常時注入する (permission-gate は事故防止層なので無効化オプションは持たない) */
 	extensionPaths: string[];
-	/** pi の `--skill` に渡す固定パス規約のディレクトリ (session-runtime.md §5)。
-	 * kick ごとに存在確認し、実体のあるエントリ (.gitkeep 以外) が 1 つ以上あるときのみ
-	 * `--skill` を渡す。未指定・空ディレクトリならフラグを渡さない (pi の引数を無駄に
-	 * 増やさない) */
-	skillsDir?: string;
 	/** workdir のルート。既定 /tmp/pi-chat-runner/sessions */
 	workdirRoot?: string;
 	/** pi バイナリ。省略時は PiProcess の既定 (env PI_BIN → "pi") */
@@ -318,20 +315,6 @@ function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** skillsDir に実体のあるエントリ (.gitkeep 以外) が 1 つ以上あるかどうか
- * (session-runtime.md §5)。dir が存在しない・空・.gitkeep のみのときは false を返し、
- * `--skill` を渡さない判断に使う (pi の引数を無駄に増やさない)。SKILL.md の有無まで
- * 厳密に見る必要はなく、readdir の軽い判定で十分とする */
-export async function hasSkillEntries(dir: string): Promise<boolean> {
-	try {
-		const entries = await readdir(dir);
-		return entries.some((entry) => entry !== ".gitkeep");
-	} catch (err) {
-		if ((err as NodeJS.ErrnoException).code === "ENOENT") return false;
-		throw err;
-	}
-}
-
 /** dir 配下 (dir 自身含む) を再帰的に chown する。UID 分離時、restore で
  * root 所有のままコピーされたファイルを agent 所有に揃えるための最小実装
  * (エントリ数が少ない workdir 前提。fs.cp に uid/gid オプションは無いため
@@ -372,11 +355,10 @@ export class SessionRunner {
 	private readonly pendingKicks = new Map<string, PendingKick>();
 	private readonly configSource: ConfigSource;
 	private readonly store: StateStore;
-	private readonly router: ReplyRouter;
+	private readonly router: EgressRouter;
 	private readonly reactions: Reactions;
 	private readonly workdirStorage: WorkdirStorage;
 	private readonly extensionPaths: string[];
-	private readonly skillsDir: string | undefined;
 	private readonly workdirRoot: string;
 	private readonly piBinary: string | undefined;
 	private readonly provider: string | undefined;
@@ -400,7 +382,6 @@ export class SessionRunner {
 		this.reactions = options.reactions;
 		this.workdirStorage = options.workdirStorage;
 		this.extensionPaths = options.extensionPaths;
-		this.skillsDir = options.skillsDir;
 		this.workdirRoot = options.workdirRoot ?? "/tmp/pi-chat-runner/sessions";
 		this.piBinary = options.piBinary;
 		this.provider = options.provider;
@@ -806,27 +787,27 @@ export class SessionRunner {
 		// と揃える — ズレると pi 起動時の ~/.pi probe (auth.json migration 等) が
 		// ERR_ACCESS_DENIED になり pi が exit 1 で即死する
 		const home = agentHomeReal;
+		// extension (reply / permission-gate) は appDir 包括許可の廃止に伴い、
+		// 各ファイルの所在ディレクトリを個別に read 許可する (write は与えない —
+		// 読めるが書けない)。ディレクトリ単位なので重複していても Set で 1 回に畳む
+		const extensionReadDirs = [
+			...new Set(this.extensionPaths.map((p) => dirname(p))),
+		];
 		const permission =
 			this.piPermission !== undefined
 				? buildPiPermissionOptions({
 						entrypoint: this.piPermission.entrypoint,
 						nodeModulesDir: this.piPermission.nodeModulesDir,
-						appDir: this.piPermission.appDir,
 						workdir: workdirReal,
 						home,
 						...(this.piPermission.extraWrite !== undefined
 							? { extraWrite: this.piPermission.extraWrite }
 							: {}),
-						...(this.piPermission.extraRead !== undefined
-							? { extraRead: this.piPermission.extraRead }
-							: {}),
+						extraRead: [
+							...extensionReadDirs.map((dir) => `${dir}/*`),
+							...(this.piPermission.extraRead ?? []),
+						],
 					})
-				: undefined;
-		// skillsDir が指定されていても実体のあるエントリが無ければ --skill を渡さない
-		// (session-runtime.md §5。リポジトリの skills/ は .gitkeep のみで該当)
-		const skillPath =
-			this.skillsDir !== undefined && (await hasSkillEntries(this.skillsDir))
-				? this.skillsDir
 				: undefined;
 		const proc = new PiProcess({
 			sessionPath,
@@ -840,7 +821,6 @@ export class SessionRunner {
 			...(this.piBinary !== undefined ? { piBinary: this.piBinary } : {}),
 			...(model !== undefined ? { model } : {}),
 			...(this.provider !== undefined ? { provider: this.provider } : {}),
-			...(skillPath !== undefined ? { skillPath } : {}),
 			...(doc?.tools !== undefined ? { tools: doc.tools } : {}),
 			...(doc?.excludeTools !== undefined
 				? { excludeTools: doc.excludeTools }

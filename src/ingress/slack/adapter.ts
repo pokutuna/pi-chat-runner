@@ -1,7 +1,7 @@
 // SlackIngressAdapter (codec) — docs/design/chat-model.md §3.2
 //
 // 「届いた生 payload を ChatEvent に正規化する」変換器。transport (Socket Mode /
-// Events API) には依存しない純関数的な codec。EventSource 実装がこれを内部で使う。
+// Events API) には依存しない純関数的な codec。Ingress 実装がこれを内部で使う。
 //
 // HTTP 署名検証 (IngressAdapter.verify) は Step 5 (Events API) で実装する。
 // Step 1 (Socket Mode) では署名検証の対象となる HTTP リクエストが存在しないため未実装。

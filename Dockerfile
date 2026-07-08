@@ -32,7 +32,11 @@ COPY src ./src
 RUN pnpm run build
 
 # 本番用 node_modules を作る (production 依存のみ、better-sqlite3 は
-# このステージ = runtime と同じ node:26-slim ベースでネイティブビルドされる)
+# このステージ = runtime と同じ node:26-slim ベースでネイティブビルドされる)。
+# pi 本体 (@earendil-works/pi-coding-agent) も dependencies なのでここに入り、
+# その transitive 依存も pnpm が一元管理する (npm 別 install で衝突する問題を回避)。
+# server.ts の resolvePiPaths が import.meta.resolve() で /app/node_modules から
+# pi の entrypoint を自動検出する (config.md §6)
 RUN pnpm install --frozen-lockfile --prod
 
 # ---- runtime ----
@@ -44,10 +48,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       git curl ca-certificates jq ripgrep fd-find \
   &&  rm -rf /var/lib/apt/lists/* \
   &&  ln -s "$(command -v fdfind)" /usr/local/bin/fd
-
-# pi 本体。package.json devDependencies の ^0.79.9 にバージョンを固定し、
-# ビルドごとに挙動が変わらないようにする
-RUN npm install -g @earendil-works/pi-coding-agent@0.79.9
 
 # UID 分離用の agent ユーザー (session-runtime.md §6)。コンテナ自体は root で
 # 起動し続け (Runner が root)、Runner が pi を spawn するときに { uid, gid } を
@@ -74,9 +74,11 @@ COPY package.json ./
 # ビルド対象外 (build-plan.md)。ソースのままコピーする
 COPY extensions ./extensions
 
-# skill は固定パス規約 /app/skills/ に置けば読まれる (session-runtime.md §5)。
-# 利用者は FROM このイメージ 1 段で COPY skills/ /app/skills/ を上書きできる
-COPY skills ./skills
+# skill は pi の既定探索パス $AGENT_HOME/.pi/agent/skills/ に置けば pi が自動で
+# 読む (Runner 側に --skill 等の配線は不要。config.md §6)。現状 skills/ は
+# .gitkeep のみで空だが、利用者は FROM このイメージ 1 段で
+# COPY --chown=1001:1001 skills/ /home/agent/.pi/agent/skills/ と上書きできる
+COPY --chown=1001:1001 skills/ /home/agent/.pi/agent/skills/
 
 # CONFIG_DIR の既定 (server.ts) は相対パス "examples/config"。
 # WORKDIR /app からの相対で解決できるようにここへ同梱する

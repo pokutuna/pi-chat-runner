@@ -4,13 +4,13 @@
  * プロトコルそのものの型・パースは rpc.ts。
  */
 
-import type { ReplyPayload } from "../reply/router.js";
+import type { EgressPayload } from "../egress/router.js";
 import type { AgentEndEvent, PiEvent, ToolExecutionEndEvent } from "./rpc.js";
 
 /** tool_execution_end イベントから reply の引数を取り出す。reply 以外や形不正は null */
 export function extractReply(
 	event: ToolExecutionEndEvent,
-): ReplyPayload | null {
+): EgressPayload | null {
 	if (event.toolName !== "reply" || event.isError) return null;
 	const details = event.result?.details;
 	if (typeof details !== "object" || details === null) return null;

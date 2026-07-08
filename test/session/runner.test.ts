@@ -19,16 +19,15 @@ import pino from "pino";
 import { describe, expect, it } from "vitest";
 import type { ChannelDoc } from "../../src/config/channel-doc.js";
 import type { ConfigSource } from "../../src/config/config-source.js";
+import { Reactions } from "../../src/egress/reactions.js";
+import { type ChatPoster, EgressRouter } from "../../src/egress/router.js";
 import type { InboundMessage } from "../../src/ingress/chat-event.js";
-import { Reactions } from "../../src/reply/reactions.js";
-import { type ChatPoster, ReplyRouter } from "../../src/reply/router.js";
 import type {
 	MentionFormat,
 	PiPermissionConfig,
 } from "../../src/session/runner.js";
 import {
 	computeKickDelayMs,
-	hasSkillEntries,
 	isIdleExpired,
 	renderEvent,
 	replyThreadKeyOf,
@@ -166,7 +165,6 @@ interface HarnessOptions {
 	agentHome?: string;
 	piPermission?: PiPermissionConfig;
 	turnTimeoutMs?: number;
-	skillsDir?: string;
 	mentionFormat?: MentionFormat;
 }
 
@@ -192,7 +190,7 @@ async function harness(
 	const runner = new SessionRunner({
 		configSource: new FakeConfigSource(docs),
 		store,
-		router: new ReplyRouter({ poster }),
+		router: new EgressRouter({ poster }),
 		reactions: new Reactions({
 			add: async (args) => {
 				reactionCalls.push(args);
@@ -218,9 +216,6 @@ async function harness(
 			: {}),
 		...(options.turnTimeoutMs !== undefined
 			? { turnTimeoutMs: options.turnTimeoutMs }
-			: {}),
-		...(options.skillsDir !== undefined
-			? { skillsDir: options.skillsDir }
 			: {}),
 		// SessionRunner では必須パラメータ。テストでは既定として Slack の
 		// `<@USER_ID>` 記法を使う (個々のテストが上書きしない限り)
@@ -796,7 +791,8 @@ describe("SessionRunner (fake-pi integration)", () => {
 	it("Node Permission Model が有効なとき node --permission 経由で pi (fake-pi) を起動する", async () => {
 		// permission 指定時は entrypoint を直接 node で起動するため、piBinary は
 		// 使われない (buildSpawnCommand の仕様)。fake-pi.mjs 自体を entrypoint に
-		// 見立て、workdir/node_modules/appDir への read/write を許可した状態でも
+		// 見立て、workdir/node_modules への read/write と extension ディレクトリへの
+		// read (appDir 包括許可の廃止に伴い kick() が自動で積む) を許可した状態でも
 		// 通常のセッションと同じく reply → agent_end まで動くことを確認する
 		const h = await harness(
 			{},
@@ -804,7 +800,6 @@ describe("SessionRunner (fake-pi integration)", () => {
 				piPermission: {
 					entrypoint: FAKE_PI,
 					nodeModulesDir: join(process.cwd(), "node_modules"),
-					appDir: process.cwd(),
 				},
 			},
 		);
@@ -822,58 +817,17 @@ describe("SessionRunner (fake-pi integration)", () => {
 		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
 	});
 
-	it("skillsDir に実体のあるエントリがあれば --skill <dir> を渡す", async () => {
-		const skillsDir = await mkdtemp(join(tmpdir(), "pi-chat-runner-skills-"));
-		await mkdir(join(skillsDir, "example-skill"), { recursive: true });
-		await writeFile(
-			join(skillsDir, "example-skill", "SKILL.md"),
-			"# example\n",
-		);
-		const h = await harness({}, { skillsDir });
-		const trigger = message({ mentionsBot: true, text: "with skill" });
-
-		await h.runner.handle(trigger);
-
-		await waitFor(() => h.poster.calls.length === 1, "reply posted");
-		const argv = await h.argvSeen("C01", trigger.id);
-		const skillIndex = argv.indexOf("--skill");
-		expect(skillIndex).toBeGreaterThanOrEqual(0);
-		expect(argv[skillIndex + 1]).toBe(skillsDir);
-
-		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
-	});
-
-	it("skillsDir が空 (.gitkeep のみ) のときは --skill を渡さない", async () => {
-		const skillsDir = await mkdtemp(join(tmpdir(), "pi-chat-runner-skills-"));
-		await writeFile(join(skillsDir, ".gitkeep"), "");
-		const h = await harness({}, { skillsDir });
-		const trigger = message({ mentionsBot: true, text: "without skill" });
-
-		await h.runner.handle(trigger);
-
-		await waitFor(() => h.poster.calls.length === 1, "reply posted");
-		const argv = await h.argvSeen("C01", trigger.id);
-		expect(argv).not.toContain("--skill");
-
-		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
-	});
-
-	it("skillsDir が未存在のディレクトリのときも --skill を渡さない", async () => {
-		const skillsDir = join(
-			await mkdtemp(join(tmpdir(), "pi-chat-runner-skills-")),
-			"does-not-exist",
-		);
-		const h = await harness({}, { skillsDir });
-		const trigger = message({ mentionsBot: true, text: "missing skills dir" });
-
-		await h.runner.handle(trigger);
-
-		await waitFor(() => h.poster.calls.length === 1, "reply posted");
-		const argv = await h.argvSeen("C01", trigger.id);
-		expect(argv).not.toContain("--skill");
-
-		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
-	});
+	// extension ディレクトリへの --allow-fs-read 自動付与 (appDir 廃止の代替、
+	// kick() 内の extensionReadDirs 導出) は、実際に node へ渡る CLI フラグ
+	// (--permission/--allow-fs-read) であって fake-pi.mjs 自身の process.argv には
+	// 現れない (Node が解釈して消費するランタイムフラグのため) ため、この
+	// integration test からは観測できない。fake-pi は --extension を読み込みも
+	// しないので、grant の有無で fake-pi の挙動が変わることもない。
+	// 導出ロジック自体の検証は runtime.test.ts の buildPiPermissionOptions
+	// 「appends extraRead paths when specified (e.g. GOOGLE_APPLICATION_CREDENTIALS,
+	// extension dirs)」でカバーする。ここでは extension dirs 込みの extraRead を
+	// 積んだ状態でも実際に Permission Model 下で pi (fake-pi) が起動し reply まで
+	// 到達すること (上のテスト) をもって、配線が壊れていないことの回帰保護とする
 });
 
 describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
@@ -1433,34 +1387,6 @@ describe("computeKickDelayMs", () => {
 		expect(
 			computeKickDelayMs({ nowMs, firstPendingAtMs: nowMs, debounceSec: 0.5 }),
 		).toBe(500);
-	});
-});
-
-describe("hasSkillEntries", () => {
-	it("SKILL.md 等の実体があれば true を返す", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "pi-chat-runner-skills-"));
-		await mkdir(join(dir, "example-skill"), { recursive: true });
-		await writeFile(join(dir, "example-skill", "SKILL.md"), "# example\n");
-		expect(await hasSkillEntries(dir)).toBe(true);
-	});
-
-	it(".gitkeep のみのディレクトリは false を返す", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "pi-chat-runner-skills-"));
-		await writeFile(join(dir, ".gitkeep"), "");
-		expect(await hasSkillEntries(dir)).toBe(false);
-	});
-
-	it("空ディレクトリは false を返す", async () => {
-		const dir = await mkdtemp(join(tmpdir(), "pi-chat-runner-skills-"));
-		expect(await hasSkillEntries(dir)).toBe(false);
-	});
-
-	it("存在しないディレクトリは false を返す", async () => {
-		const dir = join(
-			await mkdtemp(join(tmpdir(), "pi-chat-runner-skills-")),
-			"does-not-exist",
-		);
-		expect(await hasSkillEntries(dir)).toBe(false);
 	});
 });
 

@@ -1,4 +1,4 @@
-// HttpEventSource — Slack Events API (HTTP push) 経由の EventSource
+// HttpIngress — Slack Events API (HTTP push) 経由の Ingress
 // (docs/design/architecture.md §1, §6)
 //
 // Events API では「3 秒 ACK」は「200 レスポンスを返す」ことそのもの。Cloud Run の
@@ -11,22 +11,22 @@ import { createServer, type Server } from "node:http";
 import { Hono } from "hono";
 import type { Logger } from "../../logger.js";
 import type { ChatEvent } from "../chat-event.js";
-import type { Ack, EventSource } from "../event-source.js";
+import type { Ack, Ingress } from "../ingress.js";
 import { SlackIngressAdapter } from "./adapter.js";
 
 /** リプレイ対策の許容ずれ (Slack 公式ドキュメント推奨値) */
 const TIMESTAMP_TOLERANCE_SEC = 300;
 
-export interface HttpEventSourceOptions {
+export interface HttpIngressOptions {
 	signingSecret: string;
 	botUserId: string;
 	port: number;
 	logger?: Logger;
 }
 
-/** Slack Events API 経由の EventSource。Cloud Run 本番用途 (architecture.md §1)。
+/** Slack Events API 経由の Ingress。Cloud Run 本番用途 (architecture.md §1)。
  * 署名検証 → url_verification / event_callback の分岐 → SlackIngressAdapter で正規化。 */
-export class HttpEventSource implements EventSource {
+export class HttpIngress implements Ingress {
 	private readonly app: Hono;
 	private readonly adapter: SlackIngressAdapter;
 	private readonly signingSecret: string;
@@ -34,7 +34,7 @@ export class HttpEventSource implements EventSource {
 	private readonly logger: Logger | undefined;
 	private server: Server | undefined;
 
-	constructor(opts: HttpEventSourceOptions) {
+	constructor(opts: HttpIngressOptions) {
 		this.signingSecret = opts.signingSecret;
 		this.port = opts.port;
 		this.logger = opts.logger;

@@ -222,10 +222,12 @@ export function ancestorDirs(dir: string): string[] {
 
 /**
  * Node Permission Model 用の allow パス一覧の組み立て (純粋関数、テスト対象)。
- * pi 本体 (npm global の node_modules) / `/app` (extension・skill 焼き込み) /
- * workdir / agent HOME への read を許可し、write は workdir と agent HOME
- * (+ 任意で /tmp) に限る。実際の allow 集合は docker 起動での実測 (このモジュールの
- * コメント、pi-tools-and-sandbox.md) に基づく最小構成。
+ * pi 本体 (npm global の node_modules) / workdir / agent HOME への read を
+ * 許可し、write は workdir と agent HOME (+ 任意で /tmp) に限る。extension
+ * (reply / permission-gate) の読み込みは `/app` 包括許可の廃止に伴い extraRead
+ * 経由で個別に許可する (呼び出し側の runner.ts が積む)。実際の allow 集合は
+ * docker 起動での実測 (このモジュールのコメント、pi-tools-and-sandbox.md) に
+ * 基づく最小構成。
  */
 export function buildPiPermissionOptions(options: {
 	/** pi 本体のエントリポイント JS の絶対パス */
@@ -233,8 +235,6 @@ export function buildPiPermissionOptions(options: {
 	/** pi 本体の node_modules ルート (既定は entrypoint の npm global レイアウトから
 	 * 推測できないため必須。例 /usr/local/lib/node_modules) */
 	nodeModulesDir: string;
-	/** `/app` 相当 (extension・skill 焼き込み先) の絶対パス */
-	appDir: string;
 	/** セッションの workdir (cwd)。read/write 両方を許可する */
 	workdir: string;
 	/** pi の HOME (常に agentHome)。~/.pi 等の読み書きに要る */
@@ -242,16 +242,17 @@ export function buildPiPermissionOptions(options: {
 	/** 追加で write を許可したいパス (例 "/tmp/*"）。既定なし */
 	extraWrite?: string[];
 	/** 追加で read を許可したいパス (例 GOOGLE_APPLICATION_CREDENTIALS のファイル
-	 * パス)。HOME を agentHome に固定するとローカルのユーザー ADC
-	 * ($HOME/.config/gcloud) は HOME 経由で見えなくなるため、明示指定されたファイルだけ
-	 * 個別に read を許可する用途。既定なし */
+	 * パス、または --extension に渡す extension ファイルのディレクトリ)。HOME を
+	 * agentHome に固定するとローカルのユーザー ADC ($HOME/.config/gcloud) は HOME
+	 * 経由で見えなくなるため、明示指定されたファイルだけ個別に read を許可する用途。
+	 * `appDir` (旧 /app 包括許可) は廃止したため、extension を読ませるには呼び出し側
+	 * (runner.ts) が extensionPaths の dirname をここへ積む必要がある。既定なし */
 	extraRead?: string[];
 }): PiPermissionOptions {
 	return {
 		entrypoint: options.entrypoint,
 		allowFsRead: [
 			`${options.nodeModulesDir}/*`,
-			`${options.appDir}/*`,
 			`${options.workdir}/*`,
 			`${options.home}/*`,
 			// workdir の全祖先 (workdir 自身は上の glob で足りるが重複しても無害) ×

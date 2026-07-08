@@ -19,39 +19,54 @@ spec:
           ports:
             - name: http1
               containerPort: 8080
+          # ここに並ぶ env は agent.yaml (examples/config/agent.yaml) が ${env.X} /
+          # ${env.X:-default} で参照する source。agent.yaml に直接値を書いてもよいが、
+          # デプロイ先ごとに変わる値 (backend の切り替え・UID 分離・GCP プロジェクト等)
+          # は env で渡す方が、同じ agent.yaml をローカル/本番で使い回せて自然
           env:
+            # agent.yaml の connector.slack.mode。Cloud Run 本番は events (HTTP push)
             - name: SLACK_MODE
               value: events
+            # agent.yaml の store.backend。Cloud Run 本番は永続化のため firestore
             - name: STORE_BACKEND
               value: firestore
+            # workdir のセッション境界退避先 (bridge が直接読む env。agent.yaml 経由ではない)
             - name: WORKDIR_ARCHIVE_DIR
               value: /data
+            # agent.yaml の agent.runtime.permissionMode を上書きする env 優先経路。
+            # "0" で無効化、それ以外の値で有効化 (既定はコード既定 ON なので通常は不要)
             - name: PI_PERMISSION_MODE
               value: "1"
+            # agent.yaml の agent.runtime.uid/gid を上書きする env 優先経路 (両方セット必須)
             - name: PI_AGENT_UID
               value: "1001"
             - name: PI_AGENT_GID
               value: "1001"
+            # pi/SDK (ADC) が読む env。Cloud Run 上で Metadata Server 検出を強制する
             - name: METADATA_SERVER_DETECTION
               value: assume-present
-            # REPLACE: bot の User ID (自己エコー除外・mention 判定に使う)
+            # REPLACE: bot の User ID (自己エコー除外・mention 判定に使う)。
+            # agent.yaml の connector.slack.botUserId (${env.SLACK_BOT_USER_ID}) の source
             - name: SLACK_BOT_USER_ID
               value: "U0000000000"
-            # REPLACE: 実 GCP プロジェクト ID (Firestore/ADC が使用)
+            # REPLACE: 実 GCP プロジェクト ID (Firestore/ADC が使用)。pi/SDK が直接読む env
             - name: GOOGLE_CLOUD_PROJECT
               value: PROJECT_ID
-            # 任意: pi の provider (モデルは channels.yaml の model で指定する)
+            # 任意: agent.yaml の pi.provider (${env.PI_PROVIDER}) を上書きする source
+            # (モデルは channels.yaml の model で指定する。ここでは指定しない)
             # - name: PI_PROVIDER
             #   value: google-vertex
             # 任意: CONFIG_DIR (既定 examples/config。base image に同梱済み)
             # - name: CONFIG_DIR
             #   value: examples/config
-            # REPLACE: Secret Manager 上のシークレット名
+            # REPLACE: Secret Manager 上のシークレット名。
+            # agent.yaml の connector.slack.botToken (${env.SLACK_BOT_TOKEN}) の source
             - name: SLACK_BOT_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: pi-chat-runner-slack-bot-token # REPLACE
                   key: latest
+            # agent.yaml の connector.slack.signingSecret (${env.SLACK_SIGNING_SECRET}) の source
             - name: SLACK_SIGNING_SECRET
               valueFrom:
                 secretKeyRef:

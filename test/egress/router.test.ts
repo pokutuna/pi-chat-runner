@@ -1,6 +1,6 @@
 import pino from "pino";
 import { describe, expect, it } from "vitest";
-import { type ChatPoster, ReplyRouter } from "../../src/reply/router.js";
+import { type ChatPoster, EgressRouter } from "../../src/egress/router.js";
 
 /** pino のログ 1 行 (JSON) を配列に集めるテスト用ロガー */
 function collectingLogger(): { logger: pino.Logger; lines: () => unknown[] } {
@@ -39,10 +39,10 @@ class FakePoster implements ChatPoster {
 	}
 }
 
-describe("ReplyRouter", () => {
+describe("EgressRouter", () => {
 	it("delivers to the registered destination", async () => {
 		const poster = new FakePoster();
-		const router = new ReplyRouter({ poster });
+		const router = new EgressRouter({ poster });
 		router.register("C01:1700.1", { channelId: "C01", threadTs: "1700.1" });
 
 		await router.deliver({ thread_key: "C01:1700.1", text: "hello" });
@@ -54,7 +54,7 @@ describe("ReplyRouter", () => {
 
 	it("applies the formatter hook before posting", async () => {
 		const poster = new FakePoster();
-		const router = new ReplyRouter({
+		const router = new EgressRouter({
 			poster,
 			formatter: (text) => `*${text}*`,
 		});
@@ -68,7 +68,7 @@ describe("ReplyRouter", () => {
 	it("drops unknown thread_key with a warning instead of throwing", async () => {
 		const poster = new FakePoster();
 		const { logger, lines } = collectingLogger();
-		const router = new ReplyRouter({ poster, logger });
+		const router = new EgressRouter({ poster, logger });
 
 		await router.deliver({ thread_key: "nope", text: "lost" });
 
@@ -82,7 +82,7 @@ describe("ReplyRouter", () => {
 
 	it("re-registering a thread_key overwrites the destination", async () => {
 		const poster = new FakePoster();
-		const router = new ReplyRouter({ poster });
+		const router = new EgressRouter({ poster });
 		router.register("k", { channelId: "C01", threadTs: "1" });
 		router.register("k", { channelId: "C01", threadTs: "2" });
 
@@ -93,7 +93,7 @@ describe("ReplyRouter", () => {
 
 	it("posts flat (no thread_ts) when the destination omits threadTs", async () => {
 		const poster = new FakePoster();
-		const router = new ReplyRouter({ poster });
+		const router = new EgressRouter({ poster });
 		router.register("k", { channelId: "C01" });
 
 		await router.deliver({ thread_key: "k", text: "flat reply" });

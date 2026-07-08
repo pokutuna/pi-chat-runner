@@ -37,10 +37,8 @@
 		"lint": "biome check .",
 		"format": "biome format --write ."
 	},
-	"peerDependencies": {
-		"@earendil-works/pi-coding-agent": "^0.79.9"
-	},
 	"dependencies": {
+		"@earendil-works/pi-coding-agent": "^0.79.9",
 		"@google-cloud/firestore": "^8.6.0",
 		"@google/genai": "^2.10.0",
 		"@slack/socket-mode": "^2.0.7",
@@ -53,7 +51,6 @@
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.5.2",
-		"@earendil-works/pi-coding-agent": "^0.79.9",
 		"@types/better-sqlite3": "^7.6.13",
 		"@types/node": "^26.1.0",
 		"pino-pretty": "^13.1.3",

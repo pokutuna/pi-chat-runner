@@ -1,4 +1,4 @@
-// ReplyRouter — thread_key → 投稿先の解決と postMessage
+// EgressRouter — thread_key → 投稿先の解決と postMessage
 //
 // エージェントの確定出力は reply(thread_key, text) ツール経由の 1 本のみで、
 // ホストが tool_execution_end を拾ってここへ流す (docs/design/architecture.md §6 フロー 5、
@@ -9,14 +9,14 @@ import type { Logger } from "../logger.js";
 import { rootLogger } from "../logger.js";
 
 /** reply ツールの引数 (extensions/reply.ts が details に詰めて返す形) */
-export interface ReplyPayload {
+export interface EgressPayload {
 	thread_key: string;
 	text: string;
 }
 
 /** 投稿先。Slack の会話座標は (channelId, threadTs) の 2 つだけ (architecture.md §0)。
  * threadTs は省略時はチャンネル直下に投稿する (reply.mode: flat) */
-export interface ReplyDestination {
+export interface EgressDestination {
 	channelId: string;
 	threadTs?: string;
 }
@@ -30,33 +30,33 @@ export interface ChatPoster {
 	): Promise<void>;
 }
 
-export type ReplyFormatter = (text: string) => string;
+export type EgressFormatter = (text: string) => string;
 
-export interface ReplyRouterOptions {
+export interface EgressRouterOptions {
 	poster: ChatPoster;
 	/** 投稿前にテキストを通すフック。省略時は identity */
-	formatter?: ReplyFormatter;
+	formatter?: EgressFormatter;
 	logger?: Logger;
 }
 
-export class ReplyRouter {
-	private readonly destinations = new Map<string, ReplyDestination>();
+export class EgressRouter {
+	private readonly destinations = new Map<string, EgressDestination>();
 	private readonly poster: ChatPoster;
-	private readonly formatter: ReplyFormatter;
+	private readonly formatter: EgressFormatter;
 	private readonly logger: Logger;
 
-	constructor(options: ReplyRouterOptions) {
+	constructor(options: EgressRouterOptions) {
 		this.poster = options.poster;
 		this.formatter = options.formatter ?? ((text) => text);
-		this.logger = options.logger ?? rootLogger.child({ component: "reply" });
+		this.logger = options.logger ?? rootLogger.child({ component: "egress" });
 	}
 
-	register(threadKey: string, destination: ReplyDestination): void {
+	register(threadKey: string, destination: EgressDestination): void {
 		this.destinations.set(threadKey, destination);
 	}
 
 	/** 未知の thread_key は warn して捨てる (エージェントの引数間違いでホストを落とさない) */
-	async deliver(payload: ReplyPayload): Promise<void> {
+	async deliver(payload: EgressPayload): Promise<void> {
 		const destination = this.destinations.get(payload.thread_key);
 		if (destination === undefined) {
 			this.logger.warn(

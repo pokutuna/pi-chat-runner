@@ -1,4 +1,4 @@
-// HttpEventSource のテスト。実ポートを listen せず honoApp.request で直接叩く
+// HttpIngress のテスト。実ポートを listen せず honoApp.request で直接叩く
 // (Firestore エミュレータのポート 8080 との衝突を避ける。build-plan.md Step 5)。
 import { createHmac } from "node:crypto";
 import { describe, expect, it } from "vitest";
@@ -6,8 +6,8 @@ import type {
 	ChatEvent,
 	InboundMessage,
 } from "../../../src/ingress/chat-event.js";
-import type { Ack } from "../../../src/ingress/event-source.js";
-import { HttpEventSource } from "../../../src/ingress/slack/http-event-source.js";
+import type { Ack } from "../../../src/ingress/ingress.js";
+import { HttpIngress } from "../../../src/ingress/slack/http-ingress.js";
 
 const SIGNING_SECRET = "test-signing-secret";
 const BOT_USER_ID = "UBOT123";
@@ -31,24 +31,24 @@ function nowSec(): number {
 	return Math.floor(Date.now() / 1000);
 }
 
-function build(): HttpEventSource {
-	return new HttpEventSource({
+function build(): HttpIngress {
+	return new HttpIngress({
 		signingSecret: SIGNING_SECRET,
 		botUserId: BOT_USER_ID,
 		port: 0,
 	});
 }
 
-/** port: 0 で HttpEventSource を start() し、honoApp.request で直接叩く
+/** port: 0 で HttpIngress を start() し、honoApp.request で直接叩く
  * (実ポートの listen 自体は行われるが port:0 なので他のテスト・emulator と衝突しない)。 */
 async function startWithHandler(
-	source: HttpEventSource,
+	source: HttpIngress,
 	onEvent: (e: ChatEvent, ack: Ack) => Promise<void>,
 ): Promise<void> {
 	await source.start(onEvent);
 }
 
-describe("HttpEventSource", () => {
+describe("HttpIngress", () => {
 	it("verifies signature and normalizes event_callback into ChatEvent", async () => {
 		const source = build();
 		const received: InboundMessage[] = [];

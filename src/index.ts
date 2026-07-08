@@ -7,10 +7,9 @@ export { type BridgeOptions, startBridge } from "./bridge.js";
 export {
 	type AgentConfig,
 	AgentConfigSchema,
-	type CollectedPassthroughEnv,
-	collectPassthroughEnv,
 	loadAgentConfig,
 	type ResolvedAgentConfig,
+	type ResolvedAgentRuntime,
 	resolveAgentConfig,
 } from "./config/agent-config.js";
 // 自前 ConfigSource を書く利用者向け: 戻り値の型・検証スキーマ・予約名
@@ -35,6 +34,14 @@ export {
 	type Provenance,
 	resolveChannelConfig,
 } from "./config/config-source.js";
+export { type ReactionClient, Reactions } from "./egress/reactions.js";
+export {
+	type ChatPoster,
+	type EgressDestination,
+	type EgressFormatter,
+	EgressRouter,
+	type EgressRouterOptions,
+} from "./egress/router.js";
 export type {
 	Attachment,
 	ChatEvent,
@@ -45,8 +52,8 @@ export type {
 	Sender,
 	SystemEvent,
 } from "./ingress/chat-event.js";
-export type { Ack, EventSource } from "./ingress/event-source.js";
-// 自前 EventSource を書く利用者向け: raw Slack event → ChatEvent の正規化 codec
+export type { Ack, Ingress } from "./ingress/ingress.js";
+// 自前 Ingress を書く利用者向け: raw Slack event → ChatEvent の正規化 codec
 // (mention 展開 / isDm 判定 / dedupeKey) を再実装せず使い回せるようにする
 export {
 	type SlackEventEnvelope,
@@ -56,22 +63,14 @@ export {
 	type SlackReactionAddedEvent,
 } from "./ingress/slack/adapter.js";
 export {
-	HttpEventSource,
-	type HttpEventSourceOptions,
-} from "./ingress/slack/http-event-source.js";
-export { SocketEventSource } from "./ingress/slack/socket-event-source.js";
-// 自前 EventSource を書く利用者向け: UserID → 表示名解決 (renderEvent / mention 展開の enrich)
+	HttpIngress,
+	type HttpIngressOptions,
+} from "./ingress/slack/http-ingress.js";
+export { SocketIngress } from "./ingress/slack/socket-ingress.js";
+// 自前 Ingress を書く利用者向け: UserID → 表示名解決 (renderEvent / mention 展開の enrich)
 export { SlackUserResolver } from "./ingress/slack/user-resolver.js";
 export { enrichEvent, type UserResolver } from "./ingress/user-resolver.js";
 export type { Logger } from "./logger.js";
-export { type ReactionClient, Reactions } from "./reply/reactions.js";
-export {
-	type ChatPoster,
-	type ReplyDestination,
-	type ReplyFormatter,
-	ReplyRouter,
-	type ReplyRouterOptions,
-} from "./reply/router.js";
 export {
 	type PiPermissionConfig,
 	SessionRunner,
