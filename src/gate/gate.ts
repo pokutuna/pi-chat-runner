@@ -37,8 +37,7 @@ export interface Gate {
 }
 
 /** ChannelDoc.trigger.when の葉 (YAML 由来)。kind ごとに要るパラメータだけ持つ。
- * classifier は criteria 必須 + model 任意 (per-gate モデル上書き)。cooldown は初期
- * スコープ外のため registry 未登録 (createGate はエラーを投げる)。 */
+ * classifier は criteria 必須 + model 任意 (per-gate モデル上書き)。 */
 export type GateSpec =
 	| { kind: "mention" }
 	| { kind: "keyword"; pattern: string }
@@ -86,10 +85,9 @@ export function defaultWhen(isDm: boolean): WhenNode[] {
 }
 
 /** GateConfig (WhenNode の葉) → GateSpec への narrowing。criteria/pattern は
- * schema (channel-doc.ts) で kind ごとに必須が担保済みなので、欠落は「schema を
- * 通過した後にここまで来たのに値が無い」= バグであり fail-loud にする
- * (旧 toGateSpecs の warn-skip は combinator/gates 時代の緩い挙動。木構造では
- * 欠落を黙って無視すると起動判定が静かに変わってしまうため throw を選ぶ)。 */
+ * schema (channel-doc.ts) で kind ごとに必須が担保済みなので、ここでの欠落は
+ * schema 通過後のバグとして fail-loud にする — 黙って無視すると起動判定が
+ * 静かに変わってしまうため。 */
 function gateConfigToSpec(gate: GateConfig): GateSpec {
 	switch (gate.kind) {
 		case "mention":
@@ -145,7 +143,7 @@ function buildWhenNode(node: WhenNode, deps: GateDeps): EvaluableNode {
 
 /** EvaluableNode[] (トップレベル = OR、config.md §7) を評価する。短絡評価する。
  * reason には発火/非発火を決めた葉の gate 名と reason を、木構造は OR[...]/AND[...]
- * の簡易表記で含める (旧 evaluateTrigger の reason スタイルを踏襲)。 */
+ * の簡易表記で含める。 */
 export async function evaluateWhen(
 	nodes: EvaluableNode[],
 	ctx: GateContext,
@@ -161,8 +159,7 @@ async function evaluateNode(
 		return node.gate.decide(ctx);
 	}
 	if ("and" in node) {
-		// 空配列は単位元として true (config.md §7: 配列 = OR が既定で、and の空配列は
-		// 通常書かれないが、畳み込みの単位元として all と同じ扱いにする)
+		// 空の AND は単位元として true (空の OR は false)
 		if (node.and.length === 0) {
 			return { trigger: true, reason: "AND[] (empty, vacuously true)" };
 		}

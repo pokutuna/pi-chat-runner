@@ -2,9 +2,8 @@
 //
 // criteria (自然言語) と対象メッセージを ClassifierClient に渡し、起動可否を判定する。
 // message 以外の kind は対象外として trigger=false (keyword/mention と同じ流儀)。
-// 判定結果はログに残す (plan 要件 3)。LLM 呼び出しが失敗したら fail-closed で
-// trigger=false に倒す (通常 combinator=any の一 gate。fail-open だと LLM 障害時に
-// セッションが暴発するため。plan「Fail-closed の根拠」参照)。
+// LLM 呼び出しが失敗したら fail-closed で trigger=false に倒す — fail-open だと LLM
+// 障害時にセッションが暴発するため。
 
 import type { ClassifierClient } from "../../classifier/client.js";
 import type { Logger } from "../../logger.js";
@@ -29,14 +28,12 @@ export class ClassifierGate implements Gate {
 				text: ctx.event.text,
 				...(this.opts.model !== undefined ? { model: this.opts.model } : {}),
 			});
-			// 要件 3: 判定 (trigger/reason/model) をログに残す
 			this.opts.logger?.info(
 				{ gate: this.name, trigger: result, reason, model: this.opts.model },
 				"classifier decision",
 			);
 			return { trigger: result, reason: `${this.name}: ${reason}` };
 		} catch (err) {
-			// FAIL-CLOSED: エラー時は起動しない
 			this.opts.logger?.warn(
 				{ gate: this.name, err },
 				"classifier call failed; failing closed",

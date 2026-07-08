@@ -56,14 +56,12 @@ describe("formatEffectiveConfig", () => {
 		const out = formatEffectiveConfig(file, "dm", { json: false });
 
 		expect(out).toContain("channel: dm (dm)");
-		// This is the key assertion for the recent DM provenance fix:
-		// fields written on the dm entry are attributed to "dm", not "default"/"channel".
+		// dm エントリ由来のフィールドは provenance "dm" になる (default/channel ではない)
 		expect(out).toMatch(/systemPrompt:.*← dm/);
 		expect(out).not.toMatch(/systemPrompt:.*← default/);
 		expect(out).not.toMatch(/systemPrompt:.*← channel/);
 
-		// DM defaults: session.mode=channel, reply.mode=flat, both code default
-		// (doc has no session/reply, and default is not inherited for DM).
+		// DM 既定は session.mode=channel / reply.mode=flat (doc に無く、default も継承しない)
 		expect(out).toMatch(/session\.mode:\s+channel\s+← code default/);
 		expect(out).toMatch(/reply\.mode:\s+flat\s+← code default/);
 	});

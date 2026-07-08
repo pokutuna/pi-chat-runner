@@ -6,7 +6,7 @@
 //
 // 実装は Vertex AI + ADC (pi の google-vertex と同じ認証)。project/location は
 // bridge から注入する。モデルは既定 (defaultModel) を per-call で上書きできる
-// (per-gate model 切替のため。plan「モデル切り替えの経路」参照)。
+// (per-gate の model 切替のため)。
 
 import { GoogleGenAI, type Schema, Type } from "@google/genai";
 
@@ -24,7 +24,7 @@ export interface ClassifierClient {
 	}): Promise<ClassificationResult>;
 }
 
-/** 構造化出力スキーマ (plan 要件 2: 当面固定)。responseSchema は Google の Schema 型。 */
+/** 構造化出力スキーマ。responseSchema は Google の Schema 型。 */
 const RESPONSE_SCHEMA: Schema = {
 	type: Type.OBJECT,
 	properties: {
@@ -55,7 +55,7 @@ function buildPrompt(criteria: string, text: string): string {
 	].join("\n");
 }
 
-/** 型ガード: SDK の JSON.parse 結果が期待形かを確認する (要件 2 の shape を実行時保証)。 */
+/** 型ガード: SDK の JSON.parse 結果が期待形かを実行時に確認する。 */
 function isClassificationResult(value: unknown): value is ClassificationResult {
 	if (typeof value !== "object" || value === null) return false;
 	const obj = value as Record<string, unknown>;
