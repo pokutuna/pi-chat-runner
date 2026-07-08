@@ -71,6 +71,28 @@ describe("toMrkdwn", () => {
 		expect(toMrkdwn("`a < b`")).toBe("`a < b`");
 	});
 
+	it("preserves a user mention entity instead of escaping it", () => {
+		expect(toMrkdwn("こんにちは <@U0BFC2XUMDX> さん")).toBe(
+			"こんにちは <@U0BFC2XUMDX> さん",
+		);
+	});
+
+	it("preserves channel and special mention entities", () => {
+		expect(toMrkdwn("<#C012AB3CD|general> と <!here> と <!subteam^S123>")).toBe(
+			"<#C012AB3CD|general> と <!here> と <!subteam^S123>",
+		);
+	});
+
+	it("still escapes a bare < that is not a Slack entity", () => {
+		expect(toMrkdwn("a < b and <notanentity>")).toBe(
+			"a &lt; b and &lt;notanentity&gt;",
+		);
+	});
+
+	it("treats a mention-like token inside code as literal, not an entity", () => {
+		expect(toMrkdwn("`<@U0BFC2XUMDX>`")).toBe("`<@U0BFC2XUMDX>`");
+	});
+
 	it("converts bold outside a code block while preserving the code block", () => {
 		const input = "**bold** and `**code**`";
 		expect(toMrkdwn(input)).toBe("*bold* and `**code**`");

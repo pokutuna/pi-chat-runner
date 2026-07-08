@@ -7,13 +7,26 @@
 const FENCE_RE = /```[\s\S]*?```/g;
 const INLINE_CODE_RE = /`[^`\n]+`/g;
 
+// pi が出力する Slack エンティティ (mention 等) はそのまま Slack に届ける必要があり、
+// escapeSlackChars の `<`→`&lt;` で潰すと mention 化されずプレーン文字列で表示される。
+// システムプロンプトが pi に <@USER_ID> 形式での mention を指示している (egress は
+// その出力を尊重する)。対象は <@U...> (user)、<#C...> (channel、`|label` 任意)、
+// <!here>/<!channel>/<!everyone>/<!subteam^...> (special)。URL リンクは
+// convertInline が markdown から生成するのでここでは拾わない。
+const SLACK_ENTITY_RE =
+	/<(?:@[A-Z0-9]+|#[A-Z0-9]+(?:\|[^>]*)?|![a-zA-Z]+(?:\^[A-Z0-9]+)?(?:\|[^>]*)?)>/g;
+
 // 制御文字 (\0) は通常テキストに出現しないため、これで囲んで衝突しないプレースホルダを作る。
 // リテラル正規表現に制御文字を書くと lint に引っかかるため String.fromCharCode 経由で組み立てる
 const NUL = String.fromCharCode(0);
 const PLACEHOLDER_RE = new RegExp(`${NUL}(\\d+)${NUL}`, "g");
 
-/** code span/block を復元可能なプレースホルダに退避する */
-function stashCode(text: string): {
+/** code span/block と Slack エンティティ (mention 等) を復元可能なプレースホルダに
+ * 退避する。どちらも中身を変換・エスケープしてはいけない (code は原文保持、
+ * エンティティは Slack 構文をそのまま届ける) ため同じ stash 機構に載せる。
+ * code を先に退避するので、code 内に現れる <@U...> 風の文字列はエンティティ扱い
+ * されずリテラルのまま保たれる。 */
+function stashProtected(text: string): {
 	stashed: string;
 	restore: (s: string) => string;
 } {
@@ -24,7 +37,10 @@ function stashCode(text: string): {
 		return token;
 	};
 
-	const stashed = text.replace(FENCE_RE, stash).replace(INLINE_CODE_RE, stash);
+	const stashed = text
+		.replace(FENCE_RE, stash)
+		.replace(INLINE_CODE_RE, stash)
+		.replace(SLACK_ENTITY_RE, stash);
 
 	const restore = (s: string) =>
 		s.replace(PLACEHOLDER_RE, (_, i) => blocks[Number(i)] ?? "");
@@ -74,7 +90,7 @@ function convertInline(text: string): string {
 }
 
 export function toMrkdwn(text: string): string {
-	const { stashed, restore } = stashCode(text);
+	const { stashed, restore } = stashProtected(text);
 	const escaped = escapeSlackChars(stashed);
 	const lined = convertLines(escaped);
 	const inlined = convertInline(lined);
