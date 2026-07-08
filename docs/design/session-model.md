@@ -212,7 +212,7 @@ onSnapshot を要さない理由: **steer の意味論は「次の LLM 呼び出
 まで消えない。
 - 実行中の Runner → 次のイベント受信時の即時 drain (steer)、または agent_end / linger の drain で拾う
 - Runner が拾う前に死んだ → lease 失効 → 次の起動時の inbox drain で拾う
-- そもそも Runner がいない → イベント受信 (EventSource) が実行を駆動し、起動直後の drain で拾う
+- そもそも Runner がいない → イベント受信 (Ingress) が実行を駆動し、起動直後の drain で拾う
 どのパスでも realtime 通知なしで届く。これは「プロセスは使い捨て、状態はストア、
 どのインスタンスでも復元できる」という本設計の原則 (§1) にむしろ忠実。
 

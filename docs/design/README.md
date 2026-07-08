@@ -33,7 +33,7 @@ Slack のチャンネル/スレッドから pi コーディングエージェン
 
 - マルチワークスペース / マルチテナント対応はしない (単一組織前提)
 - 悪意あるプロンプトインジェクションへの完全サンドボックスは初期版では提供しない ([Security](#security) 参照。事故防止と影響半径の最小化にとどめる)
-- Slack 以外のチャット面の初期実装はしない (EventSource 抽象で将来の口だけ確保する)
+- Slack 以外のチャット面の初期実装はしない (Ingress 抽象で将来の口だけ確保する)
 - MCP 接続はしない (pi にネイティブサポートが無い)
 - リアルタイムのストリーミング表示はしない (reply 単位の投稿にとどめる)
 
@@ -55,13 +55,13 @@ flowchart LR
     subgraph app ["app — Cloud Run 単一サービス"]
         direction LR
         subgraph eventphase ["event フェーズ (きっかけ係)"]
-            T[Trigger<br/>EventSource]
+            T[Trigger<br/>Ingress]
             G[Gate 合成<br/>起動判定]
         end
         subgraph sessionphase ["session フェーズ (処理の担い手)"]
             R[Runner<br/>lease + drain]
             P[pi 子プロセス<br/>RPC]
-            RR[Reply Router<br/>thread_key 解決]
+            RR[Egress Router<br/>thread_key 解決]
         end
     end
 
@@ -93,8 +93,8 @@ flowchart LR
 |---|---|
 | `reply(thread_key, text)` tool | エージェントの唯一のユーザー向け出力。1 ターン中に複数回呼べる。宛先の実体 (channel / ts) はホストが握り、pi は thread_key を言うだけ ([chat-model.md](chat-model.md)) |
 | `channels/*.yaml` | チャンネルの振る舞い定義 (プロンプト・Gate・model)。Gate は登録済み type から選ぶ registry 選択式 ([config.md](config.md)) |
-| CLI | `apply` (YAML → Firestore への反映) / `status` (sessions 一覧・transcript dump) / `init` (拡張イメージ・config の scaffold 生成) |
-| 拡張 Dockerfile | `FROM <base-image>` に 1 段重ねるだけの拡張。`/app/skills/` (skill 配置) 等の固定パス規約に従う ([session-runtime.md](session-runtime.md)) |
+| CLI | `status` (sessions 一覧・transcript dump) / `init` (拡張イメージ・config の scaffold 生成) |
+| 拡張 Dockerfile | `FROM <base-image>` に 1 段重ねるだけの拡張。`$AGENT_HOME/.pi/agent/skills/` (skill 配置) 等の pi 既定パス規約に従う ([session-runtime.md](session-runtime.md)) |
 
 `channels/*.yaml` の例 (mention と分類器を or (any) で束ねる Gate 設定。classifier は初期版スコープ外の type だが、YAML の形はこのまま変わらない):
 
@@ -172,7 +172,7 @@ Mitigations:
 | Step 3 | 一気通貫のローカル動作 (インメモリ)。Gate 合成・YAML 直読み・reply 配線が揃い、**ローカルで動く #ask-ai が完成する** (中間ゴール) |
 | Step 4 | 永続化と排他 (Firestore + GCS)。lease・dedupe・workdir の restore/flush をエミュレータ上で検証する |
 | Step 5 | Cloud Run デプロイ (Events API)。署名検証・service.yaml・GCS FUSE マウントで本番相当に稼働する |
-| Step 6 | 仕上げ。UID 分離・turn timeout・DM 既定 config・CLI (`apply`/`status`/`init`)・base image 公開まで揃え、初期版ゴールを達成する |
+| Step 6 | 仕上げ。UID 分離・turn timeout・DM 既定 config・CLI (`status`/`init`)・base image 公開まで揃え、初期版ゴールを達成する |
 
 ## Related Documents
 
@@ -213,4 +213,4 @@ Mitigations:
 
 #### イメージ manifest による能力宣言
 - Pros: チャンネルごとに使える skill/CLI の能力差を作れる
-- Cons: 初期版には過剰。イメージ内の固定パス規約 (`/app/skills/` 等) に降格し、能力差が必要になった段階で manifest 方式を検討する ([config.md](config.md))
+- Cons: 初期版には過剰。イメージ内の pi 既定パス規約 (`$AGENT_HOME/.pi/agent/skills/` 等) に降格し、能力差が必要になった段階で manifest 方式を検討する ([config.md](config.md))
