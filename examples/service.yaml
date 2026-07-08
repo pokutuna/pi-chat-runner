@@ -40,9 +40,7 @@ spec:
             # REPLACE: 実 GCP プロジェクト ID (Firestore/ADC が使用)
             - name: GOOGLE_CLOUD_PROJECT
               value: PROJECT_ID
-            # 任意: ChannelDoc.model 未指定時の既定モデル / provider
-            # - name: PI_MODEL
-            #   value: gemini-3-pro
+            # 任意: pi の provider (モデルは channels.yaml の model で指定する)
             # - name: PI_PROVIDER
             #   value: google-vertex
             # 任意: CONFIG_DIR (既定 examples/config。base image に同梱済み)

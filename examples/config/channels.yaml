@@ -9,6 +9,10 @@ channels:
     # ここは振る舞い定義のみ。
     # 注意: passthrough を書くと bot がいる全チャンネルで全発言に反応するため、
     # フォールバックは mention 起動に留めるのが安全。
+    # model は必須級: pi 本体はモデル未指定だと起動を拒否するため、土台の default に
+    # 書いておく (channel が model を書かなければこれを継承する)。classifier のモデルは
+    # 別で、trigger.when の classifier ノードの model に書く (config.md §2.3)。
+    model: gemini-3.5-flash
     systemPrompt: ./prompts/ask-ai.md
     trigger:
       when:
@@ -22,7 +26,7 @@ channels:
       when:
         - kind: mention
 
-  - channel: "C0BE0UKQE3G"
+  - channel: "C0000000003" # 自分のチャンネル ID に置き換える (他の example と重複させない)
     # 旧 channels/cooking.yaml 相当。classifier Gate (session-model.md §5 Layer 2) の
     # 動作確認用。mention なしで全発言を classifier に入力し、「料理の話題」と判定
     # された発言だけで起動する (単一 classifier の OR = 配列 1 要素。passthrough を

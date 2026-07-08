@@ -5,3 +5,6 @@ dist/
 !.env.example
 *.log
 .DS_Store
+
+# ローカル動作確認用 (実チャンネル ID を含む設定など)
+develop/config/

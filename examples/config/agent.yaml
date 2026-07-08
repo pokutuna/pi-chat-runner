@@ -12,10 +12,12 @@
 # gemini-3.1-flash-lite。ただし pi 本体は実作業向けに高性能なモデルを明示するのが
 # 通例)。service 単位のモデル既定という中間層は持たない (config.md §2.3)。
 
-# pi:
-#   # pi の --provider。省略時はコード既定 (pi 本体の既定 provider)
-#   provider: google-vertex
-#
+pi:
+  # pi の --provider。Vertex AI (ADC 認証) で動かす。GOOGLE_CLOUD_PROJECT /
+  # GOOGLE_CLOUD_LOCATION は env で渡す (service.yaml / .env)。省略すると pi 本体の
+  # 既定 provider に従う。
+  provider: google-vertex
+
 #   # 1 ターンの上限 (ms)。超過で pi を kill する (docs/design/session-runtime.md §6)。
 #   # 省略時は SessionRunner の既定 (600000 = 10 分)
 #   turnTimeoutMs: 600000
