@@ -15,6 +15,7 @@ import {
 	GeminiClassifierClient,
 } from "./classifier/client.js";
 import type { ConfigSource } from "./config/config-source.js";
+import { toMrkdwn } from "./egress/mrkdwn.js";
 import { Reactions } from "./egress/reactions.js";
 import type { ChatPoster } from "./egress/router.js";
 import { EgressRouter } from "./egress/router.js";
@@ -115,7 +116,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 	const runner = new SessionRunner({
 		configSource,
 		store,
-		router: new EgressRouter({ poster }),
+		router: new EgressRouter({ poster, formatter: toMrkdwn }),
 		reactions,
 		// tsx 実行時は <repo>/src/../extensions、build 後は <repo>/dist/../extensions を指す。
 		// pi が --extension で TS ソースを直接ロードするためビルド対象外 (build-plan.md)。
