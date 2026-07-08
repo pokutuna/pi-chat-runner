@@ -36,7 +36,6 @@ import {
 	type SessionPolicy,
 	SessionRunner,
 	sessionKeyOf,
-	toGateSpecs,
 } from "../../src/session/runner.js";
 import { InMemoryStateStore } from "../../src/store/state/backends/memory.js";
 import { inboxItemId } from "../../src/store/state/inbox-item.js";
@@ -373,8 +372,7 @@ describe("SessionRunner (fake-pi integration)", () => {
 		const h = await harness({
 			C01: {
 				trigger: {
-					combinator: "any",
-					gates: [{ kind: "keyword", pattern: "[Hh]elp" }],
+					when: [{ kind: "keyword", pattern: "[Hh]elp" }],
 				},
 			},
 		});
@@ -408,7 +406,7 @@ describe("SessionRunner (fake-pi integration)", () => {
 	it("reserved 'dm' ChannelDoc overrides the DM default (mention-only trigger)", async () => {
 		const h = await harness({
 			dm: {
-				trigger: { combinator: "any", gates: [{ kind: "mention" }] },
+				trigger: { when: [{ kind: "mention" }] },
 			},
 		});
 		const trigger = message({
@@ -1181,8 +1179,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
 		const h = await harness({
 			C01: {
 				trigger: {
-					combinator: "any",
-					gates: [{ kind: "passthrough" }],
+					when: [{ kind: "passthrough" }],
 					debounceSec: 0.2,
 				},
 			},
@@ -1223,8 +1220,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
 		const h = await harness({
 			C01: {
 				trigger: {
-					combinator: "any",
-					gates: [{ kind: "passthrough" }],
+					when: [{ kind: "passthrough" }],
 					debounceSec: 5,
 				},
 			},
@@ -1254,8 +1250,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
 		const h = await harness({
 			C01: {
 				trigger: {
-					combinator: "any",
-					gates: [{ kind: "mention" }],
+					when: [{ kind: "mention" }],
 					cooldownSec: 30,
 				},
 			},
@@ -1478,50 +1473,5 @@ describe("inboxItemId", () => {
 
 	it("falls back to message ts when metadata has no eventId", () => {
 		expect(inboxItemId(message({ metadata: {} }))).toBe("1700000000.000100");
-	});
-});
-
-describe("toGateSpecs", () => {
-	it("narrows supported kinds and keeps parameters", () => {
-		expect(
-			toGateSpecs(
-				[
-					{ kind: "mention" },
-					{ kind: "keyword", pattern: "foo" },
-					{ kind: "passthrough" },
-					{ kind: "classifier", criteria: "is it a question?" },
-					{ kind: "classifier", criteria: "urgent?", model: "gemini-x" },
-				],
-				() => {},
-			),
-		).toEqual([
-			{ kind: "mention" },
-			{ kind: "keyword", pattern: "foo" },
-			{ kind: "passthrough" },
-			{ kind: "classifier", criteria: "is it a question?" },
-			{ kind: "classifier", criteria: "urgent?", model: "gemini-x" },
-		]);
-	});
-
-	it("skips unsupported kinds with a warning instead of throwing", () => {
-		const warnings: string[] = [];
-		const specs = toGateSpecs(
-			[{ kind: "cooldown" }, { kind: "mention" }],
-			(message) => warnings.push(message),
-		);
-		expect(specs).toEqual([{ kind: "mention" }]);
-		expect(warnings).toHaveLength(1);
-		expect(warnings[0]).toContain("cooldown");
-	});
-
-	it("skips a classifier gate missing criteria with a warning", () => {
-		const warnings: string[] = [];
-		const specs = toGateSpecs(
-			[{ kind: "classifier" }, { kind: "mention" }],
-			(message) => warnings.push(message),
-		);
-		expect(specs).toEqual([{ kind: "mention" }]);
-		expect(warnings).toHaveLength(1);
-		expect(warnings[0]).toContain("classifier");
 	});
 });

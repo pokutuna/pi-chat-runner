@@ -1,0 +1,4 @@
+channels:
+  - channel: "C1"
+    trigger: {
+      when: [

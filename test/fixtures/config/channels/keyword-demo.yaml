@@ -1,7 +1,0 @@
-channel: "#keyword-demo"
-trigger:
-  combinator: any
-  gates:
-    - kind: keyword
-      pattern: "(?i)(help|error)"
-    - kind: mention

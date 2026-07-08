@@ -14,7 +14,6 @@ describe("AgentConfigSchema", () => {
 		const result = AgentConfigSchema.safeParse({
 			pi: {
 				provider: "google-vertex",
-				model: "gemini-3.5-flash",
 				turnTimeoutMs: 600000,
 				envPassthrough: ["GH_TOKEN"],
 			},
@@ -48,16 +47,9 @@ describe("AgentConfigSchema", () => {
 		).toBe(false);
 	});
 
-	it("accepts a classifier block with a model", () => {
+	it("rejects a model field under pi (removed)", () => {
 		expect(
-			AgentConfigSchema.safeParse({ classifier: { model: "gemini-x" } })
-				.success,
-		).toBe(true);
-	});
-
-	it("rejects unknown keys under classifier", () => {
-		expect(
-			AgentConfigSchema.safeParse({ classifier: { unknown: true } }).success,
+			AgentConfigSchema.safeParse({ pi: { model: "gemini-x" } }).success,
 		).toBe(false);
 	});
 });
@@ -85,10 +77,10 @@ describe("loadAgentConfig", () => {
 	it("parses a valid agent.yaml", async () => {
 		await writeFile(
 			join(dir, "agent.yaml"),
-			"pi:\n  provider: google-vertex\n  model: gemini-3.5-flash\n",
+			"pi:\n  provider: google-vertex\n",
 		);
 		expect(await loadAgentConfig(dir)).toEqual({
-			pi: { provider: "google-vertex", model: "gemini-3.5-flash" },
+			pi: { provider: "google-vertex" },
 		});
 	});
 
@@ -104,28 +96,25 @@ describe("loadAgentConfig", () => {
 });
 
 describe("resolveAgentConfig", () => {
-	it("prefers env over file for provider/model", () => {
+	it("prefers env over file for provider", () => {
 		const resolved = resolveAgentConfig(
-			{ pi: { provider: "file-provider", model: "file-model" } },
-			{ PI_PROVIDER: "env-provider", PI_MODEL: "env-model" },
+			{ pi: { provider: "file-provider" } },
+			{ PI_PROVIDER: "env-provider" },
 		);
 		expect(resolved.provider).toBe("env-provider");
-		expect(resolved.model).toBe("env-model");
 	});
 
 	it("falls back to file values when env is unset", () => {
 		const resolved = resolveAgentConfig(
-			{ pi: { provider: "file-provider", model: "file-model" } },
+			{ pi: { provider: "file-provider" } },
 			{},
 		);
 		expect(resolved.provider).toBe("file-provider");
-		expect(resolved.model).toBe("file-model");
 	});
 
-	it("leaves provider/model/turnTimeoutMs undefined when neither env nor file set them", () => {
+	it("leaves provider/turnTimeoutMs undefined when neither env nor file set them", () => {
 		const resolved = resolveAgentConfig({}, {});
 		expect(resolved.provider).toBeUndefined();
-		expect(resolved.model).toBeUndefined();
 		expect(resolved.turnTimeoutMs).toBeUndefined();
 		expect(resolved.envPassthrough).toEqual([]);
 	});
@@ -181,19 +170,6 @@ describe("resolveAgentConfig", () => {
 		expect(() =>
 			resolveAgentConfig({}, { PI_ENV_PASSTHROUGH: "BRIDGE_SECRET,GH_TOKEN" }),
 		).toThrow(/BRIDGE_SECRET/);
-	});
-
-	it("resolves classifier.model from the file (no env path)", () => {
-		const resolved = resolveAgentConfig(
-			{ classifier: { model: "gemini-x" } },
-			{ CLASSIFIER_MODEL: "env-ignored" },
-		);
-		expect(resolved.classifierModel).toBe("gemini-x");
-	});
-
-	it("leaves classifierModel undefined when the classifier block is absent", () => {
-		const resolved = resolveAgentConfig({}, {});
-		expect(resolved.classifierModel).toBeUndefined();
 	});
 });
 

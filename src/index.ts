@@ -16,17 +16,24 @@ export {
 // 自前 ConfigSource を書く利用者向け: 戻り値の型・検証スキーマ・予約名
 export {
 	type ChannelDoc,
-	type ChannelDocFile,
-	ChannelDocFileSchema,
 	ChannelDocSchema,
+	type ChannelEntry,
+	ChannelEntrySchema,
+	type ChannelsFile,
+	ChannelsFileSchema,
 	type GateConfig,
 	type Trigger,
+	type WhenNode,
 } from "./config/channel-doc.js";
 export {
 	type ConfigSource,
 	DEFAULT_CHANNEL,
 	DM_CHANNEL,
+	type FieldSource,
 	FileConfigSource,
+	mergeChannelDoc,
+	type Provenance,
+	resolveChannelConfig,
 } from "./config/config-source.js";
 export type {
 	Attachment,

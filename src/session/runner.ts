@@ -23,16 +23,14 @@ import {
 import { hostname } from "node:os";
 import { join } from "node:path";
 import type { ClassifierClient } from "../classifier/client.js";
-import type { ChannelDoc, GateConfig } from "../config/channel-doc.js";
+import type { ChannelDoc } from "../config/channel-doc.js";
 import { type ConfigSource, DM_CHANNEL } from "../config/config-source.js";
 import {
-	createGate,
-	defaultGates,
-	evaluateTrigger,
-	type Gate,
-	type GateCombinator,
+	buildWhen,
+	defaultWhen,
+	type EvaluableNode,
+	evaluateWhen,
 	type GateDeps,
-	type GateSpec,
 } from "../gate/gate.js";
 import type { InboundMessage } from "../ingress/chat-event.js";
 import type { Logger } from "../logger.js";
@@ -119,8 +117,6 @@ export interface SessionRunnerOptions {
 	workdirRoot?: string;
 	/** pi バイナリ。省略時は PiProcess の既定 (env PI_BIN → "pi") */
 	piBinary?: string;
-	/** ChannelDoc.model が無いときのモデル (env PI_MODEL 相当) */
-	model?: string;
 	/** `--provider` (env PI_PROVIDER 相当) */
 	provider?: string;
 	/** allowlist (PATH/HOME) に追加で pi 子プロセスへ渡す env (session-runtime.md §2) */
@@ -266,51 +262,6 @@ function renderItems(items: InboxItem[]): string {
 		.join("\n\n");
 }
 
-/**
- * ChannelDoc.trigger.gates (kind に cooldown も含む広い型) を GateSpec へ narrowing する。
- * mention/keyword/passthrough/classifier を対応。未対応 kind (cooldown) は warn して
- * スキップ (YAML に書いても動き続ける。fail-loud にはしない)。
- */
-export function toGateSpecs(
-	gates: GateConfig[],
-	warn: (message: string) => void = (message) => console.warn(message),
-): GateSpec[] {
-	const specs: GateSpec[] = [];
-	for (const gate of gates) {
-		switch (gate.kind) {
-			case "mention":
-				specs.push({ kind: "mention" });
-				break;
-			case "keyword":
-				// schema 上 pattern 必須だが、型の narrowing のため明示的に確認する
-				if (gate.pattern === undefined) {
-					warn("keyword gate without pattern; skipped");
-					break;
-				}
-				specs.push({ kind: "keyword", pattern: gate.pattern });
-				break;
-			case "passthrough":
-				specs.push({ kind: "passthrough" });
-				break;
-			case "classifier":
-				// schema 上 criteria 必須だが、型の narrowing のため明示的に確認する
-				if (gate.criteria === undefined) {
-					warn("classifier gate without criteria; skipped");
-					break;
-				}
-				specs.push({
-					kind: "classifier",
-					criteria: gate.criteria,
-					...(gate.model !== undefined ? { model: gate.model } : {}),
-				});
-				break;
-			default:
-				warn(`unsupported gate kind "${gate.kind}"; skipped`);
-		}
-	}
-	return specs;
-}
-
 /** workdir の transcript.jsonl が既に存在するか (pi が既存 transcript を読んで
  * 文脈継続するかどうかの判定。restore 後に評価すれば保存棚からの復元も拾える)。 */
 async function transcriptExists(sessionPath: string): Promise<boolean> {
@@ -428,7 +379,6 @@ export class SessionRunner {
 	private readonly skillsDir: string | undefined;
 	private readonly workdirRoot: string;
 	private readonly piBinary: string | undefined;
-	private readonly model: string | undefined;
 	private readonly provider: string | undefined;
 	private readonly extraEnv: Record<string, string> | undefined;
 	private readonly agentUid: number | undefined;
@@ -453,7 +403,6 @@ export class SessionRunner {
 		this.skillsDir = options.skillsDir;
 		this.workdirRoot = options.workdirRoot ?? "/tmp/pi-chat-runner/sessions";
 		this.piBinary = options.piBinary;
-		this.model = options.model;
 		this.provider = options.provider;
 		this.extraEnv = options.extraEnv;
 		this.agentUid = options.agentUid;
@@ -525,11 +474,8 @@ export class SessionRunner {
 		}
 
 		// 実行中でない: gate 評価 → trigger なら enqueue して kick (即 or debounce)
-		const { gates, combinator } = this.resolveGates(doc, isDm);
-		const decision = await evaluateTrigger(gates, combinator, {
-			event,
-			recent: [],
-		});
+		const when = this.resolveWhen(doc, isDm);
+		const decision = await evaluateWhen(when, { event, recent: [] });
 		if (!decision.trigger) {
 			this.logger.debug(
 				{ channelId, sessionKey, reason: decision.reason },
@@ -848,7 +794,7 @@ export class SessionRunner {
 		const sessionPath = join(workdirReal, "transcript.jsonl");
 		const resumed = await transcriptExists(sessionPath);
 
-		const model = doc?.model ?? this.model;
+		const model = doc?.model;
 		// 常に HOME を agentHome に上書きする (Runner 自身の HOME は継承しない)。
 		// extraEnv で HOME を上書きする (buildPiEnv は extraEnv が PATH/HOME を
 		// 上書きできる実装になっている)
@@ -1347,35 +1293,23 @@ export class SessionRunner {
 		}
 	}
 
-	private resolveGates(
-		doc: ChannelDoc | null,
-		isDm: boolean,
-	): {
-		gates: Gate[];
-		combinator: GateCombinator;
-	} {
-		if (doc?.trigger === undefined) {
-			// doc なし / trigger 未設定は既定 = mention のみ、DM は passthrough
-			// (session-model.md §5, config.md §1)
-			return { gates: defaultGates(isDm), combinator: "any" };
-		}
-		const specs = toGateSpecs(doc.trigger.gates, (message) =>
-			this.logger.warn(message),
-		);
+	private resolveWhen(doc: ChannelDoc | null, isDm: boolean): EvaluableNode[] {
 		const deps: GateDeps = {
 			...(this.classifierClient !== undefined
 				? { classifierClient: this.classifierClient }
 				: {}),
 			logger: this.logger,
 		};
-		return {
-			gates: specs.map((spec) => createGate(spec, deps)),
-			combinator: doc.trigger.combinator,
-		};
+		if (doc?.trigger === undefined) {
+			// doc なし / trigger 未設定は既定 = mention のみ、DM は passthrough
+			// (session-model.md §5, config.md §1)
+			return buildWhen(defaultWhen(isDm), deps);
+		}
+		return buildWhen(doc.trigger.when, deps);
 	}
 
 	/** trigger.cooldownSec は未実装。設定されていたら無視する旨を warn する
-	 * (toGateSpecs の unsupported gate kind の warn と同じ流儀。kick ごとに出て構わない) */
+	 * (kick ごとに出て構わない) */
 	private warnCooldownIfUnsupported(
 		doc: ChannelDoc | null,
 		sessionKey: string,

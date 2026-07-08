@@ -8,7 +8,7 @@
 // docs/build-plan.md Step 4-5 / docs/design/architecture.md §1, §6。
 
 import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { Firestore } from "@google-cloud/firestore";
 import { WebClient } from "@slack/web-api";
 import { startBridge } from "./bridge.js";
@@ -17,7 +17,8 @@ import {
 	loadAgentConfig,
 	resolveAgentConfig,
 } from "./config/agent-config.js";
-import { FileConfigSource } from "./config/config-source.js";
+import { FileConfigSource, loadChannelsFile } from "./config/config-source.js";
+import { formatEffectiveConfig } from "./config/dump.js";
 import type { EventSource } from "./ingress/event-source.js";
 import { HttpEventSource } from "./ingress/slack/http-event-source.js";
 import { SocketEventSource } from "./ingress/slack/socket-event-source.js";
@@ -142,9 +143,8 @@ function requireEnv(name: string): string {
 		console.error("");
 		console.error("任意:");
 		console.error(
-			"  CONFIG_DIR          channels/*.yaml の親 (既定 examples/config)",
+			"  CONFIG_DIR          channels.yaml と agent.yaml の親 (既定 examples/config)",
 		);
-		console.error("  PI_MODEL            ChannelDoc.model 未指定時のモデル");
 		console.error("  PI_PROVIDER         pi の --provider");
 		console.error(
 			"  PI_AGENT_UID/GID    pi を落とす実行 uid/gid (session-runtime.md §6 の UID 分離。両方セットで有効)",
@@ -162,7 +162,7 @@ function requireEnv(name: string): string {
 			"  PI_ENV_PASSTHROUGH  pi へ継承する env 名の追加 allowlist (カンマ区切り。SLACK_/BRIDGE_ prefix は拒否)",
 		);
 		console.error(
-			"  上記 PI_MODEL/PI_PROVIDER/TURN_TIMEOUT_MS/PI_ENV_PASSTHROUGH は CONFIG_DIR/agent.yaml でも設定可 (env が優先)",
+			"  上記 PI_PROVIDER/TURN_TIMEOUT_MS/PI_ENV_PASSTHROUGH は CONFIG_DIR/agent.yaml でも設定可 (env が優先)",
 		);
 		console.error(
 			"  PORT                events モードの listen ポート (既定 8080)",
@@ -202,7 +202,35 @@ function buildEventSource(mode: string, botUserId: string): EventSource {
 	}
 }
 
+/** `dump <channel> [--json]` (config.md §6): bot を起動せず、あるチャンネルの
+ * merge 済み実効設定を provenance 付きで表示して exit(0) する。resolveChannelConfig
+ * (ランタイムと共有) をそのまま呼ぶ formatEffectiveConfig に委譲するだけで、
+ * dump 専用の設定解決ロジックは持たない。例外時は stderr に出して exit(1)。 */
+async function runDump(argv: string[]): Promise<void> {
+	const channelId = argv[3];
+	if (channelId === undefined) {
+		console.error("Usage: node dist/server.mjs dump <channel> [--json]");
+		process.exit(1);
+	}
+	const json = argv.includes("--json");
+	const configDir = process.env.CONFIG_DIR ?? "examples/config";
+
+	try {
+		const file = await loadChannelsFile(join(configDir, "channels.yaml"));
+		console.log(formatEffectiveConfig(file, channelId, { json }));
+		process.exit(0);
+	} catch (err) {
+		console.error(err instanceof Error ? err.message : err);
+		process.exit(1);
+	}
+}
+
 async function main() {
+	if (process.argv[2] === "dump") {
+		await runDump(process.argv);
+		return;
+	}
+
 	const slackMode = process.env.SLACK_MODE ?? "socket";
 	const botToken = requireEnv("SLACK_BOT_TOKEN");
 	const botUserId = requireEnv("SLACK_BOT_USER_ID");
@@ -211,7 +239,7 @@ async function main() {
 	// agent.yaml (config.md §6) + env を解決する。優先順位は env > agent.yaml > コード既定
 	const agentConfigFile = await loadAgentConfig(configDir);
 	const agentConfig = resolveAgentConfig(agentConfigFile, process.env);
-	const { model, provider, turnTimeoutMs, classifierModel } = agentConfig;
+	const { provider, turnTimeoutMs } = agentConfig;
 	const passthrough = collectPassthroughEnv(
 		agentConfig.envPassthrough,
 		process.env,
@@ -252,7 +280,6 @@ async function main() {
 		web,
 		store,
 		configSource: new FileConfigSource(configDir),
-		...(model !== undefined ? { model } : {}),
 		...(provider !== undefined ? { provider } : {}),
 		...(Object.keys(extraEnv).length > 0 ? { extraEnv } : {}),
 		// WORKDIR_ARCHIVE_DIR 未設定なら境界退避なし (Step 3 相当の挙動)
@@ -266,8 +293,6 @@ async function main() {
 		...(piPermission !== undefined ? { piPermission } : {}),
 		// TURN_TIMEOUT_MS 未設定なら SessionRunner の既定 (600_000ms) を使う
 		...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
-		// agent.yaml classifier.model 未設定なら bridge のコード既定を使う
-		...(classifierModel !== undefined ? { classifierModel } : {}),
 		logger,
 	});
 }

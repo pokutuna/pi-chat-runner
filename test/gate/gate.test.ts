@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { ClassifierClient } from "../../src/classifier/client.js";
 import {
+	buildWhen,
 	createGate,
-	defaultGates,
-	evaluateTrigger,
+	defaultWhen,
+	type EvaluableNode,
+	evaluateWhen,
 	type Gate,
 	type GateContext,
 } from "../../src/gate/gate.js";
@@ -73,21 +75,17 @@ describe("createGate (registry)", () => {
 	});
 });
 
-describe("defaultGates", () => {
-	it("returns mention-only gates for non-DM", () => {
-		const gates = defaultGates(false);
-		expect(gates).toHaveLength(1);
-		expect(gates[0]).toBeInstanceOf(MentionGate);
+describe("defaultWhen", () => {
+	it("returns mention-only when node for non-DM", () => {
+		expect(defaultWhen(false)).toEqual([{ kind: "mention" }]);
 	});
 
-	it("returns passthrough gate for DM", () => {
-		const gates = defaultGates(true);
-		expect(gates).toHaveLength(1);
-		expect(gates[0]).toBeInstanceOf(PassthroughGate);
+	it("returns passthrough when node for DM", () => {
+		expect(defaultWhen(true)).toEqual([{ kind: "passthrough" }]);
 	});
 });
 
-describe("evaluateTrigger", () => {
+describe("evaluateWhen", () => {
 	const triggering: Gate = {
 		name: "always-true",
 		decide: () => ({ trigger: true, reason: "t" }),
@@ -98,41 +96,52 @@ describe("evaluateTrigger", () => {
 	};
 	const ctx = ctxFor(makeMessage());
 
-	it("any: triggers if at least one gate triggers", async () => {
-		const result = await evaluateTrigger(
-			[nonTriggering, triggering],
-			"any",
+	it("OR (top-level array): triggers if at least one gate triggers", async () => {
+		const result = await evaluateWhen(
+			[{ gate: nonTriggering }, { gate: triggering }],
 			ctx,
 		);
 		expect(result.trigger).toBe(true);
 		expect(result.reason).toContain("always-true");
 	});
 
-	it("any: does not trigger if no gate triggers", async () => {
-		const result = await evaluateTrigger(
-			[nonTriggering, nonTriggering],
-			"any",
+	it("OR (top-level array): does not trigger if no gate triggers", async () => {
+		const result = await evaluateWhen(
+			[{ gate: nonTriggering }, { gate: nonTriggering }],
 			ctx,
 		);
 		expect(result.trigger).toBe(false);
 	});
 
-	it("all: triggers only if every gate triggers", async () => {
-		const result = await evaluateTrigger([triggering, triggering], "all", ctx);
+	it("AND: triggers only if every gate triggers", async () => {
+		const result = await evaluateWhen(
+			[{ and: [{ gate: triggering }, { gate: triggering }] }],
+			ctx,
+		);
 		expect(result.trigger).toBe(true);
 	});
 
-	it("all: does not trigger if any gate fails", async () => {
-		const result = await evaluateTrigger(
-			[triggering, nonTriggering],
-			"all",
+	it("AND: does not trigger if any gate fails", async () => {
+		const result = await evaluateWhen(
+			[{ and: [{ gate: triggering }, { gate: nonTriggering }] }],
 			ctx,
 		);
 		expect(result.trigger).toBe(false);
 		expect(result.reason).toContain("always-false");
 	});
 
-	it("short-circuits any evaluation once a gate triggers", async () => {
+	it("nested: AND containing an OR triggers when the OR branch resolves true", async () => {
+		const node: EvaluableNode = {
+			and: [
+				{ gate: triggering },
+				{ or: [{ gate: nonTriggering }, { gate: triggering }] },
+			],
+		};
+		const result = await evaluateWhen([node], ctx);
+		expect(result.trigger).toBe(true);
+	});
+
+	it("short-circuits OR evaluation once a gate triggers", async () => {
 		let calledSecond = false;
 		const second: Gate = {
 			name: "second",
@@ -141,11 +150,11 @@ describe("evaluateTrigger", () => {
 				return { trigger: true, reason: "t" };
 			},
 		};
-		await evaluateTrigger([triggering, second], "any", ctx);
+		await evaluateWhen([{ gate: triggering }, { gate: second }], ctx);
 		expect(calledSecond).toBe(false);
 	});
 
-	it("short-circuits all evaluation once a gate fails", async () => {
+	it("short-circuits AND evaluation once a gate fails", async () => {
 		let calledSecond = false;
 		const second: Gate = {
 			name: "second",
@@ -154,7 +163,26 @@ describe("evaluateTrigger", () => {
 				return { trigger: true, reason: "t" };
 			},
 		};
-		await evaluateTrigger([nonTriggering, second], "all", ctx);
+		await evaluateWhen(
+			[{ and: [{ gate: nonTriggering }, { gate: second }] }],
+			ctx,
+		);
 		expect(calledSecond).toBe(false);
+	});
+
+	it("empty array (top-level OR) does not trigger", async () => {
+		const result = await evaluateWhen([], ctx);
+		expect(result.trigger).toBe(false);
+	});
+});
+
+describe("buildWhen", () => {
+	it("builds a Gate tree from WhenNode[] whose leaves createGate can construct", async () => {
+		const nodes = buildWhen([{ kind: "keyword", pattern: "[Hh]elp" }]);
+		const result = await evaluateWhen(
+			nodes,
+			ctxFor(makeMessage({ text: "help me" })),
+		);
+		expect(result.trigger).toBe(true);
 	});
 });

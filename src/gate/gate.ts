@@ -1,15 +1,18 @@
-// Gate IF + registry + 合成 — docs/design/session-model.md §5
+// Gate IF + registry + trigger.when ブール木の評価 — docs/design/session-model.md §5,
+// docs/design/config.md §7 (「trigger と gate の役割分担」「trigger.when — Gate の合成木」)
 //
-// 起動判定を差し替え可能な部品 (Gate) にし、複数を any/all で合成する。
-// channel 設定 (criteria/pattern 等) は各 Gate のコンストラクタ引数で渡すため、
-// GateContext には event/recent のみを持たせる (architecture.md §2 の ChannelDoc.trigger
-// が gates: Array<{kind, ...params}> を持ち、それをここで Gate インスタンスへ組み立てる)。
+// 起動判定を差し替え可能な部品 (Gate) にし、config.md §7 のブール木 (配列 = OR,
+// {and:[]}/{or:[]} で明示合成、ネスト可、negate なし) で合成する。channel 設定
+// (criteria/pattern 等) は各 Gate のコンストラクタ引数で渡すため、GateContext には
+// event/recent のみを持たせる (ChannelDoc.trigger.when の葉が GateConfig で、それを
+// ここで Gate インスタンスへ組み立てる)。
 //
 // classifier は LLM 呼び出しを要するため ClassifierClient を deps で注入する
 // (createGate の第 2 引数)。mention/keyword/passthrough は deps 不要。cooldown は
 // 初期スコープ外のため registry 未登録 (createGate はエラーを投げる)。
 
 import type { ClassifierClient } from "../classifier/client.js";
+import type { GateConfig, WhenNode } from "../config/channel-doc.js";
 import type { ChatEvent } from "../ingress/chat-event.js";
 import type { Logger } from "../logger.js";
 import { ClassifierGate } from "./gates/classifier.js";
@@ -33,9 +36,7 @@ export interface Gate {
 	decide(ctx: GateContext): Promise<TriggerDecision> | TriggerDecision;
 }
 
-export type GateCombinator = "any" | "all";
-
-/** ChannelDoc.trigger.gates の 1 要素 (YAML 由来)。kind ごとに要るパラメータだけ持つ。
+/** ChannelDoc.trigger.when の葉 (YAML 由来)。kind ごとに要るパラメータだけ持つ。
  * classifier は criteria 必須 + model 任意 (per-gate モデル上書き)。cooldown は初期
  * スコープ外のため registry 未登録 (createGate はエラーを投げる)。 */
 export type GateSpec =
@@ -80,50 +81,127 @@ export function createGate(spec: GateSpec, deps: GateDeps = {}): Gate {
 
 /** trigger 設定が無いチャンネルの既定 = mention のみ。DM は passthrough
  * (session-model.md §5, docs/design/config.md §1 のユースケース表)。 */
-export function defaultGates(isDm: boolean): Gate[] {
-	return isDm ? [new PassthroughGate()] : [new MentionGate()];
+export function defaultWhen(isDm: boolean): WhenNode[] {
+	return isDm ? [{ kind: "passthrough" }] : [{ kind: "mention" }];
 }
 
-/** 複数 Gate を combinator (any/all) で畳む。短絡評価する。
- * reason には発火/非発火を決めた gate 名 (と各 gate の reason) を含める。
- * gates が空の場合は any=false / all=true (畳み込みの単位元) を返す。 */
-export async function evaluateTrigger(
-	gates: Gate[],
-	combinator: GateCombinator,
+/** GateConfig (WhenNode の葉) → GateSpec への narrowing。criteria/pattern は
+ * schema (channel-doc.ts) で kind ごとに必須が担保済みなので、欠落は「schema を
+ * 通過した後にここまで来たのに値が無い」= バグであり fail-loud にする
+ * (旧 toGateSpecs の warn-skip は combinator/gates 時代の緩い挙動。木構造では
+ * 欠落を黙って無視すると起動判定が静かに変わってしまうため throw を選ぶ)。 */
+function gateConfigToSpec(gate: GateConfig): GateSpec {
+	switch (gate.kind) {
+		case "mention":
+			return { kind: "mention" };
+		case "passthrough":
+			return { kind: "passthrough" };
+		case "keyword":
+			if (gate.pattern === undefined) {
+				throw new Error('gate kind "keyword" requires "pattern"');
+			}
+			return { kind: "keyword", pattern: gate.pattern };
+		case "classifier":
+			if (gate.criteria === undefined) {
+				throw new Error('gate kind "classifier" requires "criteria"');
+			}
+			return {
+				kind: "classifier",
+				criteria: gate.criteria,
+				...(gate.model !== undefined ? { model: gate.model } : {}),
+			};
+		default: {
+			const unknown: { kind: string } = gate;
+			throw new Error(`unsupported gate kind "${unknown.kind}"`);
+		}
+	}
+}
+
+/** trigger.when の木 (config 由来、未評価) を Gate 木 (評価可能) に組み立てたもの。
+ * 葉は createGate 済みの Gate インスタンスを持つ (config.md §7)。 */
+export type EvaluableNode =
+	| { gate: Gate }
+	| { and: EvaluableNode[] }
+	| { or: EvaluableNode[] };
+
+/** WhenNode[] (config 由来) を EvaluableNode[] (評価可能な Gate 木) に変換する。
+ * 葉の GateConfig → GateSpec 変換 (gateConfigToSpec) と createGate をここでまとめて行う。 */
+export function buildWhen(
+	nodes: WhenNode[],
+	deps: GateDeps = {},
+): EvaluableNode[] {
+	return nodes.map((node) => buildWhenNode(node, deps));
+}
+
+function buildWhenNode(node: WhenNode, deps: GateDeps): EvaluableNode {
+	if ("and" in node) {
+		return { and: node.and.map((child) => buildWhenNode(child, deps)) };
+	}
+	if ("or" in node) {
+		return { or: node.or.map((child) => buildWhenNode(child, deps)) };
+	}
+	return { gate: createGate(gateConfigToSpec(node), deps) };
+}
+
+/** EvaluableNode[] (トップレベル = OR、config.md §7) を評価する。短絡評価する。
+ * reason には発火/非発火を決めた葉の gate 名と reason を、木構造は OR[...]/AND[...]
+ * の簡易表記で含める (旧 evaluateTrigger の reason スタイルを踏襲)。 */
+export async function evaluateWhen(
+	nodes: EvaluableNode[],
 	ctx: GateContext,
 ): Promise<TriggerDecision> {
-	if (gates.length === 0) {
-		const trigger = combinator === "all";
-		return {
-			trigger,
-			reason: `no gates configured (combinator=${combinator})`,
-		};
+	return evaluateNode({ or: nodes }, ctx);
+}
+
+async function evaluateNode(
+	node: EvaluableNode,
+	ctx: GateContext,
+): Promise<TriggerDecision> {
+	if ("gate" in node) {
+		return node.gate.decide(ctx);
 	}
-
-	const decisions: { name: string; decision: TriggerDecision }[] = [];
-	for (const gate of gates) {
-		const decision = await gate.decide(ctx);
-		decisions.push({ name: gate.name, decision });
-
-		if (combinator === "any" && decision.trigger) {
+	if ("and" in node) {
+		// 空配列は単位元として true (config.md §7: 配列 = OR が既定で、and の空配列は
+		// 通常書かれないが、畳み込みの単位元として all と同じ扱いにする)
+		if (node.and.length === 0) {
+			return { trigger: true, reason: "AND[] (empty, vacuously true)" };
+		}
+		const reasons: string[] = [];
+		for (const child of node.and) {
+			const decision = await evaluateNode(child, ctx);
+			reasons.push(describe(child, decision));
+			if (!decision.trigger) {
+				return {
+					trigger: false,
+					reason: `AND[${reasons.join(", ")}] short-circuited`,
+				};
+			}
+		}
+		return { trigger: true, reason: `AND[${reasons.join(", ")}]` };
+	}
+	// "or" in node
+	if (node.or.length === 0) {
+		return { trigger: false, reason: "OR[] (empty, vacuously false)" };
+	}
+	const reasons: string[] = [];
+	for (const child of node.or) {
+		const decision = await evaluateNode(child, ctx);
+		reasons.push(describe(child, decision));
+		if (decision.trigger) {
 			return {
 				trigger: true,
-				reason: `any: ${gate.name} triggered (${decision.reason})`,
-			};
-		}
-		if (combinator === "all" && !decision.trigger) {
-			return {
-				trigger: false,
-				reason: `all: ${gate.name} did not trigger (${decision.reason})`,
+				reason: `OR[${reasons.join(", ")}] short-circuited`,
 			};
 		}
 	}
+	return { trigger: false, reason: `OR[${reasons.join(", ")}]` };
+}
 
-	if (combinator === "any") {
-		const names = decisions.map((d) => d.name).join(", ");
-		return { trigger: false, reason: `any: no gate triggered (${names})` };
+/** reason 文字列に埋め込む 1 ノード分の説明。葉は gate 名 + decide の reason、
+ * 内部ノードは AND[...]/OR[...] の簡易表記 (evaluateNode が生成した reason をそのまま使う)。 */
+function describe(node: EvaluableNode, decision: TriggerDecision): string {
+	if ("gate" in node) {
+		return `${node.gate.name}=${decision.trigger} (${decision.reason})`;
 	}
-
-	const names = decisions.map((d) => d.name).join(", ");
-	return { trigger: true, reason: `all: every gate triggered (${names})` };
+	return decision.reason;
 }

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-	ChannelDocFileSchema,
 	ChannelDocSchema,
+	ChannelEntrySchema,
+	ChannelsFileSchema,
 } from "../../src/config/channel-doc.js";
 
 describe("ChannelDocSchema", () => {
@@ -10,21 +11,19 @@ describe("ChannelDocSchema", () => {
 		expect(result.success).toBe(true);
 	});
 
-	it("accepts a full doc with mention/keyword/classifier gates", () => {
+	it("accepts a full doc with mention/keyword/classifier/passthrough gates", () => {
 		const result = ChannelDocSchema.safeParse({
 			systemPrompt: "be nice",
 			context: ["note1", "note2"],
 			trigger: {
-				combinator: "all",
-				debounceSec: 30,
-				cooldownSec: 60,
-				gates: [
+				when: [
 					{ kind: "mention" },
 					{ kind: "keyword", pattern: "(ALERT|ERROR)" },
 					{ kind: "classifier", criteria: "infra alert" },
 					{ kind: "passthrough" },
-					{ kind: "cooldown" },
 				],
+				debounceSec: 30,
+				cooldownSec: 60,
 			},
 			model: "gemini-3-pro",
 		});
@@ -42,8 +41,7 @@ describe("ChannelDocSchema", () => {
 	it("rejects unknown keys inside trigger (strict)", () => {
 		const result = ChannelDocSchema.safeParse({
 			trigger: {
-				combinator: "any",
-				gates: [{ kind: "mention" }],
+				when: [{ kind: "mention" }],
 				unknownField: true,
 			},
 		});
@@ -53,8 +51,7 @@ describe("ChannelDocSchema", () => {
 	it("rejects unknown keys inside a gate (strict)", () => {
 		const result = ChannelDocSchema.safeParse({
 			trigger: {
-				combinator: "any",
-				gates: [{ kind: "mention", extra: "nope" }],
+				when: [{ kind: "mention", extra: "nope" }],
 			},
 		});
 		expect(result.success).toBe(false);
@@ -63,8 +60,7 @@ describe("ChannelDocSchema", () => {
 	it("rejects keyword gate without pattern", () => {
 		const result = ChannelDocSchema.safeParse({
 			trigger: {
-				combinator: "any",
-				gates: [{ kind: "keyword" }],
+				when: [{ kind: "keyword" }],
 			},
 		});
 		expect(result.success).toBe(false);
@@ -80,8 +76,7 @@ describe("ChannelDocSchema", () => {
 	it("rejects classifier gate without criteria", () => {
 		const result = ChannelDocSchema.safeParse({
 			trigger: {
-				combinator: "any",
-				gates: [{ kind: "classifier" }],
+				when: [{ kind: "classifier" }],
 			},
 		});
 		expect(result.success).toBe(false);
@@ -97,38 +92,62 @@ describe("ChannelDocSchema", () => {
 	it("accepts a classifier gate with a per-gate model override", () => {
 		const result = ChannelDocSchema.safeParse({
 			trigger: {
-				combinator: "any",
-				gates: [
+				when: [
 					{ kind: "classifier", criteria: "infra alert", model: "gemini-x" },
 				],
 			},
 		});
 		expect(result.success).toBe(true);
 		if (result.success) {
-			const gate = result.data.trigger?.gates[0];
+			const gate = result.data.trigger?.when[0];
 			expect(gate).toMatchObject({ kind: "classifier", model: "gemini-x" });
 		}
 	});
 
-	it("accepts mention/passthrough/cooldown gates without extra params", () => {
+	it("accepts mention/passthrough gates without extra params", () => {
 		const result = ChannelDocSchema.safeParse({
 			trigger: {
-				combinator: "any",
-				gates: [
-					{ kind: "mention" },
-					{ kind: "passthrough" },
-					{ kind: "cooldown" },
+				when: [{ kind: "mention" }, { kind: "passthrough" }],
+			},
+		});
+		expect(result.success).toBe(true);
+	});
+
+	it("rejects cooldown kind", () => {
+		const result = ChannelDocSchema.safeParse({
+			trigger: {
+				when: [{ kind: "cooldown" }],
+			},
+		});
+		expect(result.success).toBe(false);
+	});
+
+	it("accepts an 'and' node combining gates", () => {
+		const result = ChannelDocSchema.safeParse({
+			trigger: {
+				when: [
+					{ and: [{ kind: "mention" }, { kind: "keyword", pattern: "x" }] },
 				],
 			},
 		});
 		expect(result.success).toBe(true);
 	});
 
-	it("rejects invalid combinator value", () => {
+	it("accepts an 'or' node combining gates", () => {
 		const result = ChannelDocSchema.safeParse({
 			trigger: {
-				combinator: "xor",
-				gates: [{ kind: "mention" }],
+				when: [
+					{ or: [{ kind: "mention" }, { kind: "keyword", pattern: "x" }] },
+				],
+			},
+		});
+		expect(result.success).toBe(true);
+	});
+
+	it("rejects an 'and' node with unknown keys (strict)", () => {
+		const result = ChannelDocSchema.safeParse({
+			trigger: {
+				when: [{ and: [], unknownKey: 1 }],
 			},
 		});
 		expect(result.success).toBe(false);
@@ -164,14 +183,14 @@ describe("ChannelDocSchema", () => {
 	});
 });
 
-describe("ChannelDocFileSchema", () => {
+describe("ChannelEntrySchema", () => {
 	it("requires the channel field", () => {
-		const result = ChannelDocFileSchema.safeParse({});
+		const result = ChannelEntrySchema.safeParse({});
 		expect(result.success).toBe(false);
 	});
 
 	it("accepts a doc with channel plus ChannelDoc fields", () => {
-		const result = ChannelDocFileSchema.safeParse({
+		const result = ChannelEntrySchema.safeParse({
 			channel: "#ask-ai",
 			systemPrompt: "./prompts/ask-ai.md",
 		});
@@ -179,9 +198,38 @@ describe("ChannelDocFileSchema", () => {
 	});
 
 	it("still rejects unknown keys (strict) alongside channel", () => {
-		const result = ChannelDocFileSchema.safeParse({
+		const result = ChannelEntrySchema.safeParse({
 			channel: "C123",
 			unknown: "nope",
+		});
+		expect(result.success).toBe(false);
+	});
+});
+
+describe("ChannelsFileSchema", () => {
+	it("accepts a file containing a 'default' entry", () => {
+		const result = ChannelsFileSchema.safeParse({
+			channels: [{ channel: "default" }, { channel: "C1" }],
+		});
+		expect(result.success).toBe(true);
+	});
+
+	it("rejects an empty channels array", () => {
+		const result = ChannelsFileSchema.safeParse({ channels: [] });
+		expect(result.success).toBe(false);
+	});
+
+	it("rejects a file missing the 'default' entry", () => {
+		const result = ChannelsFileSchema.safeParse({
+			channels: [{ channel: "C1" }],
+		});
+		expect(result.success).toBe(false);
+	});
+
+	it("rejects unknown top-level keys (strict)", () => {
+		const result = ChannelsFileSchema.safeParse({
+			channels: [{ channel: "default" }],
+			extra: 1,
 		});
 		expect(result.success).toBe(false);
 	});

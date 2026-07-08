@@ -1,17 +1,20 @@
 # agent.yaml — bridge 本体の挙動既定 (docs/design/config.md §6)。
 #
-# channels/*.yaml (チャンネルごとの振る舞い差分) とは別の設定ファイル。ここは
+# channels.yaml (チャンネルごとの振る舞い差分) とは別の設定ファイル。ここは
 # チャンネル横断の bridge プロセスの挙動既定で、boot 時に 1 回だけ読まれる。
 # 優先順位は env > agent.yaml > コード既定 (env はローカルで一時的に上書きする
 # ための override)。ここではすべてコメントアウトしてあり、コメントだけの
 # ファイルなのでローカル既定動作は変わらない。
+#
+# モデルは agent.yaml に書かない。pi 本体のモデルは channels.yaml の
+# default.model / channel.model、classifier のモデルは channels.yaml の
+# trigger.when 内の各 classifier ノードの model に書く (どちらも省略時はコード既定
+# gemini-3.1-flash-lite。ただし pi 本体は実作業向けに高性能なモデルを明示するのが
+# 通例)。service 単位のモデル既定という中間層は持たない (config.md §2.3)。
 
 # pi:
 #   # pi の --provider。省略時はコード既定 (pi 本体の既定 provider)
 #   provider: google-vertex
-#
-#   # ChannelDoc.model が省略されたときに使うモデル。省略時はコード既定
-#   model: gemini-3.5-flash
 #
 #   # 1 ターンの上限 (ms)。超過で pi を kill する (docs/design/session-runtime.md §6)。
 #   # 省略時は SessionRunner の既定 (600000 = 10 分)

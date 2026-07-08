@@ -1,0 +1,7 @@
+channels:
+  - channel: "default"
+    trigger:
+      when:
+        - kind: mention
+  - channel: "C0000000009"
+    unknownField: "not allowed"

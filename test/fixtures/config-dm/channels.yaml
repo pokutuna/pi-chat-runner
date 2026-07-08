@@ -1,0 +1,7 @@
+channels:
+  - channel: "default"
+    trigger:
+      when:
+        - kind: mention
+  - channel: "dm"
+    systemPrompt: dm prompt

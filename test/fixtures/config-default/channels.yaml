@@ -1,0 +1,12 @@
+channels:
+  - channel: "default"
+    systemPrompt: default fallback prompt
+    model: gemini-default
+    trigger:
+      when:
+        - kind: mention
+  - channel: "C0000000001"
+    systemPrompt: specific channel prompt
+    trigger:
+      when:
+        - kind: mention

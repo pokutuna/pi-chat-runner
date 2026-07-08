@@ -1,0 +1,20 @@
+channels:
+  - channel: "default"
+    trigger:
+      when:
+        - kind: mention
+  - channel: "C0000000001"
+    systemPrompt: ./prompts/greeting.md
+    context:
+      - ./prompts/context-note.md
+      - inline text without file reference
+    model: gemini-3-pro
+    trigger:
+      when:
+        - kind: mention
+  - channel: "#keyword-demo"
+    trigger:
+      when:
+        - kind: keyword
+          pattern: "(?i)(help|error)"
+        - kind: mention

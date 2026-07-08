@@ -29,6 +29,10 @@ import { SessionRunner } from "./session/runner.js";
 import type { StateStore } from "./store/state/interfaces.js";
 import { createWorkdirStorage, type WorkdirStorage } from "./store/workdir.js";
 
+/** classifier gate 用 LLM client のコード既定モデル (config.md §2.3: 未指定時の
+ * fallback は bridge の 1 箇所に集約する)。 */
+const CODE_DEFAULT_CLASSIFIER_MODEL = "gemini-3.1-flash-lite";
+
 export interface BridgeOptions {
 	/** 受信の入口 (Socket Mode / Events API / 呼び出し側独自の実装)。ライブラリ利用の
 	 * 本命 seam — 別の Slack app 実装から独自 EventSource を差し込める。 */
@@ -37,12 +41,8 @@ export interface BridgeOptions {
 	web: WebClient;
 	store: StateStore;
 	configSource: ConfigSource;
-	model?: string;
 	provider?: string;
 	turnTimeoutMs?: number;
-	/** classifier gate の既定モデル (agent.yaml classifier.model 由来)。未設定なら
-	 * コード既定 (gemini-3.1-flash-lite) を使う。 */
-	classifierModel?: string;
 	/** classifier gate 用 LLM client の注入口 (主にテスト用)。省略時は
 	 * GOOGLE_CLOUD_PROJECT があれば GeminiClassifierClient を内部構築する。 */
 	classifierClient?: ClassifierClient;
@@ -108,7 +108,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 			return new GeminiClassifierClient({
 				project,
 				location: process.env.GOOGLE_CLOUD_LOCATION ?? "us-central1",
-				defaultModel: options.classifierModel ?? "gemini-3.1-flash-lite",
+				defaultModel: CODE_DEFAULT_CLASSIFIER_MODEL,
 			});
 		})();
 
@@ -135,7 +135,6 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 		// 持たない)。bridge.ts は Slack 専用モジュールなので、Slack の mrkdwn
 		// mention 記法をここで注入する
 		mentionFormat: (userId) => `<@${userId}>`,
-		...(options.model !== undefined ? { model: options.model } : {}),
 		...(options.provider !== undefined ? { provider: options.provider } : {}),
 		...(options.extraEnv !== undefined &&
 		Object.keys(options.extraEnv).length > 0
