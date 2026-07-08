@@ -123,6 +123,9 @@ turn timeout (10 分) + エラー投稿 + ❌、DM 既定 config (`dm`)、base i
 - [x] `trigger.debounceSec` (kick 遅延方式: 連投バーストを 1 ターンに束ねる。スライディング +
   hard cap ×3、mention は即 kick。[design/session-model.md](design/session-model.md) §5。
   `trigger.cooldownSec` は未実装で、設定されると warn して無視される)
+- [x] MessageChunker (長文分割: 段落→行→文字のフォールバック + コードフェンス継承。
+  上限 3800 字固定。[src/egress/chunker.ts](../src/egress/chunker.ts)、EgressRouter が逐次投稿。
+  [design/chat-model.md](design/chat-model.md) §3.4)
 
 ## 未着手 (将来。design にあるが計画に現れていない項目)
 
@@ -137,7 +140,7 @@ turn timeout (10 分) + エラー投稿 + ❌、DM 既定 config (`dm`)、base i
   受信の正規化 (`ReactionEvent` 型・Slack の `reaction_added`/`removed` → `normalizeReaction`) は
   実装済みだが、`targetIsOwnMessage` は常に false のスタブ ([src/ingress/slack/adapter.ts](../src/ingress/slack/adapter.ts))
   で、bridge が `kind !== "message"` のイベントを破棄するため再開への結線が未実装
-- [ ] EgressAdapter / MessageChunker (長文分割) / InboundDebouncer ([design/chat-model.md](design/chat-model.md) §3.2, §3.4)
+- [ ] EgressAdapter / InboundDebouncer ([design/chat-model.md](design/chat-model.md) §3.2, §3.4)
 
 ## 想定ディレクトリツリー (新規リポジトリ)
 

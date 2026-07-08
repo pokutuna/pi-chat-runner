@@ -7,6 +7,7 @@
 
 import type { Logger } from "../logger.js";
 import { rootLogger } from "../logger.js";
+import { chunkMessage } from "./chunker.js";
 
 /** reply ツールの引数 (extensions/reply.ts が details に詰めて返す形)。
  * files は runner が workdir 境界チェック済みの絶対パスに解決してから積む */
@@ -70,17 +71,23 @@ export class EgressRouter {
 			return;
 		}
 		try {
-			await this.poster.postMessage(
-				destination.channelId,
-				this.formatter(payload.text),
-				destination.threadTs,
-				payload.files,
-			);
+			const chunks = chunkMessage(this.formatter(payload.text));
+			const parts = chunks.length > 0 ? chunks : [""];
+			for (const [i, part] of parts.entries()) {
+				const isLast = i === parts.length - 1;
+				await this.poster.postMessage(
+					destination.channelId,
+					part,
+					destination.threadTs,
+					isLast ? payload.files : undefined,
+				);
+			}
 			this.logger.info(
 				{
 					threadKey: payload.thread_key,
 					textLength: payload.text.length,
 					filesCount: payload.files?.length ?? 0,
+					chunks: parts.length,
 				},
 				"reply delivered",
 			);

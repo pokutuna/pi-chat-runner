@@ -142,4 +142,74 @@ describe("EgressRouter", () => {
 			text: "no attachment",
 		});
 	});
+
+	it("splits long text into multiple sequential posts to the same thread", async () => {
+		const poster = new FakePoster();
+		const router = new EgressRouter({ poster });
+		router.register("k", { channelId: "C01", threadTs: "1" });
+
+		const paragraph = "a".repeat(3000);
+		const text = `${paragraph}\n\n${paragraph}`;
+		await router.deliver({ thread_key: "k", text });
+
+		expect(poster.calls).toHaveLength(2);
+		expect(poster.calls[0]).toEqual({
+			channelId: "C01",
+			threadTs: "1",
+			text: paragraph,
+		});
+		expect(poster.calls[1]).toEqual({
+			channelId: "C01",
+			threadTs: "1",
+			text: paragraph,
+		});
+	});
+
+	it("attaches files only to the last post when splitting long text", async () => {
+		const poster = new FakePoster();
+		const router = new EgressRouter({ poster });
+		router.register("k", { channelId: "C01", threadTs: "1" });
+
+		const paragraph = "a".repeat(3000);
+		const text = `${paragraph}\n\n${paragraph}`;
+		await router.deliver({
+			thread_key: "k",
+			text,
+			files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
+		});
+
+		expect(poster.calls).toHaveLength(2);
+		expect(poster.calls[0]).toEqual({
+			channelId: "C01",
+			threadTs: "1",
+			text: paragraph,
+		});
+		expect(poster.calls[1]).toEqual({
+			channelId: "C01",
+			threadTs: "1",
+			text: paragraph,
+			files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
+		});
+	});
+
+	it("posts once with empty text when only files are attached", async () => {
+		const poster = new FakePoster();
+		const router = new EgressRouter({ poster });
+		router.register("k", { channelId: "C01", threadTs: "1" });
+
+		await router.deliver({
+			thread_key: "k",
+			text: "",
+			files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
+		});
+
+		expect(poster.calls).toEqual([
+			{
+				channelId: "C01",
+				threadTs: "1",
+				text: "",
+				files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
+			},
+		]);
+	});
 });

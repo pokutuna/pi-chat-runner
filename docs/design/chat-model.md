@@ -234,6 +234,11 @@ interface SendResult {
 ```typescript
 /** 長文分割。コードフェンス境界を保存し、lengthUnit に応じた長さ関数を注入 (hermes truncate_message) */
 interface MessageChunker { split(text: string, caps: ChatCapabilities): string[]; }
+// 実装済み: src/egress/chunker.ts の chunkMessage(text, limit=3800)。段落 (\n\n) →
+// 行 (\n) → 文字数ハード分割のフォールバックで、コードフェンスをまたぐ場合は閉じて
+// 次チャンクで同じ info string で開き直す。EgressRouter.deliver が formatter 適用後の
+// テキストを chunk し、逐次投稿する (files は最後のチャンクにのみ添付)。Slack 単一
+// プラットフォームなので caps/lengthUnit 注入は設けず、上限は固定定数にした。
 
 /** 連投の束ね。「最後の発言から debounce 秒」or「最初の発言から hardCap 秒」の早い方でフラッシュ。
  *  送信者が変わったらマージしない (hermes _can_merge_text_debounce_events) */
