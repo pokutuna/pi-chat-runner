@@ -3,8 +3,10 @@
  *
  * pi の extension API で `export_session` ツールを登録する。
  * execute は現在のセッション (workdir/session.jsonl) を HTML にエクスポートし、
- * 生成した workdir 相対パスを同期的に返す。agent はそのパスを自由に使ってよい
- * (reply の files に添付する、workdir に残すだけにする、等)。
+ * 生成した絶対パスを同期的に返す。agent はそのパスを自由に使ってよい (reply の
+ * files に添付する、workdir に残すだけにする、等)。reply の files は workdir 相対
+ * パスを期待するが、resolveReplyFiles は path.resolve で解決するため workdir 内の
+ * 絶対パスも同じ結果になり、そのまま渡して問題ない (session-runtime.md §2.1)。
  *
  * pi の extension サンドボックス (ExtensionContext) はセッションの読み取り専用
  * ビュー (sessionManager) しか持たず、`exportToHtml` を直接呼べない
@@ -33,7 +35,7 @@ export default function exportExtension(pi: ExtensionAPI) {
 		description:
 			"Export the current conversation to a self-contained HTML file in the workdir and return its path. Use this when a task or skill wants to hand off a readable record of the session (e.g. to attach via reply).",
 		promptSnippet:
-			"export_session(): Export the current session to HTML in the workdir; returns the workdir-relative path.",
+			"export_session(): Export the current session to HTML in the workdir; returns its absolute path.",
 		parameters: Type.Object({}),
 		async execute(_toolCallId, _params, _signal, _onUpdate, ctx) {
 			const entrypoint = process.env.PI_EXPORT_ENTRYPOINT;
