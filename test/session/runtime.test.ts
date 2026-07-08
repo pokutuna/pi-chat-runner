@@ -21,14 +21,14 @@ describe("buildPiArgs", () => {
 	it("builds minimal rpc mode args", () => {
 		expect(
 			buildPiArgs({
-				sessionPath: "/tmp/s/transcript.jsonl",
+				sessionPath: "/tmp/s/session.jsonl",
 				extensionPaths: ["/app/extensions/reply.ts"],
 			}),
 		).toEqual([
 			"--mode",
 			"rpc",
 			"--session",
-			"/tmp/s/transcript.jsonl",
+			"/tmp/s/session.jsonl",
 			"--offline",
 			"--extension",
 			"/app/extensions/reply.ts",
@@ -37,7 +37,7 @@ describe("buildPiArgs", () => {
 
 	it("expands --extension once per path in extensionPaths (reply + permission-gate)", () => {
 		const args = buildPiArgs({
-			sessionPath: "/tmp/s/transcript.jsonl",
+			sessionPath: "/tmp/s/session.jsonl",
 			extensionPaths: [
 				"/app/extensions/reply.ts",
 				"/app/extensions/permission-gate.ts",
@@ -47,7 +47,7 @@ describe("buildPiArgs", () => {
 			"--mode",
 			"rpc",
 			"--session",
-			"/tmp/s/transcript.jsonl",
+			"/tmp/s/session.jsonl",
 			"--offline",
 			"--extension",
 			"/app/extensions/reply.ts",

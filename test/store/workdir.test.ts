@@ -25,7 +25,7 @@ afterEach(async () => {
 
 async function writeWorkdirFiles(): Promise<void> {
 	await mkdir(join(workdir, "workspace", "nested"), { recursive: true });
-	await writeFile(join(workdir, "transcript.jsonl"), '{"type":"turn"}\n');
+	await writeFile(join(workdir, "session.jsonl"), '{"type":"turn"}\n');
 	await writeFile(join(workdir, "workspace", "note.txt"), "hello");
 	await writeFile(
 		join(workdir, "workspace", "nested", "deep.txt"),
@@ -46,7 +46,7 @@ describe("CopyWorkdirStorage", () => {
 		const restored = await storage.restore(THREAD_KEY, workdir);
 
 		expect(restored).toBe(true);
-		expect(await readFile(join(workdir, "transcript.jsonl"), "utf8")).toBe(
+		expect(await readFile(join(workdir, "session.jsonl"), "utf8")).toBe(
 			'{"type":"turn"}\n',
 		);
 		expect(await readFile(join(workdir, "workspace", "note.txt"), "utf8")).toBe(
@@ -64,11 +64,11 @@ describe("CopyWorkdirStorage", () => {
 
 		expect(restored).toBe(false);
 		await expect(
-			readFile(join(workdir, "transcript.jsonl"), "utf8"),
+			readFile(join(workdir, "session.jsonl"), "utf8"),
 		).rejects.toThrow();
 	});
 
-	it("does not restore when the shelf has other files but no transcript.jsonl", async () => {
+	it("does not restore when the shelf has other files but no session.jsonl", async () => {
 		const storage = new CopyWorkdirStorage(baseDir);
 		const shelf = join(baseDir, "C123ABC", "1720000000.123456");
 		await mkdir(join(shelf, "workspace"), { recursive: true });
@@ -81,7 +81,7 @@ describe("CopyWorkdirStorage", () => {
 
 		expect(restored).toBe(false);
 		await expect(
-			readFile(join(workdir, "transcript.jsonl"), "utf8"),
+			readFile(join(workdir, "session.jsonl"), "utf8"),
 		).rejects.toThrow();
 	});
 
@@ -90,7 +90,7 @@ describe("CopyWorkdirStorage", () => {
 		await writeWorkdirFiles();
 		await storage.flush(THREAD_KEY, workdir);
 
-		await writeFile(join(workdir, "transcript.jsonl"), '{"type":"turn2"}\n');
+		await writeFile(join(workdir, "session.jsonl"), '{"type":"turn2"}\n');
 		await writeFile(join(workdir, "workspace", "note.txt"), "updated");
 		await storage.flush(THREAD_KEY, workdir);
 
@@ -98,7 +98,7 @@ describe("CopyWorkdirStorage", () => {
 		const restored = await storage.restore(THREAD_KEY, workdir);
 
 		expect(restored).toBe(true);
-		expect(await readFile(join(workdir, "transcript.jsonl"), "utf8")).toBe(
+		expect(await readFile(join(workdir, "session.jsonl"), "utf8")).toBe(
 			'{"type":"turn2"}\n',
 		);
 		expect(await readFile(join(workdir, "workspace", "note.txt"), "utf8")).toBe(
@@ -116,7 +116,7 @@ describe("CopyWorkdirStorage", () => {
 			baseDir,
 			"C123ABC",
 			"1720000000.123456",
-			"transcript.jsonl",
+			"session.jsonl",
 		);
 		expect(await readFile(expectedShelfTranscript, "utf8")).toBe(
 			'{"type":"turn"}\n',
@@ -132,7 +132,7 @@ describe("NoopWorkdirStorage", () => {
 
 		expect(restored).toBe(false);
 		await expect(
-			readFile(join(workdir, "transcript.jsonl"), "utf8"),
+			readFile(join(workdir, "session.jsonl"), "utf8"),
 		).rejects.toThrow();
 	});
 

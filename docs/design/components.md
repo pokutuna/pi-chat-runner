@@ -272,7 +272,7 @@ interface ChannelDoc {
 pi の起動 (kick) は spawn 引数への直接注入で、中間の設定ファイル生成は無い ([config.md](config.md) §4):
 
 ```
-pi --mode rpc --session <workdir>/transcript.jsonl --model <ChannelDoc.model>
+pi --mode rpc --session <workdir>/session.jsonl --model <ChannelDoc.model>
    --append-system-prompt <app 共通 + ChannelDoc.systemPrompt>
    --extension /app/extensions/reply.ts
 ```

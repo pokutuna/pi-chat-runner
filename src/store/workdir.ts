@@ -9,6 +9,7 @@
 
 import { cp, lstat, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
+import { SESSION_FILE } from "../session/session-file.js";
 
 /** workdir の退避と復元。実体はディレクトリコピー (persistence.md §2)。 */
 export interface WorkdirStorage {
@@ -17,8 +18,6 @@ export interface WorkdirStorage {
 	/** workdir → 保存棚へ退避 */
 	flush(threadKey: string, workdir: string): Promise<void>;
 }
-
-const TRANSCRIPT_FILE = "transcript.jsonl";
 
 /** threadKey (`<channelId>:<threadTs>`) を棚のパスに変換する。
  * `:` を `/` に置き換えると session-runtime.md §3 の `/data/channels/<ch>/<threadTs>/`
@@ -35,7 +34,7 @@ export class CopyWorkdirStorage implements WorkdirStorage {
 	async restore(threadKey: string, workdir: string): Promise<boolean> {
 		const shelf = shelfPath(this.baseDir, threadKey);
 		const entries = await readEntriesOrEmpty(shelf);
-		if (!entries.includes(TRANSCRIPT_FILE)) {
+		if (!entries.includes(SESSION_FILE)) {
 			return false;
 		}
 
@@ -51,14 +50,14 @@ export class CopyWorkdirStorage implements WorkdirStorage {
 		await mkdir(shelf, { recursive: true });
 
 		const entries = await readEntriesOrEmpty(workdir);
-		// transcript.jsonl 以外を先にコピーし、transcript.jsonl を最後にコピーする
+		// session.jsonl 以外を先にコピーし、session.jsonl を最後にコピーする
 		// (persistence.md §3: 「アトミック性は transcript を最後に置く順序で担保」)。
-		const rest = entries.filter((entry) => entry !== TRANSCRIPT_FILE);
+		const rest = entries.filter((entry) => entry !== SESSION_FILE);
 		for (const entry of rest) {
 			await copyRegularEntry(workdir, shelf, entry);
 		}
-		if (entries.includes(TRANSCRIPT_FILE)) {
-			await copyRegularEntry(workdir, shelf, TRANSCRIPT_FILE);
+		if (entries.includes(SESSION_FILE)) {
+			await copyRegularEntry(workdir, shelf, SESSION_FILE);
 		}
 	}
 }

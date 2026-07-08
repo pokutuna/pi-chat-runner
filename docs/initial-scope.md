@@ -14,7 +14,7 @@
 | エラーの可視化 | スレッドに短いエラー投稿 + ❌ | 「処理に失敗しました (詳細はログ)」程度を host が投稿。再試行が尽きたときのみ (at-least-once の途中失敗では出さない) |
 | 添付ファイル | 初期版はテキストのみ | 添付の存在は「添付ファイルあり (未対応)」とプロンプトに注記。ダウンロード対応 (bot token での取得 + workdir 配置) は将来 |
 | 成果物の返却 | reply テキストのみ | 生成ファイルは artifacts/ として GCS に残り管理者は取り出せる。reply へのファイル添付 (files.upload) は将来拡張 |
-| compaction | 初期版は放置 | transcript サイズが閾値を超えたら warning ログのみ。世代回転 transcript-g\<N\> ([design/session-model.md](design/session-model.md) §2) の器は設計済みで後付け可 |
+| compaction | 初期版は放置 | transcript サイズが閾値を超えたら warning ログのみ。世代回転 session-g\<N\> ([design/session-model.md](design/session-model.md) §2) の器は設計済みで後付け可 |
 | turn timeout | 既定 10 分 (env `TURN_TIMEOUT_MS`) | 超過で pi を kill ([design/session-runtime.md](design/session-runtime.md) §6)。入力は inbox に残るため再実行可能 |
 | DM | DM 用の既定 config で対応 | channels/ と同スキーマの特別 ID `dm` を 1 つ用意し全 DM で共有 (gate は passthrough 既定)。YAML + apply の管理経路も共通 |
 | 既定モデル | Gemini Flash 系 (env `DEFAULT_MODEL`) | 重いチャンネルだけ ChannelDoc.model で Pro に上げる |

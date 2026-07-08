@@ -142,7 +142,7 @@ session-runtime.md §3 の規則をインタフェース語彙で言い直す:
    逆にするとクラッシュで入力が消える
 3. **セッション終了時** (✅): 最終 `flush` → lease release
 
-flush 内部のコピー順序: workspace/ など他ファイル → 最後に transcript.jsonl。
+flush 内部のコピー順序: workspace/ など他ファイル → 最後に session.jsonl。
 restore は transcript が存在するかで「復元があったか」を判定できる
 (現行の `resumed` ログと同じ判定が保存棚側にも適用できる)。
 

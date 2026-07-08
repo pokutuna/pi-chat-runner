@@ -163,7 +163,7 @@ interface SessionDoc {
 ```
 /data (gs://<bucket> を FUSE マウント)
   channels/<channelId>/<threadTs>/
-    transcript-g<generation>.jsonl   … append-only エントリ列 ([session-model.md](session-model.md) §2 の型をそのまま使用)
+    session-g<generation>.jsonl      … append-only エントリ列 ([session-model.md](session-model.md) §2 の型をそのまま使用)
     workspace/                       … 作業ファイル (再開に必要なものだけ)
     artifacts/                       … 成果物 (残すと宣言されたもの)
   docs/                              … ドキュメントセット (読み取り専用)

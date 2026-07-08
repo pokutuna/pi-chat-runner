@@ -53,6 +53,7 @@ import {
 } from "./pi-events.js";
 import { isAgentEnd, isToolExecutionEnd } from "./rpc.js";
 import { buildPiPermissionOptions, PiProcess } from "./runtime.js";
+import { rotatedSessionFile, SESSION_FILE } from "./session-file.js";
 
 /** app 共通プロンプトのプラットフォーム中立な固定部分。ChannelDoc.systemPrompt は
  * これへの追記分 (architecture.md §2)。mention 記法の説明は mentionFormat に依存する
@@ -275,7 +276,7 @@ function renderItems(items: InboxItem[]): string {
 		.join("\n\n");
 }
 
-/** workdir の transcript.jsonl が既に存在するか (pi が既存 transcript を読んで
+/** workdir の session.jsonl が既に存在するか (pi が既存 transcript を読んで
  * 文脈継続するかどうかの判定。restore 後に評価すれば保存棚からの復元も拾える)。 */
 async function transcriptExists(sessionPath: string): Promise<boolean> {
 	try {
@@ -314,11 +315,11 @@ export function computeKickDelayMs(args: {
 }
 
 /** channel モードの idle リセット (session-model.md §3): workdir 直下の
- * transcript.jsonl が存在すれば transcript-<epoch ms>.jsonl にリネームして世代交代する。
+ * session.jsonl が存在すれば session-<epoch ms>.jsonl にリネームして世代交代する。
  * pi は transcript が無ければ新規会話として開始する。workdir の他のファイルは残す */
 async function rotateTranscript(workdir: string, now: number): Promise<void> {
-	const from = join(workdir, "transcript.jsonl");
-	const to = join(workdir, `transcript-${now}.jsonl`);
+	const from = join(workdir, SESSION_FILE);
+	const to = join(workdir, rotatedSessionFile(now));
 	try {
 		await rename(from, to);
 	} catch (err) {
@@ -838,7 +839,7 @@ export class SessionRunner {
 			);
 		}
 
-		// 同 sessionKey は常に同じ workdir/transcript.jsonl を使う。再 trigger 時は
+		// 同 sessionKey は常に同じ workdir/session.jsonl を使う。再 trigger 時は
 		// 同じパスで再 spawn され、pi が JSONL を読んで文脈を継続する (再開の専用フローなし)
 		await mkdir(workdir, { recursive: true });
 		await this.workdirStorage.restore(sessionKey, workdir);
@@ -869,12 +870,10 @@ export class SessionRunner {
 			}
 			const maxTranscriptKb = doc?.session?.maxTranscriptKb;
 			if (!rotated && maxTranscriptKb !== undefined) {
-				const info = await stat(join(workdir, "transcript.jsonl")).catch(
-					(err) => {
-						if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-						throw err;
-					},
-				);
+				const info = await stat(join(workdir, SESSION_FILE)).catch((err) => {
+					if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
+					throw err;
+				});
 				if (info !== null && info.size > maxTranscriptKb * 1024) {
 					const now = Date.now();
 					await rotateTranscript(workdir, now);
@@ -910,7 +909,7 @@ export class SessionRunner {
 		// (Linux では通常 no-op)
 		const workdirReal = await realpath(workdir);
 		const agentHomeReal = await realpath(this.agentHome);
-		const sessionPath = join(workdirReal, "transcript.jsonl");
+		const sessionPath = join(workdirReal, SESSION_FILE);
 		const resumed = await transcriptExists(sessionPath);
 
 		const model = doc?.model;

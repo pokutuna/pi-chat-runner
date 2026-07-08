@@ -580,10 +580,10 @@ describe("SessionRunner (fake-pi integration)", () => {
 		const sessionKey = "C01";
 		const workdir = join(h.workdirRoot, "C01", "channel");
 
-		// 事前に workdir と transcript.jsonl、および 10 分前の SessionDoc を用意する
+		// 事前に workdir と session.jsonl、および 10 分前の SessionDoc を用意する
 		// (前回セッションが idle 期間を超えて放置された状態を模す)
 		await mkdir(workdir, { recursive: true });
-		await writeFile(join(workdir, "transcript.jsonl"), "OLD TRANSCRIPT\n");
+		await writeFile(join(workdir, "session.jsonl"), "OLD TRANSCRIPT\n");
 		await h.store.sessions.put(sessionKey, {
 			channelId: "C01",
 			threadTs: "channel",
@@ -599,10 +599,10 @@ describe("SessionRunner (fake-pi integration)", () => {
 
 		const entries = await readdir(workdir);
 		expect(entries).toContain("commands.jsonl");
-		expect(entries.some((name) => /^transcript-\d+\.jsonl$/.test(name))).toBe(
+		expect(entries.some((name) => /^session-\d+\.jsonl$/.test(name))).toBe(
 			true,
 		);
-		expect(entries).not.toContain("transcript.jsonl");
+		expect(entries).not.toContain("session.jsonl");
 
 		expect(
 			h
@@ -617,10 +617,10 @@ describe("SessionRunner (fake-pi integration)", () => {
 		});
 		const workdir = join(h.workdirRoot, "C01", "channel");
 
-		// 事前に workdir と 2KB 程度の transcript.jsonl を用意する (閾値 1KB 超過)。
+		// 事前に workdir と 2KB 程度の session.jsonl を用意する (閾値 1KB 超過)。
 		// size 判定は store に依存しないため SessionDoc の事前 put は不要
 		await mkdir(workdir, { recursive: true });
-		await writeFile(join(workdir, "transcript.jsonl"), "x".repeat(2 * 1024));
+		await writeFile(join(workdir, "session.jsonl"), "x".repeat(2 * 1024));
 
 		const trigger = message({ mentionsBot: true, text: "size reset please" });
 		await h.runner.handle(trigger);
@@ -628,10 +628,10 @@ describe("SessionRunner (fake-pi integration)", () => {
 		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
 
 		const entries = await readdir(workdir);
-		expect(entries.some((name) => /^transcript-\d+\.jsonl$/.test(name))).toBe(
+		expect(entries.some((name) => /^session-\d+\.jsonl$/.test(name))).toBe(
 			true,
 		);
-		expect(entries).not.toContain("transcript.jsonl");
+		expect(entries).not.toContain("session.jsonl");
 
 		expect(
 			h
@@ -647,7 +647,7 @@ describe("SessionRunner (fake-pi integration)", () => {
 		const workdir = join(h.workdirRoot, "C01", "channel");
 
 		await mkdir(workdir, { recursive: true });
-		await writeFile(join(workdir, "transcript.jsonl"), "x".repeat(100));
+		await writeFile(join(workdir, "session.jsonl"), "x".repeat(100));
 
 		const trigger = message({ mentionsBot: true, text: "no size reset" });
 		await h.runner.handle(trigger);
@@ -655,8 +655,8 @@ describe("SessionRunner (fake-pi integration)", () => {
 		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
 
 		const entries = await readdir(workdir);
-		expect(entries).toContain("transcript.jsonl");
-		expect(entries.some((name) => /^transcript-\d+\.jsonl$/.test(name))).toBe(
+		expect(entries).toContain("session.jsonl");
+		expect(entries.some((name) => /^session-\d+\.jsonl$/.test(name))).toBe(
 			false,
 		);
 	});
@@ -729,7 +729,7 @@ describe("SessionRunner (fake-pi integration)", () => {
 		expect(commands.filter((c) => c.type === "prompt")).toHaveLength(2);
 	});
 
-	it("logs resumed: true when transcript.jsonl already exists for the workdir", async () => {
+	it("logs resumed: true when session.jsonl already exists for the workdir", async () => {
 		const h = await harness();
 		const trigger = message({ mentionsBot: true, text: "first" });
 		await h.runner.handle(trigger);
@@ -744,11 +744,11 @@ describe("SessionRunner (fake-pi integration)", () => {
 		expect(startedLogs).toHaveLength(1);
 		expect(startedLogs[0]?.resumed).toBe(false);
 
-		// fake-pi は transcript.jsonl を作らないため、pi が実際に書き出した状態を
+		// fake-pi は session.jsonl を作らないため、pi が実際に書き出した状態を
 		// テスト側で模して置く (session-runtime.md: 再開は同じ --session パスへの
 		// 再 spawn だけで実現される)
 		await writeFile(
-			join(h.workdirRoot, "C01", trigger.id, "transcript.jsonl"),
+			join(h.workdirRoot, "C01", trigger.id, "session.jsonl"),
 			"",
 		);
 
@@ -1015,12 +1015,12 @@ describe("SessionRunner.handleReaction (reaction trigger for initial kick)", () 
 		);
 		const threadTs = "1700000000.000050";
 
-		// 過去セッションの棚 (baseDir/C01/<threadTs>/transcript.jsonl) を事前に用意する。
+		// 過去セッションの棚 (baseDir/C01/<threadTs>/session.jsonl) を事前に用意する。
 		// workdirRoot 側には何も置かない (コールドスタートを模す — 731 行目のテストは
 		// workdirRoot に直接置くが、こちらは棚経由の restore だけで再開が成立することを見る)
 		const shelfDir = join(baseDir, "C01", threadTs);
 		await mkdir(shelfDir, { recursive: true });
-		await writeFile(join(shelfDir, "transcript.jsonl"), "PAST TRANSCRIPT\n");
+		await writeFile(join(shelfDir, "session.jsonl"), "PAST TRANSCRIPT\n");
 
 		const { fetch } = fetchReturning({ text: "continue please", threadTs });
 		const target = reaction({ targetMessageId: "1700000000.000300" });
@@ -1042,7 +1042,7 @@ describe("SessionRunner.handleReaction (reaction trigger for initial kick)", () 
 
 		// workdir にも棚の内容が復元されている
 		const restored = await readFile(
-			join(h.workdirRoot, "C01", threadTs, "transcript.jsonl"),
+			join(h.workdirRoot, "C01", threadTs, "session.jsonl"),
 			"utf-8",
 		);
 		expect(restored).toContain("PAST TRANSCRIPT");

@@ -240,7 +240,7 @@ const pi = spawn("node", [
   "--allow-fs-read=...", "--allow-fs-write=...",       // workdir / HOME / extension dir に限定
   piEntrypoint,                                        // 自動検出した dist/cli.js
   "--mode", "rpc",                                     // stdin/stdout JSONL
-  "--session", `${workdir}/transcript.jsonl`,
+  "--session", `${workdir}/session.jsonl`,
   "--model", channel.model,                            // channels.yaml の model (未指定なら pi 既定)
   "--append-system-prompt", buildPrompt(channel),      // app 共通 + ChannelDoc.systemPrompt
   "--extension", "/app/extensions/reply.ts",           // 常時注入 (Config で外せない)
