@@ -138,6 +138,7 @@ function outermostNodeModules(path: string): string {
  * 自動検出値を使う。 */
 function buildPiPermissionConfig(
 	runtime: ResolvedAgentRuntime,
+	piPaths: { entrypoint: string; nodeModulesDir: string },
 ): PiPermissionConfig | undefined {
 	if (!runtime.permissionMode) return undefined;
 	// HOME を agentHome に固定するとローカルのユーザー ADC ($HOME/.config/gcloud) は
@@ -145,7 +146,7 @@ function buildPiPermissionConfig(
 	// ファイルだけ read を許可する
 	const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
 	return {
-		...resolvePiPaths(),
+		...piPaths,
 		...(credentialsPath !== undefined ? { extraRead: [credentialsPath] } : {}),
 	};
 }
@@ -293,14 +294,21 @@ async function main() {
 	const { provider, turnTimeoutMs, runtime } = agentConfig;
 
 	const gcpEnv = collectGcpEnv();
+	const piPaths = resolvePiPaths();
 	// 足し算モデル (config.md §6): pi に渡る env は「コード既定 (gcpEnv) + agent.env に
 	// 明示列挙したものだけ」。agent.env はレイヤ③ (ユーザー明示) としてレイヤ②
 	// (gcpEnv, コード既定) を上書きできる — pi の実行に必須な GOOGLE_CLOUD_PROJECT 等を
-	// 利用者が意図して差し替えるケースを許すため、後勝ちで agent.env を上に重ねる
-	const extraEnv = { ...gcpEnv, ...agentConfig.env };
+	// 利用者が意図して差し替えるケースを許すため、後勝ちで agent.env を上に重ねる。
+	// PI_EXPORT_ENTRYPOINT は export extension (孫プロセスとして `pi --export` を
+	// 起動する) がホストの pi エントリポイントを知るために必要
+	const extraEnv = {
+		...gcpEnv,
+		...agentConfig.env,
+		PI_EXPORT_ENTRYPOINT: piPaths.entrypoint,
+	};
 	const store = buildStateStore(storeConfig);
 	const archiveDir = process.env.WORKDIR_ARCHIVE_DIR;
-	const piPermission = buildPiPermissionConfig(runtime);
+	const piPermission = buildPiPermissionConfig(runtime, piPaths);
 
 	const web = new WebClient(botToken);
 

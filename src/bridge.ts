@@ -6,7 +6,8 @@
 //
 // extensionPaths は options に出さない: reply tool と permission-gate の常時注入は
 // 外せない安全方針 (docs/design/config.md §5「reply tool の注入・RPC 結線 | コード」)。
-// この 2 extension は常にここで import.meta.url 相対に解決する。
+// export は安全上必須ではないが、標準機能として同様に常時注入する。
+// これらの extension は常にここで import.meta.url 相対に解決する。
 
 import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -163,6 +164,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 			fileURLToPath(
 				new URL("../extensions/permission-gate.ts", import.meta.url),
 			),
+			fileURLToPath(new URL("../extensions/export.ts", import.meta.url)),
 		],
 		// mentionFormat は必須 (SessionRunner はプラットフォーム中立で既定値を
 		// 持たない)。bridge.ts は Slack 専用モジュールなので、Slack の mrkdwn
