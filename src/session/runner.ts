@@ -82,10 +82,10 @@ function mentionInstruction(mentionFormat: MentionFormat): string {
  * workdir / home はセッションごとに決まるため kick 時に buildPiPermissionOptions
  * へ都度渡す — ここに載るのはイメージ内で固定のパスだけ */
 export interface PiPermissionConfig {
-	/** pi 本体のエントリポイント JS の絶対パス (require.resolve で自動検出する。
+	/** pi 本体のエントリポイント JS の絶対パス (import.meta.resolve で自動検出する。
 	 * server.ts 参照) */
 	entrypoint: string;
-	/** pi 本体・依存が入る npm パッケージの node_modules ルート (require.resolve で
+	/** pi 本体・依存が入る npm パッケージの node_modules ルート (import.meta.resolve で
 	 * 自動検出する。server.ts 参照) */
 	nodeModulesDir: string;
 	/** 追加で write を許可したいパス (例 "/tmp/*")。既定なし */
