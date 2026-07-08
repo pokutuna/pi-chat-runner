@@ -162,18 +162,20 @@ turn timeout (10 分) + エラー投稿 + ❌、DM 既定 config (`dm`)、base i
 │   │   ├── runner.ts       # lease → drain → kick のオーケストレーション
 │   │   ├── runtime.ts      # SessionRuntime: pi の spawn / RPC / timeout (pi 専用実装)
 │   │   ├── rpc.ts          # stdin/stdout JSONL のプロトコル層
-│   │   └── pi-events.ts    # pi のイベント型 (ドメイン層)
+│   │   └── pi-events.ts    # pi イベントからの抽出 (reply 引数・usage・エラー、ドメイン層)
 │   ├── store/
 │   │   ├── workdir.ts      # WorkdirStorage IF + Copy(退避) / Noop(退避なし) 実装
 │   │   └── state/
 │   │       ├── interfaces.ts # InboxStore / SessionStore / LeaseStore / StateStore IF
 │   │       ├── inbox-item.ts # inboxItemId
 │   │       └── backends/      # firestore.ts / sqlite.ts / memory.ts
-│   ├── reply/
-│   │   ├── router.ts       # thread_key → thread_ts、投稿、formatter フック
+│   ├── egress/
+│   │   ├── router.ts       # thread_key → thread_ts、投稿、formatter フック、ファイル添付
+│   │   ├── mrkdwn.ts       # GFM → Slack mrkdwn 変換 (formatter フックの実体)
 │   │   └── reactions.ts    # 👀 / ✅ / ❌
 ├── extensions/
-│   └── reply.ts            # pi extension (イメージの /app/extensions/ へ)
+│   ├── reply.ts            # pi extension: reply(thread_key, text, files?) (イメージの /app/extensions/ へ)
+│   └── permission-gate.ts  # pi extension: bash tool の denylist (事故防止層)
 ├── skills/                 # サンプル skill (イメージの /app/skills/ へ)
 ├── examples/
 │   ├── service.yaml        # Cloud Run 定義の雛形 (secretKeyRef / env、要編集)
@@ -188,6 +190,6 @@ turn timeout (10 分) + エラー投稿 + ❌、DM 既定 config (`dm`)、base i
 └── test/
 ```
 
-ステップとの対応: Step 1 = ingress + reply の骨格、Step 2 = session/runtime +
+ステップとの対応: Step 1 = ingress + egress の骨格、Step 2 = session/runtime +
 extensions/、Step 3 = gate + config-source(File) + examples/、Step 4 = store +
 workdir、Step 5 = Dockerfile + service.yaml、Step 6 = 隔離まわり。
