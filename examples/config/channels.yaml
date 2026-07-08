@@ -49,3 +49,16 @@ channels:
         - kind: mention
     # tools: [read, grep, bash]      # 調査専用にする例 (reply は自動で許可される)
     # excludeTools: [write, edit]    # 書き込み系だけ外す例
+
+  - channel: "C0000000004" # 自分のチャンネル ID に置き換える (他の example と重複させない)
+    # reaction Gate (session-model.md §5「人間によるリアクション起動」) の動作確認用。
+    # 既存メッセージに :eyes: / :robot_face: を付けると、その対象メッセージ本文で
+    # セッションが起動する。mention との OR なので mention でも起動する。
+    # 対象メッセージがスレッド返信なら親スレッドの sessionKey に着地し、棚に
+    # transcript があれば restore 経由で文脈継続する (実質再開)。
+    systemPrompt: ./prompts/ask-ai.md
+    trigger:
+      when:
+        - kind: reaction
+          emoji: [eyes, robot_face] # Slack の正規化名 (: は付けない)
+        - kind: mention

@@ -51,9 +51,9 @@ SessionRunner      — acquires lease, drains inbox, kicks a turn (src/session/r
     │  turn input
     ▼
 SessionRuntime     — spawns and drives the pi child process via RPC (src/session/runtime.ts)
-    │  reply(thread_key, text)
+    │  reply(thread_key, text, files?)
     ▼
-Reply Router       — resolves thread_key to actual destination (src/reply/)
+Egress             — resolves thread_key to destination, formats to mrkdwn, chunks (src/egress/)
     │  outgoing message
     ▼
 Chat (e.g. Slack)

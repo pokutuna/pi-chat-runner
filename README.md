@@ -8,7 +8,7 @@ See [docs/design/README.md](docs/design/README.md) for the design and [docs/buil
 
 - The session boundary is a `thread_key`, a conversation scope determined by config
 - The agent replies only through the `reply` tool; the host owns the actual destination
-- Per-channel trigger conditions, prompts, and models are declared in YAML
+- Per-channel trigger conditions, prompts, and models are declared in YAML — a message mention, keyword, or LLM classifier, or an emoji reaction on an existing message, can kick a session
 - DB (inbox/session/lease) and workdir archival are independent, swappable backends
 - The pi agent itself is customized by consumers: extend the base image with your own Dockerfile to add commands or skills (`/app/skills/`, etc.)
 
@@ -33,9 +33,9 @@ SessionRunner: acquires lease, drains inbox, kicks a turn
 │  turn input
 ▼
 SessionRuntime: spawns and drives pi via RPC (pi)
-│  reply(thread_key, text)
+│  reply(thread_key, text, files?)
 ▼
-Reply Router: resolves thread_key to actual destination
+Egress: resolves thread_key to a destination, formats to mrkdwn, chunks long replies
 │  outgoing message
 ▼
 Chat (e.g. Slack)
@@ -46,9 +46,10 @@ Chat (e.g. Slack)
 | `src/ingress/` | Platform-neutral abstractions + Slack implementation under `slack/` |
 | `src/gate/` | Trigger Gate abstraction + implementations under `gates/` |
 | `src/config/` | Channel configuration (YAML) loading and schema |
+| `src/classifier/` | LLM client backing the classifier Gate |
 | `src/session/` | Spawning pi, RPC, orchestration |
 | `src/store/` | Persistence: `state/` (DB) and `workdir.ts` (workdir archival) |
-| `src/reply/` | thread_key resolution and reaction handling |
+| `src/egress/` | thread_key resolution, mrkdwn formatting, message chunking, reactions |
 | `extensions/` | Extensions injected into pi |
 | `home/` | Baked into the base image as `/home/agent` (default `settings.json`, etc.) |
 | `skills/` | Baked into the base image as `/app/skills` (sample skills for pi; empty by default) |
@@ -74,9 +75,11 @@ Set Slack credentials in `.env.socket` or `.env`. Channel behavior is configured
 channel: "C0000000001"
 systemPrompt: ./prompts/ask-ai.md
 trigger:
-  combinator: any
-  gates:
+  # when is a boolean tree of gates: a bare array is OR, {and}/{or} compose explicitly.
+  when:
     - kind: mention
+    - kind: reaction   # an emoji reaction on an existing message kicks a session on that message
+      emoji: [eyes, robot_face]
 ```
 
 DB defaults to InMemory (`./store/sqlite` / `./store/firestore` for persistence). Workdir archival defaults to no-op unless `archiveDir` is set. See [docs/design/persistence.md](docs/design/persistence.md).
