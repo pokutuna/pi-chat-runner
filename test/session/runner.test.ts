@@ -45,6 +45,7 @@ import { InMemoryStateStore } from "../../src/store/state/backends/memory.js";
 import { inboxItemId } from "../../src/store/state/inbox-item.js";
 import type { StateStore } from "../../src/store/state/interfaces.js";
 import {
+	CopyWorkdirStorage,
 	NoopWorkdirStorage,
 	type WorkdirStorage,
 } from "../../src/store/workdir.js";
@@ -1001,6 +1002,83 @@ describe("SessionRunner.handleReaction (reaction trigger for initial kick)", () 
 		expect(
 			await h.store.leases.acquire(sessionKey, "probe", 1000),
 		).not.toBeNull();
+	});
+
+	it("reaction 起動が過去セッションと同じ sessionKey に着地すると、棚の transcript が restore されて resumed:true になる (実質再開)", async () => {
+		const baseDir = await mkdtemp(join(tmpdir(), "pi-chat-runner-test-shelf-"));
+		const storage = new CopyWorkdirStorage(baseDir);
+		const h = await harness(
+			{
+				C01: { trigger: { when: [{ kind: "reaction", emoji: ["eyes"] }] } },
+			},
+			{ workdirStorage: storage },
+		);
+		const threadTs = "1700000000.000050";
+
+		// 過去セッションの棚 (baseDir/C01/<threadTs>/transcript.jsonl) を事前に用意する。
+		// workdirRoot 側には何も置かない (コールドスタートを模す — 731 行目のテストは
+		// workdirRoot に直接置くが、こちらは棚経由の restore だけで再開が成立することを見る)
+		const shelfDir = join(baseDir, "C01", threadTs);
+		await mkdir(shelfDir, { recursive: true });
+		await writeFile(join(shelfDir, "transcript.jsonl"), "PAST TRANSCRIPT\n");
+
+		const { fetch } = fetchReturning({ text: "continue please", threadTs });
+		const target = reaction({ targetMessageId: "1700000000.000300" });
+
+		await h.runner.handleReaction(target, fetch);
+
+		await waitFor(
+			() => h.logLines().some((line) => line.msg === "session started"),
+			"session started logged",
+		);
+		const startedLogs = h
+			.logLines()
+			.filter((line) => line.msg === "session started");
+		expect(startedLogs).toHaveLength(1);
+		// 命題の核心: 棚からの restore によって pi が既存 transcript を検出し、
+		// resumed:true として起動している (同一インスタンス内で workdir に直接ファイルを
+		// 置く既存テストとは異なり、棚経由の restore だけで再開が成立する)
+		expect(startedLogs[0]?.resumed).toBe(true);
+
+		// workdir にも棚の内容が復元されている
+		const restored = await readFile(
+			join(h.workdirRoot, "C01", threadTs, "transcript.jsonl"),
+			"utf-8",
+		);
+		expect(restored).toContain("PAST TRANSCRIPT");
+
+		await waitFor(() => h.poster.calls.length === 1, "reply posted");
+		expect(h.poster.calls[0]?.threadTs).toBe(threadTs);
+
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+	});
+
+	it("棚に transcript が無ければ resumed:false (新規セッション、再開ではない)", async () => {
+		const baseDir = await mkdtemp(join(tmpdir(), "pi-chat-runner-test-shelf-"));
+		const storage = new CopyWorkdirStorage(baseDir);
+		const h = await harness(
+			{
+				C01: { trigger: { when: [{ kind: "reaction", emoji: ["eyes"] }] } },
+			},
+			{ workdirStorage: storage },
+		);
+		const threadTs = "1700000000.000060";
+		const { fetch } = fetchReturning({ text: "fresh start please", threadTs });
+		const target = reaction({ targetMessageId: "1700000000.000300" });
+
+		await h.runner.handleReaction(target, fetch);
+
+		await waitFor(
+			() => h.logLines().some((line) => line.msg === "session started"),
+			"session started logged",
+		);
+		const startedLogs = h
+			.logLines()
+			.filter((line) => line.msg === "session started");
+		expect(startedLogs).toHaveLength(1);
+		expect(startedLogs[0]?.resumed).toBe(false);
+
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
 	});
 });
 
