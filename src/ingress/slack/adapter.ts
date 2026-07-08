@@ -151,6 +151,7 @@ export class SlackIngressAdapter {
 			sender: { id: event.user, isBot: false },
 			added: event.type === "reaction_added",
 			timestamp: new Date(),
+			raw: event,
 		};
 	}
 

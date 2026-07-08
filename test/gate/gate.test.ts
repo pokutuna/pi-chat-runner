@@ -13,6 +13,7 @@ import { ClassifierGate } from "../../src/gate/gates/classifier.js";
 import { KeywordGate } from "../../src/gate/gates/keyword.js";
 import { MentionGate } from "../../src/gate/gates/mention.js";
 import { PassthroughGate } from "../../src/gate/gates/passthrough.js";
+import { ReactionGate } from "../../src/gate/gates/reaction.js";
 import type { InboundMessage } from "../../src/ingress/chat-event.js";
 
 function makeMessage(overrides: Partial<InboundMessage> = {}): InboundMessage {
@@ -65,6 +66,11 @@ describe("createGate (registry)", () => {
 		expect(() => createGate({ kind: "classifier", criteria: "c" })).toThrow(
 			/requires a classifierClient/,
 		);
+	});
+
+	it("creates a ReactionGate for kind=reaction with emoji", () => {
+		const gate = createGate({ kind: "reaction", emoji: ["eyes"] });
+		expect(gate).toBeInstanceOf(ReactionGate);
 	});
 
 	it("throws for unknown kind", () => {

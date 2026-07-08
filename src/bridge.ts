@@ -26,7 +26,7 @@ import { SlackUserResolver } from "./ingress/slack/user-resolver.js";
 import { enrichEvent, type UserResolver } from "./ingress/user-resolver.js";
 import type { Logger } from "./logger.js";
 import { rootLogger } from "./logger.js";
-import type { PiPermissionConfig } from "./session/runner.js";
+import type { FetchMessage, PiPermissionConfig } from "./session/runner.js";
 import { SessionRunner } from "./session/runner.js";
 import type { StateStore } from "./store/state/interfaces.js";
 import { createWorkdirStorage, type WorkdirStorage } from "./store/workdir.js";
@@ -108,6 +108,28 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 		new Reactions({
 			add: (args) => web.reactions.add(args),
 		});
+	// reaction トリガーの対象メッセージ本文取得 (session-model.md §5「人間による
+	// リアクション起動」)。conversations.replies は ts が親でもスレッド返信でも、
+	// その ts のメッセージ自身を先頭で返す
+	const fetchMessage: FetchMessage = async (channelId, ts) => {
+		try {
+			const res = await web.conversations.replies({
+				channel: channelId,
+				ts,
+				limit: 1,
+			});
+			const msg = res.messages?.[0];
+			if (msg?.text === undefined) return null;
+			return {
+				text: msg.text,
+				...(msg.thread_ts !== undefined ? { threadTs: msg.thread_ts } : {}),
+				...(msg.user !== undefined ? { userId: msg.user } : {}),
+			};
+		} catch (err) {
+			logger.warn({ err, channelId, ts }, "fetchMessage failed");
+			return null;
+		}
+	};
 	// workdirStorage 注入があれば archiveDir より優先する
 	const workdirStorage =
 		options.workdirStorage ?? createWorkdirStorage(options.archiveDir);
@@ -193,6 +215,22 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 			},
 			"event received",
 		);
+
+		if (event.kind === "reaction") {
+			if (event.sender.isBot) {
+				logger.info(
+					{ reason: "bot_message", kind: event.kind },
+					"event ignored",
+				);
+				return;
+			}
+			try {
+				await runner.handleReaction(event, fetchMessage);
+			} catch (err) {
+				logger.error({ err }, "failed to handle reaction");
+			}
+			return;
+		}
 
 		if (event.kind !== "message") {
 			logger.info(

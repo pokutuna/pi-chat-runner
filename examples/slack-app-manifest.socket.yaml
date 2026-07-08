@@ -15,6 +15,7 @@ oauth_config:
     - chat:write
     - files:write
     - reactions:write
+    - reactions:read
     - channels:history
     - groups:history
     - im:history
@@ -26,6 +27,7 @@ settings:
     - message.channels
     - message.groups
     - message.im
+    - reaction_added
   interactivity:
     is_enabled: false
   org_deploy_enabled: false

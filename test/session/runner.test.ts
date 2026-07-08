@@ -21,8 +21,13 @@ import type { ChannelDoc } from "../../src/config/channel-doc.js";
 import type { ConfigSource } from "../../src/config/config-source.js";
 import { Reactions } from "../../src/egress/reactions.js";
 import { type ChatPoster, EgressRouter } from "../../src/egress/router.js";
-import type { InboundMessage } from "../../src/ingress/chat-event.js";
 import type {
+	InboundMessage,
+	ReactionEvent,
+} from "../../src/ingress/chat-event.js";
+import type {
+	FetchedMessage,
+	FetchMessage,
 	MentionFormat,
 	PiPermissionConfig,
 } from "../../src/session/runner.js";
@@ -879,6 +884,124 @@ describe("SessionRunner (fake-pi integration)", () => {
 	// extension dirs)」でカバーする。ここでは extension dirs 込みの extraRead を
 	// 積んだ状態でも実際に Permission Model 下で pi (fake-pi) が起動し reply まで
 	// 到達すること (上のテスト) をもって、配線が壊れていないことの回帰保護とする
+});
+
+describe("SessionRunner.handleReaction (reaction trigger for initial kick)", () => {
+	function reaction(overrides: Partial<ReactionEvent> = {}): ReactionEvent {
+		return {
+			kind: "reaction",
+			emoji: "eyes",
+			targetMessageId: "1700000000.000300",
+			targetIsOwnMessage: false,
+			conversation: { channelId: "C01" },
+			sender: { id: "U02", isBot: false },
+			added: true,
+			timestamp: new Date("2026-07-05T00:00:00Z"),
+			...overrides,
+		};
+	}
+
+	function fetchReturning(result: FetchedMessage | null): {
+		fetch: FetchMessage;
+		calls: [string, string][];
+	} {
+		const calls: [string, string][] = [];
+		const fetch: FetchMessage = async (channelId, ts) => {
+			calls.push([channelId, ts]);
+			return result;
+		};
+		return { fetch, calls };
+	}
+
+	it("reaction gate match + fetch success kicks a session with the fetched text", async () => {
+		const h = await harness({
+			C01: { trigger: { when: [{ kind: "reaction", emoji: ["eyes"] }] } },
+		});
+		const { fetch } = fetchReturning({ text: "question from reaction" });
+		const target = reaction();
+
+		await h.runner.handleReaction(target, fetch);
+
+		await waitFor(() => h.poster.calls.length === 1, "reply posted");
+		expect(h.poster.calls[0]?.text).toContain("question from reaction");
+		expect(h.poster.calls[0]?.channelId).toBe("C01");
+		expect(h.poster.calls[0]?.threadTs).toBe(target.targetMessageId);
+
+		await waitFor(
+			() => h.reactions.some((r) => r.name === "white_check_mark"),
+			"check reaction",
+		);
+		expect(h.reactions[0]).toMatchObject({
+			name: "eyes",
+			timestamp: target.targetMessageId,
+		});
+
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+	});
+
+	it("reaction gate mismatch: fetch is never called and no session is kicked", async () => {
+		const h = await harness({
+			C01: { trigger: { when: [{ kind: "reaction", emoji: ["tada"] }] } },
+		});
+		const { fetch, calls } = fetchReturning({ text: "should not be used" });
+		const target = reaction({ emoji: "eyes" });
+
+		await h.runner.handleReaction(target, fetch);
+		// gate 非一致は同期的に return するはずだが、念のため少し待って非発火を確認する
+		await sleep(50);
+
+		expect(calls).toEqual([]);
+		expect(h.runner.activeSessionCount).toBe(0);
+		expect(h.poster.calls).toEqual([]);
+	});
+
+	it("fetch returning null does not kick a session (target message not found)", async () => {
+		const h = await harness({
+			C01: { trigger: { when: [{ kind: "reaction", emoji: ["eyes"] }] } },
+		});
+		const { fetch } = fetchReturning(null);
+		const target = reaction();
+
+		await h.runner.handleReaction(target, fetch);
+		await sleep(50);
+
+		expect(h.runner.activeSessionCount).toBe(0);
+		expect(h.poster.calls).toEqual([]);
+		expect(
+			h
+				.logLines()
+				.some((line) =>
+					String(line.msg ?? "").includes("reaction target message not found"),
+				),
+		).toBe(true);
+	});
+
+	it("fetched.threadTs lands the synthetic message's sessionKey/reply on the parent thread", async () => {
+		const h = await harness({
+			C01: { trigger: { when: [{ kind: "reaction", emoji: ["eyes"] }] } },
+		});
+		const parentThreadTs = "1700000000.000050";
+		const { fetch } = fetchReturning({
+			text: "reply from a thread",
+			threadTs: parentThreadTs,
+		});
+		const target = reaction({ targetMessageId: "1700000000.000300" });
+
+		await h.runner.handleReaction(target, fetch);
+
+		await waitFor(() => h.poster.calls.length === 1, "reply posted");
+		// reply 宛先は fetched.threadTs (親スレッド) — targetMessageId 単独ではない
+		expect(h.poster.calls[0]?.threadTs).toBe(parentThreadTs);
+
+		await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+		// sessionKey = channelId:threadTs (fetched.threadTs 転写が効いている証跡として
+		// そのキーで workdir が作られ、inbox が空になっていることを確認する)
+		const sessionKey = `C01:${parentThreadTs}`;
+		expect(await h.store.inbox.drain(sessionKey)).toEqual([]);
+		expect(
+			await h.store.leases.acquire(sessionKey, "probe", 1000),
+		).not.toBeNull();
+	});
 });
 
 describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {

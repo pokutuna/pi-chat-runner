@@ -84,6 +84,24 @@ describe("SlackIngressAdapter.normalize", () => {
 		expect(reaction.conversation).toEqual({ channelId: "C123" });
 	});
 
+	it("keeps the raw reaction_added payload on ReactionEvent.raw", () => {
+		const raw = {
+			type: "reaction_added" as const,
+			user: "U123",
+			reaction: "eyes",
+			item: {
+				type: "message" as const,
+				channel: "C123",
+				ts: "1720000010.000100",
+			},
+		};
+		const result = adapter.normalize(raw);
+
+		expect(result).not.toBeNull();
+		const reaction = result as ReactionEvent;
+		expect(reaction.raw).toEqual(raw);
+	});
+
 	it("returns null for message subtypes (e.g. message_changed)", () => {
 		const result = adapter.normalize({
 			type: "message",

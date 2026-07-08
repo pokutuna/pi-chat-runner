@@ -34,7 +34,7 @@ import {
 	evaluateWhen,
 	type GateDeps,
 } from "../gate/gate.js";
-import type { InboundMessage } from "../ingress/chat-event.js";
+import type { InboundMessage, ReactionEvent } from "../ingress/chat-event.js";
 import type { Logger } from "../logger.js";
 import { rootLogger } from "../logger.js";
 import { inboxItemId } from "../store/state/inbox-item.js";
@@ -68,6 +68,22 @@ const APP_SYSTEM_PROMPT = [
  * プラットフォームごとに記法が異なるため SessionRunnerOptions では必須
  * (bridge が利用先プラットフォームの記法を渡す。bridge 以外の利用者は自分で実装を渡す) */
 export type MentionFormat = (userId: string) => string;
+
+/** reaction の対象メッセージ本文を取得する port (session-model.md §5「人間による
+ * リアクション起動」)。bridge が Slack conversations.replies/history で実装する。
+ * 見つからない/取得失敗時は null。 */
+export type FetchMessage = (
+	channelId: string,
+	ts: string,
+) => Promise<FetchedMessage | null>;
+
+export interface FetchedMessage {
+	text: string;
+	/** 対象メッセージが属するスレッドの thread_ts。トップレベル発言なら undefined。 */
+	threadTs?: string;
+	/** 発言者 (表示名解決は任意)。 */
+	userId?: string;
+}
 
 /** mention 記法の説明文を組み立てる。mentionFormat の出力例をそのまま
  * システムプロンプトへ埋め込み、実際の記法をエージェントに示す */
@@ -419,40 +435,8 @@ export class SessionRunner {
 		};
 
 		// 実行中 (起動中含む) セッションがあるレーン: gate は通さず enqueue して
-		// steer で配達 (architecture.md §6 フロー 6。後続発言は追加指示として扱う)。
-		// enqueue は「セッションあり or gate 通過」のときだけ行う — gate 非通過の
-		// 全メッセージを永続 store に溜め込まない (dedupe は enqueue 時に効く)
-		const existing = this.sessions.get(sessionKey);
-		if (existing !== undefined) {
-			const fresh = await this.store.inbox.enqueue(sessionKey, item);
-			if (!fresh) {
-				this.logger.debug(
-					{ sessionKey, itemId: item.id },
-					"inbox duplicate skip",
-				);
-				return;
-			}
-			// starting 中は初回 prompt の drain が拾う。running なら steer で即配達する
-			if (existing.state === "running" && existing.process?.running) {
-				const items = await this.store.inbox.drain(sessionKey);
-				const pending = items.filter((i) => !existing.promptedIds.has(i.id));
-				if (pending.length > 0) {
-					// steer 前に宛先登録 (session-model.md §3 の境界規則)
-					for (const p of pending) {
-						this.registerReplyDestination(p.event, existing.policy);
-					}
-					for (const p of pending) existing.promptedIds.add(p.id);
-					existing.turnEpoch += 1;
-					this.resetTurnTimeout(sessionKey, existing);
-					existing.process.steer(renderItems(pending));
-					this.logger.info(
-						{ sessionKey, items: pending.length },
-						"session steered",
-					);
-				}
-			}
-			return;
-		}
+		// steer で配達 (architecture.md §6 フロー 6。後続発言は追加指示として扱う)
+		if (await this.trySteerExisting(sessionKey, item)) return;
 
 		// 実行中でない: gate 評価 → trigger なら enqueue して kick (即 or debounce)
 		const when = this.resolveWhen(doc, isDm);
@@ -470,9 +454,136 @@ export class SessionRunner {
 		);
 		this.warnCooldownIfUnsupported(doc, sessionKey);
 
-		// gate 通過が確定してから耐久キューへ積む (dedupe = at-least-once の再送吸収)。
-		// item はここで既に永続化されるため、この後 debounce タイマーで kick を遅らせても
-		// プロセス死で消えない (拾い直しは既存の inbox 経路に乗る)
+		await this.kickTriggered(sessionKey, channelId, policy, event, doc, item);
+	}
+
+	/** reaction によるリアクション起動 (session-model.md §5「人間によるリアクション
+	 * 起動」)。reaction event を trigger.when の Gate 木で評価し、trigger したときに
+	 * のみ対象メッセージ本文を fetch で取得して synthetic InboundMessage に変換し、
+	 * 既存の message キック経路 (trySteerExisting / kickTriggered) に合流させる。
+	 * handle (message 専用) 自体は変更しない — 別 event kind のフローとして独立させる */
+	async handleReaction(
+		event: ReactionEvent,
+		fetch: FetchMessage,
+	): Promise<void> {
+		const channelId = event.conversation.channelId;
+		const isDm = event.conversation.isDm === true;
+		const doc = await this.loadChannelDoc(isDm ? DM_CHANNEL : channelId);
+		const when = this.resolveWhen(doc, isDm);
+		const decision = await evaluateWhen(when, { event, recent: [] });
+		if (!decision.trigger) {
+			this.logger.debug(
+				{ channelId, reason: decision.reason },
+				"reaction gate not triggered",
+			);
+			return;
+		}
+
+		const fetched = await fetch(channelId, event.targetMessageId);
+		if (fetched === null) {
+			this.logger.warn(
+				{ channelId, targetMessageId: event.targetMessageId },
+				"reaction target message not found",
+			);
+			return;
+		}
+
+		const synthetic: InboundMessage = {
+			kind: "message",
+			id: event.targetMessageId,
+			conversation: {
+				channelId: event.conversation.channelId,
+				...(fetched.threadTs !== undefined
+					? { threadTs: fetched.threadTs }
+					: {}),
+				...(event.conversation.isDm ? { isDm: true } : {}),
+			},
+			sender: event.sender,
+			text: fetched.text,
+			mentionsBot: false,
+			attachments: [],
+			timestamp: event.timestamp,
+			raw: event.raw,
+			metadata: {},
+		};
+
+		this.logger.info(
+			{ channelId, reason: decision.reason },
+			"reaction gate triggered",
+		);
+
+		const policy = resolveSessionPolicy(doc, isDm);
+		const sessionKey = sessionKeyOf(synthetic, policy);
+		const item: InboxItem = {
+			id: inboxItemId(synthetic),
+			event: synthetic,
+			enqueuedAt: new Date(),
+		};
+
+		if (await this.trySteerExisting(sessionKey, item)) return;
+		await this.kickTriggered(
+			sessionKey,
+			channelId,
+			policy,
+			synthetic,
+			doc,
+			item,
+		);
+	}
+
+	/** 実行中 (起動中含む) セッションがあるレーンへの enqueue + steer 配達 (architecture.md
+	 * §6 フロー 6。後続発言は追加指示として扱う)。enqueue は「セッションあり」のときだけ
+	 * 行う — gate 非通過の全メッセージを永続 store に溜め込まない (dedupe は enqueue 時に
+	 * 効く)。戻り値 true はこのレーンで処理済み (呼び出し元は return してよい) を示す */
+	private async trySteerExisting(
+		sessionKey: string,
+		item: InboxItem,
+	): Promise<boolean> {
+		const existing = this.sessions.get(sessionKey);
+		if (existing === undefined) return false;
+
+		const fresh = await this.store.inbox.enqueue(sessionKey, item);
+		if (!fresh) {
+			this.logger.debug(
+				{ sessionKey, itemId: item.id },
+				"inbox duplicate skip",
+			);
+			return true;
+		}
+		// starting 中は初回 prompt の drain が拾う。running なら steer で即配達する
+		if (existing.state === "running" && existing.process?.running) {
+			const items = await this.store.inbox.drain(sessionKey);
+			const pending = items.filter((i) => !existing.promptedIds.has(i.id));
+			if (pending.length > 0) {
+				// steer 前に宛先登録 (session-model.md §3 の境界規則)
+				for (const p of pending) {
+					this.registerReplyDestination(p.event, existing.policy);
+				}
+				for (const p of pending) existing.promptedIds.add(p.id);
+				existing.turnEpoch += 1;
+				this.resetTurnTimeout(sessionKey, existing);
+				existing.process.steer(renderItems(pending));
+				this.logger.info(
+					{ sessionKey, items: pending.length },
+					"session steered",
+				);
+			}
+		}
+		return true;
+	}
+
+	/** gate 通過が確定した後の enqueue → 多重起動チェック → debounce or 即 kick
+	 * (handle / handleReaction の共通経路)。item はここで永続 store へ積む (dedupe =
+	 * at-least-once の再送吸収)。この後 debounce タイマーで kick を遅らせても、
+	 * item は既に永続化済みなのでプロセス死で消えない (拾い直しは既存の inbox 経路に乗る) */
+	private async kickTriggered(
+		sessionKey: string,
+		channelId: string,
+		policy: SessionPolicy,
+		event: InboundMessage,
+		doc: ChannelDoc | null,
+		item: InboxItem,
+	): Promise<void> {
 		const fresh = await this.store.inbox.enqueue(sessionKey, item);
 		if (!fresh) {
 			this.logger.debug(

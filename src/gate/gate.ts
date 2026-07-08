@@ -19,6 +19,7 @@ import { ClassifierGate } from "./gates/classifier.js";
 import { KeywordGate } from "./gates/keyword.js";
 import { MentionGate } from "./gates/mention.js";
 import { PassthroughGate } from "./gates/passthrough.js";
+import { ReactionGate } from "./gates/reaction.js";
 
 export interface GateContext {
 	event: ChatEvent;
@@ -42,7 +43,8 @@ export type GateSpec =
 	| { kind: "mention" }
 	| { kind: "keyword"; pattern: string }
 	| { kind: "passthrough" }
-	| { kind: "classifier"; criteria: string; model?: string };
+	| { kind: "classifier"; criteria: string; model?: string }
+	| { kind: "reaction"; emoji: string[] };
 
 /** createGate に注入する依存。classifier gate のみが必要とする (LLM client + logger)。 */
 export interface GateDeps {
@@ -71,6 +73,8 @@ export function createGate(spec: GateSpec, deps: GateDeps = {}): Gate {
 				...(deps.logger !== undefined ? { logger: deps.logger } : {}),
 			});
 		}
+		case "reaction":
+			return new ReactionGate(spec.emoji);
 		default: {
 			const unknown: { kind: string } = spec;
 			throw new Error(`createGate: unknown gate kind "${unknown.kind}"`);
@@ -108,6 +112,11 @@ function gateConfigToSpec(gate: GateConfig): GateSpec {
 				criteria: gate.criteria,
 				...(gate.model !== undefined ? { model: gate.model } : {}),
 			};
+		case "reaction":
+			if (gate.emoji === undefined || gate.emoji.length === 0) {
+				throw new Error('gate kind "reaction" requires a non-empty "emoji"');
+			}
+			return { kind: "reaction", emoji: gate.emoji };
 		default: {
 			const unknown: { kind: string } = gate;
 			throw new Error(`unsupported gate kind "${unknown.kind}"`);

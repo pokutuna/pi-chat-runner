@@ -10,15 +10,24 @@
 import { z } from "zod";
 
 /** Gate の種別ごとに要るパラメータだけを refinement で強制する (config.md §7)。
- * keyword は pattern 必須、classifier は criteria 必須。mention/passthrough は無し。 */
+ * keyword は pattern 必須、classifier は criteria 必須、reaction は emoji 必須
+ * (非空)。mention/passthrough は無し。 */
 const GateSchema = z
 	.object({
-		kind: z.enum(["mention", "keyword", "classifier", "passthrough"]),
+		kind: z.enum([
+			"mention",
+			"keyword",
+			"classifier",
+			"passthrough",
+			"reaction",
+		]),
 		pattern: z.string().optional(),
 		criteria: z.string().optional(),
 		/** この classifier ノードの判定モデル (省略時はコード既定)。
 		 * ChannelDocSchema.model (pi 本体用) とは別物 (config.md §2.3)。 */
 		model: z.string().optional(),
+		/** reaction gate が trigger する emoji 名の一覧 (Slack の正規化名。例 "eyes")。 */
+		emoji: z.array(z.string()).optional(),
 	})
 	.strict()
 	.superRefine((gate, ctx) => {
@@ -34,6 +43,16 @@ const GateSchema = z
 				code: "custom",
 				message: `gate kind "classifier" requires "criteria"`,
 				path: ["criteria"],
+			});
+		}
+		if (
+			gate.kind === "reaction" &&
+			(gate.emoji === undefined || gate.emoji.length === 0)
+		) {
+			ctx.addIssue({
+				code: "custom",
+				message: `gate kind "reaction" requires a non-empty "emoji"`,
+				path: ["emoji"],
 			});
 		}
 	});

@@ -64,6 +64,7 @@ export interface ReactionEvent {
 	sender: Sender;
 	added: boolean;
 	timestamp: Date;
+	raw?: unknown;
 }
 
 /** 編集イベント。Step 1 では最小のスタブ型。 */

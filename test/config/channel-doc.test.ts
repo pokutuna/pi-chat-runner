@@ -104,6 +104,40 @@ describe("ChannelDocSchema", () => {
 		}
 	});
 
+	it("accepts a reaction gate with a non-empty emoji list", () => {
+		const result = ChannelDocSchema.safeParse({
+			trigger: {
+				when: [{ kind: "reaction", emoji: ["eyes"] }],
+			},
+		});
+		expect(result.success).toBe(true);
+	});
+
+	it("rejects reaction gate without emoji", () => {
+		const result = ChannelDocSchema.safeParse({
+			trigger: {
+				when: [{ kind: "reaction" }],
+			},
+		});
+		expect(result.success).toBe(false);
+		if (!result.success) {
+			expect(
+				result.error.issues.some((issue) =>
+					issue.path.join(".").includes("emoji"),
+				),
+			).toBe(true);
+		}
+	});
+
+	it("rejects reaction gate with an empty emoji list", () => {
+		const result = ChannelDocSchema.safeParse({
+			trigger: {
+				when: [{ kind: "reaction", emoji: [] }],
+			},
+		});
+		expect(result.success).toBe(false);
+	});
+
 	it("accepts mention/passthrough gates without extra params", () => {
 		const result = ChannelDocSchema.safeParse({
 			trigger: {

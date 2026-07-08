@@ -75,7 +75,8 @@ interface UserRef {
 ### 2.3 受信イベント (ChatEvent)
 
 メッセージだけでなく、リアクション・編集・メンバー変化まで含む直和型にする。
-セッション起動・承認 UI・ACK をリアクションで組むための土台。
+リアクションは `trigger.when` の reaction gate による初回キックに使う
+([session-model.md](session-model.md) §5「人間によるリアクション起動」)。
 
 ```typescript
 type ChatEvent =
@@ -113,11 +114,12 @@ interface ReactionEvent {
   kind: "reaction";
   emoji: string;                 // 正規化名 ("eyes", "+1")
   targetMessageId: string;
-  targetIsOwnMessage: boolean;   // bot の発言に付いたか (承認 UI / 再開トリガ判定に使う)
+  targetIsOwnMessage: boolean;   // bot の発言に付いたか (Step 1 では未解決、将来の再開判定用に予約)
   conversation: ConversationRef;
   sender: UserRef;
   added: boolean;                // true=付与 / false=除去
   timestamp: Date;
+  raw?: unknown;                 // エスケープハッチ。永続化・ワイヤ転送しない
 }
 ```
 
