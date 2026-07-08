@@ -8,7 +8,7 @@
 // (persistence.md §1)。docs/build-plan.md Step 4-5 / docs/design/architecture.md §1, §6。
 
 import { mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Firestore } from "@google-cloud/firestore";
 import { WebClient } from "@slack/web-api";
@@ -83,10 +83,9 @@ function buildStateStore(store: ResolvedStoreConfig): StateStore {
 }
 
 /** pi 本体パッケージを import.meta.resolve で解決し、Node Permission Model 用の
- * entrypoint (bin.pi の絶対パス) と nodeModulesDir (パッケージがインストールされて
- * いる node_modules ルート) を自動検出する。決め打ちパス (旧 PI_ENTRYPOINT/
- * PI_NODE_MODULES_DIR env) を廃止し、実際にインストールされた場所から常に正しい
- * 値を導く。
+ * entrypoint (bin.pi の絶対パス) と nodeModulesDir (pi の全依存を含む node_modules
+ * ルート) を自動検出する。決め打ちパス (旧 PI_ENTRYPOINT/PI_NODE_MODULES_DIR env)
+ * を廃止し、実際にインストールされた場所から常に正しい値を導く。
  *
  * require.resolve(`${pkg}/package.json`) ではなく import.meta.resolve(pkg) (パッケージ
  * ルート "." の解決) を使う: pi 本体は ESM 専用で package.json の exports に "."
@@ -94,20 +93,41 @@ function buildStateStore(store: ResolvedStoreConfig): StateStore {
  * require.resolve 経由のサブパス解決は ERR_PACKAGE_PATH_NOT_EXPORTED で必ず失敗する
  * (exports map が定義された ESM パッケージは CJS の require.resolve では解決不能)。
  * import.meta.resolve は ESM の解決アルゴリズムを使うため "." の import 条件を
- * 正しく解決できる。dist/index.js から dist/cli.js (bin.pi) 及び node_modules
- * ルートを相対で導出する。パッケージ構成は `<nodeModulesDir>/@earendil-works/
- * pi-coding-agent/dist/{index.js,cli.js}` 前提。 */
+ * 正しく解決できる。dist/index.js から dist/cli.js (bin.pi) を相対で導く。
+ *
+ * nodeModulesDir は allow-fs-read に `${nodeModulesDir}/*` として渡り、pi が起動時に
+ * 読む全ファイル (自身のコード + 実行時依存) をこの 1 パスでカバーする必要がある。
+ * ここで求めるのは pi の依存を実際に張っている **平坦な node_modules ルート**
+ * (= install 先の最外殻の node_modules) であって、pi パッケージの直上ディレクトリ
+ * ではない。両者は npm の平坦構成では一致するが pnpm では食い違う: import.meta.resolve
+ * は symlink を実体化するため indexPath が
+ * `<root>/.pnpm/@earendil-works+pi-coding-agent@x/node_modules/@earendil-works/
+ * pi-coding-agent/dist/index.js` を指し、pi の直上 node_modules は pi 専用の仮想
+ * ストア (兄弟の cross-spawn 等を含まない) になる。そこを許可しても pi が spawn 時に
+ * 読む cross-spawn が ERR_ACCESS_DENIED で pi が即死する。pnpm は全依存を `<root>/.pnpm`
+ * 配下に置き `<root>` 直下に top-level symlink を張るので、パス上で最も外側に現れる
+ * `node_modules` セグメントを採れば npm(平坦)/pnpm どちらでも「全依存を含むルート」に
+ * 一致する (個別パスを列挙し続けないための正規化)。 */
 const PI_PACKAGE_NAME = "@earendil-works/pi-coding-agent";
 
 function resolvePiPaths(): { entrypoint: string; nodeModulesDir: string } {
 	const indexUrl = import.meta.resolve(PI_PACKAGE_NAME);
 	const indexPath = fileURLToPath(indexUrl);
-	// indexPath = <nodeModulesDir>/@earendil-works/pi-coding-agent/dist/index.js
+	// indexPath = <...>/@earendil-works/pi-coding-agent/dist/index.js
 	const packageDir = dirname(dirname(indexPath));
 	const entrypoint = join(packageDir, "dist/cli.js");
-	// <nodeModulesDir>/@earendil-works/pi-coding-agent → 2 段上が node_modules ルート
-	const nodeModulesDir = dirname(dirname(packageDir));
-	return { entrypoint, nodeModulesDir };
+	return { entrypoint, nodeModulesDir: outermostNodeModules(indexPath) };
+}
+
+/** path 上で最も外側 (ルート寄り) に現れる `node_modules` セグメントまでのパスを返す。
+ * pnpm の仮想ストア (`<root>/.pnpm/<pkg>/node_modules/...`) では複数の node_modules が
+ * ネストするが、全依存を張るのは最外殻の `<root>` なのでそれを選ぶ。`node_modules` が
+ * 無ければ入力の dirname を返す (想定外の配置でのフォールバック)。 */
+function outermostNodeModules(path: string): string {
+	const marker = `${sep}node_modules${sep}`;
+	const idx = path.indexOf(marker);
+	if (idx === -1) return dirname(path);
+	return path.slice(0, idx + marker.length - 1);
 }
 
 /** agent.yaml の agent.runtime.permissionMode (既定 true, agent-config.ts) で Node
