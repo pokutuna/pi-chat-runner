@@ -136,10 +136,19 @@ turn timeout (10 分) + エラー投稿 + ❌、DM 既定 config (`dm`)、base i
   なお「再開ループ遮断」はローリングウィンドウ式 guard を**入れない**と決着済み
   (§6 の 2026-07 判断)。代替として異常終了時にそのターンで prompt 済みの item を
   ack して捨てる (`proc.on("exit")`) — こちらは実装済み
-- [ ] リアクションによる再開 (`targetIsOwnMessage` からの逆引き。[design/chat-model.md](design/chat-model.md) §2.3)。
-  受信の正規化 (`ReactionEvent` 型・Slack の `reaction_added`/`removed` → `normalizeReaction`) は
-  実装済みだが、`targetIsOwnMessage` は常に false のスタブ ([src/ingress/slack/adapter.ts](../src/ingress/slack/adapter.ts))
-  で、bridge が `kind !== "message"` のイベントを破棄するため再開への結線が未実装
+- [x] リアクションによる再開。`bridge.ts` は `kind === "reaction"` を専用分岐で
+  [SessionRunner.handleReaction](../src/session/runner.ts) に渡し、gate 通過後は対象メッセージを
+  fetch して合成した `InboundMessage` から通常どおり `sessionKeyOf` を導出する。過去に
+  終了したセッションと同じ sessionKey (同一チャンネル/スレッド) に着地すれば、既存の
+  kick フロー (`workdirStorage.restore`) がそのまま棚の transcript を復元し `resumed:true`
+  で起動する — リアクション専用の再開経路は無いが、通常の resume 機構に自然に乗って
+  実質再開が成立する ([test/session/runner.test.ts](../test/session/runner.test.ts) 「reaction 起動が
+  過去セッションと同じ sessionKey に着地すると...」)。`targetIsOwnMessage`
+  ([design/chat-model.md](design/chat-model.md) §2.3) は「bot 自身の発言へのリアクションに限定する」
+  といった将来の絞り込み用に予約されたフラグで、常に false のスタブ
+  ([src/ingress/slack/adapter.ts](../src/ingress/slack/adapter.ts)) のままだが、現在の実装はこの
+  フラグを判定に使わず任意の対象メッセージへのリアクションで再開できるため、
+  未解決でも機能上の欠落はない
 - [ ] EgressAdapter ([design/chat-model.md](design/chat-model.md) §3.2)。マルチプラットフォーム抽象
   (platform/capabilities を持ち send/edit/react/uploadFile/fetchHistory/renderMarkdown を束ねる)
   としては未実装。現状の [src/egress/router.ts](../src/egress/router.ts) (`EgressRouter`/`ChatPoster`)
