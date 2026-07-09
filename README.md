@@ -174,6 +174,13 @@ channels:
         - kind: mention
         - kind: reaction   # an emoji reaction on an existing message kicks a session on that message
           emoji: [eyes, robot_face]
+
+  - channel: "dm"
+    # DMs are not covered by "default" (they'd otherwise default to passthrough —
+    # every DM triggers a session). Set `when: []` here to disable DMs entirely;
+    # the same pattern on "default" blocks any channel with no explicit entry.
+    trigger:
+      when: []
 ```
 
 DB defaults to in-memory (`store.backend: memory` in `agent.yaml`, or `STORE_BACKEND` env); set it to `sqlite` (default path `/tmp/pi-chat-runner/state.db`) or `firestore` for persistence. Workdir archival defaults to no-op unless `archiveDir` is set. See [docs/design/persistence.md](docs/design/persistence.md).

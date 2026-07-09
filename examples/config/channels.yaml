@@ -18,6 +18,14 @@ channels:
       when:
         - kind: mention
 
+  - channel: "dm"
+    # DM の振る舞い定義 (config.md §2.1)。このエントリが無いと DM は既定で passthrough
+    # (bot への DM 全件で起動) になる。DM を一切許可しない運用にしたい場合は、
+    # ここに trigger.when: [] を書いて明示的に無効化する
+    # (evaluateWhen は空配列を「vacuously false」= 常に非発火として扱う。gate.ts 参照)。
+    trigger:
+      when: []
+
   - channel: "C0000000001" # 自分のチャンネル ID に置き換える (他の example と重複させない)
     # 旧 channels/ask-ai.yaml 相当。mention 起動の汎用アシスタント
     # (docs/design/config.md §1 の #ask-ai に相当)
