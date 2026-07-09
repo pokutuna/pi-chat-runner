@@ -15,7 +15,9 @@
 //                        クラッシュ。runner の proc.on("exit") 異常分岐を検証する)
 //     "SLOW_TOOL"      … tool_execution_start ("dummy_tool") を吐いた後、steer が
 //                        届くまで待つ (runner の進捗通知タイマーが currentTool を
-//                        観測できる状態を維持する。progress-notice.md)
+//                        観測できる状態を維持する。progress-notice.md)。
+//                        "NEXT_TOOL" を含む steer はターンを終わらせず 2 個目の
+//                        tool_execution_start を吐く (進捗テキストの変化を決定的に起こす)
 //     "WITH_FILES"     … workdir に ok.txt を実体として書き、reply の details.files に
 //                        ["ok.txt", "../escape.txt", "/etc/passwd"] を積む
 //                        (runner の workdir 境界チェックを検証する)
@@ -197,6 +199,13 @@ function handleCommand(command) {
   }
 
   if (command.type === "steer" && waitingForSteer) {
+    if (command.message.includes("NEXT_TOOL")) {
+      // ターンを終わらせず 2 個目の tool_execution_start を吐く (進捗通知の
+      // step カウントが進み、進捗テキストが必ず変化する。progress-notice.md の
+      // 「同一テキストは再送しない」dedupe をまたいで update を決定的に起こすため)
+      emitToolExecutionStart("dummy_tool", { command: "sleep 300" });
+      return;
+    }
     waitingForSteer = false;
     emitReply(
       threadKeyFromMessage(command.message),

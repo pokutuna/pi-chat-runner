@@ -11,3 +11,4 @@ develop/config/
 
 # 個人のツールバージョン管理設定
 mise.toml
+.pnpm-store/
