@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A low-cost, serverless runner for running the [pi](https://github.com/earendil-works/pi) coding agent from chat. Currently Slack + Google Cloud (Cloud Run + Firestore + GCS) only.
 
-Full design docs live in `docs/design/` (start at `docs/design/README.md`). Roadmap and status: `docs/build-plan.md`. Code comments reference doc sections (e.g. `session-model.md §4`) — for non-trivial changes, check the referenced section so the implementation matches the documented contract.
+Full design docs live in `docs/design/` (start at `docs/design/README.md`). Code comments reference doc sections (e.g. `session-model.md §4`) — for non-trivial changes, check the referenced section so the implementation matches the documented contract.
 
 ## Tech Stack
 

@@ -1,7 +1,7 @@
 # Piper — Slack-driven pi agent bridge
 
 - Author: pokutuna
-- Status: 実装済み (build-plan.md Step 5 まで + Step 6 の一部)。詳細は [build-plan.md](../build-plan.md)
+- Status: 実装済み (初期版ゴール達成)
 - Created: 2026-07-05
 - URL: (発行後に記入)
 
@@ -160,20 +160,6 @@ Mitigations:
 - 素朴な正規表現判定であり、シェル合成・置換による意図的な回避は防げない — 事故防止層と
   位置づけ、悪意あるプロンプトインジェクションへの対策は他の層 (UID 分離・FUSE 隔離等) に委ねる
 
-## Timeline
-
-[build-plan.md](../build-plan.md) の実装順序をマイルストーンとして要約する。中間ゴールは Step 3 (ローカルで動く #ask-ai)、初期版ゴールは Step 6。
-
-| Step | マイルストーン |
-|---|---|
-| Step 0 | リポジトリ scaffold。TypeScript プロジェクト設定と CI (lint + test) が通る |
-| Step 1 | Slack App での疎通 (Socket Mode)。mention への固定応答と 👀 リアクションが動く |
-| Step 2 | pi 単体の起動 (Slack なし)。spawn・reply extension・RPC 購読・steering・再開を確認する |
-| Step 3 | 一気通貫のローカル動作 (インメモリ)。Gate 合成・YAML 直読み・reply 配線が揃い、**ローカルで動く #ask-ai が完成する** (中間ゴール) |
-| Step 4 | 永続化と排他 (Firestore + GCS)。lease・dedupe・workdir の restore/flush をエミュレータ上で検証する |
-| Step 5 | Cloud Run デプロイ (Events API)。署名検証・service.yaml・GCS FUSE マウントで本番相当に稼働する |
-| Step 6 | 仕上げ。UID 分離・turn timeout・DM 既定 config・CLI (`status`/`init`)・base image 公開まで揃え、初期版ゴールを達成する |
-
 ## Related Documents
 
 - [chat-model.md](chat-model.md) — 会話の抽象化 (ConversationRef / ChatEvent / アダプタ / プロンプト化 / 出力)
@@ -184,7 +170,6 @@ Mitigations:
 - [session-runtime.md](session-runtime.md) — pi の kick シーケンス・env の受け渡し・最小イメージ・隔離
 - [progress-notice.md](progress-notice.md) — 長時間ターンの進捗通知 (chat.update によるスナップショット表示)
 - [../initial-scope.md](../initial-scope.md) — 初期版スコープの決定事項
-- [../build-plan.md](../build-plan.md) — 実装順序プラン
 - [../research/hermes-chat-modeling.md](../research/hermes-chat-modeling.md) / [../research/hermes-session-model.md](../research/hermes-session-model.md) / [../research/pi-session-model.md](../research/pi-session-model.md) — as-is 実装調査
 
 ## Open Issues

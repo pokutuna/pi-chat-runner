@@ -1,11 +1,11 @@
-// エントリポイント (Step 5: Cloud Run デプロイ / Events API)
+// エントリポイント (Cloud Run デプロイ / Events API)
 //
 // Ingress (Socket Mode / Events API) で受けたイベントをハードフィルタ (Layer 0)
 // だけ通し、SessionRunner に渡す。入口の選択は connector.slack.mode (agent.yaml /
 // SLACK_MODE env) で行い、後段 (gate 評価・inbox・lease・pi の kick/steer。すべて
 // SessionRunner の中, src/session/runner.ts) には入口の別を漏らさない
 // (architecture.md §1)。Store の実装選択 (store.backend, agent.yaml) も同様にここで行う
-// (persistence.md §1)。docs/build-plan.md Step 4-5 / docs/design/architecture.md §1, §6。
+// (persistence.md §1 / docs/design/architecture.md §1, §6)。
 
 import { mkdirSync } from "node:fs";
 import { dirname, join, sep } from "node:path";

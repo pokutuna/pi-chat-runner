@@ -39,9 +39,8 @@ channels:
           criteria: "料理・レシピ・食材・調理法など、食べ物を作ることに関する話題かどうか。外食やお店の話だけの場合は含めない。"
 
   - channel: "C0000000002" # 自分のチャンネル ID に置き換える (他の example と重複させない)
-    # 旧 channels/keyword-demo.yaml 相当。keyword Gate と mention の OR 合成デモ
-    # (docs/build-plan.md Step 3 「keyword Gate のチャンネルで発火/非発火が YAML どおり」
-    # の確認用)。"help" / "エラー" を含む発言、または mention のいずれかで起動する。
+    # 旧 channels/keyword-demo.yaml 相当。keyword Gate と mention の OR 合成デモ。
+    # "help" / "エラー" を含む発言、または mention のいずれかで起動する。
     trigger:
       when:
         - kind: keyword

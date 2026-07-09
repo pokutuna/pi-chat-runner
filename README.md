@@ -2,7 +2,7 @@
 
 A low-cost, serverless runner for running the [pi](https://github.com/earendil-works/pi) coding agent from chat.
 
-See [docs/design/README.md](docs/design/README.md) for the design and [docs/build-plan.md](docs/build-plan.md) for the roadmap.
+See [docs/design/README.md](docs/design/README.md) for the design.
 
 ## Overview
 
@@ -101,4 +101,4 @@ pnpm run lint
 
 ## Status
 
-Under active development. Currently Slack and Google Cloud (Cloud Run + Firestore + GCS) only — other chat platforms and cloud providers are not supported yet. Steps 0-6 of [docs/build-plan.md](docs/build-plan.md) are done (initial-version goal reached). The CLI (`apply`/`status`/`init`) is deferred — configuration is read directly from YAML via `FileConfigSource`, so `apply` (and a `FirestoreConfigSource`) are not needed for now.
+Under active development. Currently Slack and Google Cloud (Cloud Run + Firestore + GCS) only — other chat platforms and cloud providers are not supported yet. The initial-version goal has been reached. The CLI (`apply`/`status`/`init`) is deferred — configuration is read directly from YAML via `FileConfigSource`, so `apply` (and a `FirestoreConfigSource`) are not needed for now.

@@ -1,5 +1,5 @@
 // HttpIngress のテスト。実ポートを listen せず honoApp.request で直接叩く
-// (Firestore エミュレータのポート 8080 との衝突を避ける。build-plan.md Step 5)。
+// (Firestore エミュレータのポート 8080 との衝突を避ける)。
 import { createHmac } from "node:crypto";
 
 import { describe, expect, it } from "vitest";

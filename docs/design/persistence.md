@@ -3,7 +3,7 @@
 inbox / セッション状態 / lease (DB 系) と workdir の退避先 (Storage 系) を
 インタフェースで抽象し、実装を差し替え可能にする。関連:
 [session-model.md](session-model.md) §4 (実行ロック), [session-runtime.md](session-runtime.md) §3
-(tmpfs + 境界 flush), [architecture.md](architecture.md) §2-5, [../build-plan.md](../build-plan.md) Step 4。
+(tmpfs + 境界 flush), [architecture.md](architecture.md) §2-5。
 
 ## 0. 結論
 
@@ -16,7 +16,7 @@ inbox / セッション状態 / lease (DB 系) と workdir の退避先 (Storage
   Store 群を受け取るだけで、どの実装かを知らない (現行の `InboxStore` と同じ形)。
 - **Storage は抽象がほぼ消える**。退避はただのファイルコピーであり、コピー先の
   ベースディレクトリが普通のディレクトリか GCS FUSE マウントかの違いしかない。
-  GCS SDK は使わない (build-plan の技術選定どおり)。
+  GCS SDK は使わない。
 - ローカル開発に Firestore エミュレータは**不要になる**。`pnpm run dev` は
   InMemory で動き、永続化込みの確認をしたければ SQLite を選ぶ。
   エミュレータ (compose) は Firestore 実装のテスト専用に格下げする。
@@ -155,4 +155,4 @@ restore は transcript が存在するかで「復元があったか」を判定
 | kick 失敗時に dedupe が残り再送が死ぬ (既知の穴) | ack しない限り inbox に残るため、再 kick で拾い直せる |
 | agent_end 直後の追いメッセージ喪失レース (既知の穴) | lease 解放前に inbox を再確認する linger で解消 (session-model.md §4) |
 | workdir はローカルに置きっぱなし | `WorkdirStorage` で境界退避。未設定なら現行どおり |
-| Firestore エミュレータが開発の前提 (build-plan) | InMemory/SQLite で開発、エミュレータは Firestore 実装のテスト専用 |
+| Firestore エミュレータが開発の前提 | InMemory/SQLite で開発、エミュレータは Firestore 実装のテスト専用 |

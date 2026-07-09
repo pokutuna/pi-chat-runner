@@ -1,7 +1,7 @@
 // ChannelDoc スキーマ — docs/design/config.md §2〜§2.3, §7 / docs/design/architecture.md §2
 //
-// zod を単一ソースとする (build-plan.md 技術スタック表: 「apply 時 strict 検証と
-// ChannelDoc 型を単一ソース化」)。手書きの interface は並置せず、型は z.infer で導出する。
+// zod を単一ソースとする (strict 検証と ChannelDoc 型を単一ソース化する狙い)。
+// 手書きの interface は並置せず、型は z.infer で導出する。
 // ただし trigger.when は再帰ブール木のため、循環を切るための型注釈のみ手書きする (§7)。
 //
 // YAML の gate は kind: で指定する (config.md §7)。channels.yaml はトップレベルで

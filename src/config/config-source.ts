@@ -2,8 +2,8 @@
 //
 // 「Firestore が実行時の正」は元々の設計方針だが、当面はローカル・本番とも同じ YAML を
 // ファイルから直接読む FileConfigSource で運用する。FirestoreConfigSource と、それに YAML を
-// 書き込む apply CLI は見送り中 (build-plan.md「未着手」参照)。本番設定を Firestore を
-// 実行時の正とする方式へ移す判断をしたら FirestoreConfigSource を追加する。
+// 書き込む apply CLI は見送り中。本番設定を Firestore を実行時の正とする方式へ
+// 移す判断をしたら FirestoreConfigSource を追加する。
 //
 // channels.yaml は単一ファイルに全チャンネルを配列で並べる (config.md §2)。実行時は
 // 常に default (または DM は dm) + そのチャンネル固有エントリをマージした 1 つの
@@ -11,8 +11,7 @@
 // しない。
 //
 // FileConfigSource は毎回読み直す (キャッシュしない)。ローカル用途なのでコストは無視できる。
-// これにより「YAML 編集 → 再起動なしで挙動が変わる」(build-plan.md Step 3) が
-// file watch なしで成立する。
+// これにより「YAML 編集 → 再起動なしで挙動が変わる」が file watch なしで成立する。
 
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";

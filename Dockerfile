@@ -71,7 +71,7 @@ COPY --from=builder /app/dist ./dist
 COPY package.json ./
 
 # reply extension は pi が --extension で TS ソースを直接ロードするため
-# ビルド対象外 (build-plan.md)。ソースのままコピーする
+# ビルド対象外。ソースのままコピーする
 COPY extensions ./extensions
 
 # skill は pi の既定探索パス $AGENT_HOME/.pi/agent/skills/ に置けば pi が自動で
