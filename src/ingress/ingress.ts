@@ -8,7 +8,7 @@ import type { ChatEvent } from "./chat-event.js";
 export type Ack = () => Promise<void>;
 
 export interface Ingress {
-	/** 受信を開始。onEvent は dedupe・起動判定・inbox 積みの共通パイプライン */
-	start(onEvent: (e: ChatEvent, ack: Ack) => Promise<void>): Promise<void>;
-	stop(): Promise<void>;
+  /** 受信を開始。onEvent は dedupe・起動判定・inbox 積みの共通パイプライン */
+  start(onEvent: (e: ChatEvent, ack: Ack) => Promise<void>): Promise<void>;
+  stop(): Promise<void>;
 }

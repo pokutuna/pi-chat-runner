@@ -6,27 +6,27 @@
 import type { Gate, GateContext, TriggerDecision } from "../gate.js";
 
 export class KeywordGate implements Gate {
-	readonly name = "keyword";
-	private readonly regex: RegExp;
+  readonly name = "keyword";
+  private readonly regex: RegExp;
 
-	constructor(pattern: string) {
-		// 不正な正規表現は construction 時に例外として表面化させる (実行時まで遅延させない)
-		this.regex = new RegExp(pattern);
-	}
+  constructor(pattern: string) {
+    // 不正な正規表現は construction 時に例外として表面化させる (実行時まで遅延させない)
+    this.regex = new RegExp(pattern);
+  }
 
-	decide(ctx: GateContext): TriggerDecision {
-		if (ctx.event.kind !== "message") {
-			return { trigger: false, reason: `${this.name}: not a message event` };
-		}
-		if (this.regex.test(ctx.event.text)) {
-			return {
-				trigger: true,
-				reason: `${this.name}: text matches /${this.regex.source}/`,
-			};
-		}
-		return {
-			trigger: false,
-			reason: `${this.name}: text does not match /${this.regex.source}/`,
-		};
-	}
+  decide(ctx: GateContext): TriggerDecision {
+    if (ctx.event.kind !== "message") {
+      return { trigger: false, reason: `${this.name}: not a message event` };
+    }
+    if (this.regex.test(ctx.event.text)) {
+      return {
+        trigger: true,
+        reason: `${this.name}: text matches /${this.regex.source}/`,
+      };
+    }
+    return {
+      trigger: false,
+      reason: `${this.name}: text does not match /${this.regex.source}/`,
+    };
+  }
 }

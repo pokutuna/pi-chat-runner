@@ -9,5 +9,5 @@ export const SESSION_FILE = "session.jsonl";
 
 /** 世代交代時のリネーム先を生成する (session-<epoch ms>.jsonl)。 */
 export function rotatedSessionFile(epochMs: number): string {
-	return `session-${epochMs}.jsonl`;
+  return `session-${epochMs}.jsonl`;
 }

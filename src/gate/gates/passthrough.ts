@@ -7,12 +7,12 @@
 import type { Gate, GateContext, TriggerDecision } from "../gate.js";
 
 export class PassthroughGate implements Gate {
-	readonly name = "passthrough";
+  readonly name = "passthrough";
 
-	decide(ctx: GateContext): TriggerDecision {
-		if (ctx.event.kind === "message" && ctx.event.sender.isBot) {
-			return { trigger: false, reason: `${this.name}: sender is bot` };
-		}
-		return { trigger: true, reason: `${this.name}: always trigger` };
-	}
+  decide(ctx: GateContext): TriggerDecision {
+    if (ctx.event.kind === "message" && ctx.event.sender.isBot) {
+      return { trigger: false, reason: `${this.name}: sender is bot` };
+    }
+    return { trigger: true, reason: `${this.name}: always trigger` };
+  }
 }

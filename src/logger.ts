@@ -9,6 +9,6 @@ import pino from "pino";
 export type { Logger } from "pino";
 
 export const rootLogger = pino({
-	level: process.env.LOG_LEVEL ?? "info",
-	...(process.stdout.isTTY ? { transport: { target: "pino-pretty" } } : {}),
+  level: process.env.LOG_LEVEL ?? "info",
+  ...(process.stdout.isTTY ? { transport: { target: "pino-pretty" } } : {}),
 });

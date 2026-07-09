@@ -26,7 +26,7 @@ pnpm run lint                                      # oxlint . && oxfmt --check .
 pnpm run dev:socket                                # local dev, Slack Socket Mode (.env.socket)
 ```
 
-After editing a file, run `pnpm exec oxfmt --write <file>` — oxfmt enforces tabs and import order, and a plain edit commonly leaves 2-space indentation or unsorted exports.
+After editing a file, run `pnpm exec oxfmt --write <file>` — oxfmt enforces 2-space indentation and import order, and a plain edit commonly leaves unsorted exports.
 
 `STORE_BACKEND=firestore` tests need a live emulator (`FIRESTORE_EMULATOR_HOST`) and skip otherwise. `test/store/state/contract.ts` is a shared contract suite parameterized across backends — add new backend behavior there, not per-backend.
 

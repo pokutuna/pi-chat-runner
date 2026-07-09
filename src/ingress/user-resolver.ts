@@ -7,7 +7,7 @@ import type { ChatEvent, Sender } from "./chat-event.js";
 
 /** userId → 表示名の解決。bridge が Slack users.info で実装し、失敗時は null */
 export interface UserResolver {
-	resolve(userId: string): Promise<string | null>;
+  resolve(userId: string): Promise<string | null>;
 }
 
 /** slack/adapter.ts の stripMentions が生成する `@U123ABC` 形式の mention パターン */
@@ -16,40 +16,40 @@ const STRIPPED_MENTION_PATTERN = /@(U[A-Z0-9]+)/g;
 /** ChatEvent の sender.id / text 中の mention を表示名に解決した新しい ChatEvent を返す。
  * kind !== "message" はそのまま (何もせず) 返す。解決できなかった ID は変更しない。 */
 export async function enrichEvent(
-	event: ChatEvent,
-	resolver: UserResolver,
+  event: ChatEvent,
+  resolver: UserResolver,
 ): Promise<ChatEvent> {
-	if (event.kind !== "message") return event;
+  if (event.kind !== "message") return event;
 
-	const senderName = await resolver.resolve(event.sender.id);
-	const sender: Sender =
-		senderName !== null
-			? { ...event.sender, displayName: senderName }
-			: event.sender;
+  const senderName = await resolver.resolve(event.sender.id);
+  const sender: Sender =
+    senderName !== null
+      ? { ...event.sender, displayName: senderName }
+      : event.sender;
 
-	const matches = [...event.text.matchAll(STRIPPED_MENTION_PATTERN)];
-	let text = event.text;
-	if (matches.length > 0) {
-		const uniqueIds = [
-			...new Set(
-				matches.map((m) => m[1]).filter((id): id is string => id !== undefined),
-			),
-		];
-		const resolvedNames = new Map<string, string>();
-		for (const userId of uniqueIds) {
-			const name = await resolver.resolve(userId);
-			if (name !== null) resolvedNames.set(userId, name);
-		}
-		// 名前だけに置き換えると pi が mention (`<@U123>`) を組み立てられなくなる
-		// ため、UserID を併記する
-		text = event.text.replace(
-			STRIPPED_MENTION_PATTERN,
-			(full, userId: string) => {
-				const name = resolvedNames.get(userId);
-				return name !== undefined ? `@${name} (${userId})` : full;
-			},
-		);
-	}
+  const matches = [...event.text.matchAll(STRIPPED_MENTION_PATTERN)];
+  let text = event.text;
+  if (matches.length > 0) {
+    const uniqueIds = [
+      ...new Set(
+        matches.map((m) => m[1]).filter((id): id is string => id !== undefined),
+      ),
+    ];
+    const resolvedNames = new Map<string, string>();
+    for (const userId of uniqueIds) {
+      const name = await resolver.resolve(userId);
+      if (name !== null) resolvedNames.set(userId, name);
+    }
+    // 名前だけに置き換えると pi が mention (`<@U123>`) を組み立てられなくなる
+    // ため、UserID を併記する
+    text = event.text.replace(
+      STRIPPED_MENTION_PATTERN,
+      (full, userId: string) => {
+        const name = resolvedNames.get(userId);
+        return name !== undefined ? `@${name} (${userId})` : full;
+      },
+    );
+  }
 
-	return { ...event, sender, text };
+  return { ...event, sender, text };
 }

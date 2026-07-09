@@ -6,15 +6,15 @@
 import type { Gate, GateContext, TriggerDecision } from "../gate.js";
 
 export class MentionGate implements Gate {
-	readonly name = "mention";
+  readonly name = "mention";
 
-	decide(ctx: GateContext): TriggerDecision {
-		if (ctx.event.kind !== "message") {
-			return { trigger: false, reason: `${this.name}: not a message event` };
-		}
-		if (ctx.event.mentionsBot) {
-			return { trigger: true, reason: `${this.name}: mentionsBot=true` };
-		}
-		return { trigger: false, reason: `${this.name}: mentionsBot=false` };
-	}
+  decide(ctx: GateContext): TriggerDecision {
+    if (ctx.event.kind !== "message") {
+      return { trigger: false, reason: `${this.name}: not a message event` };
+    }
+    if (ctx.event.mentionsBot) {
+      return { trigger: true, reason: `${this.name}: mentionsBot=true` };
+    }
+    return { trigger: false, reason: `${this.name}: mentionsBot=false` };
+  }
 }

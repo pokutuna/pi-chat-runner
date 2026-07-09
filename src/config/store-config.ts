@@ -17,12 +17,12 @@ import { z } from "zod";
 import { resolveEnvRefs } from "./env-ref.js";
 
 export const StoreConfigSchema = z
-	.object({
-		backend: z.enum(["memory", "sqlite", "firestore"]).default("memory"),
-		/** sqlite のときだけ使う。default があるので backend が sqlite 以外でも常に値が入る。 */
-		sqlitePath: z.string().default("/tmp/pi-chat-runner/state.db"),
-	})
-	.strict();
+  .object({
+    backend: z.enum(["memory", "sqlite", "firestore"]).default("memory"),
+    /** sqlite のときだけ使う。default があるので backend が sqlite 以外でも常に値が入る。 */
+    sqlitePath: z.string().default("/tmp/pi-chat-runner/state.db"),
+  })
+  .strict();
 
 export type StoreConfig = z.infer<typeof StoreConfigSchema>;
 
@@ -40,60 +40,60 @@ const AGENT_CONFIG_FILENAME = "agent.yaml";
  * が {} を返すのとは異なり、store は常に default を効かせる)。env 参照解決は
  * yaml.parse の直後・zod 検証の前に行う。 */
 export async function loadStoreConfig(
-	configDir: string,
-	env: NodeJS.ProcessEnv = process.env,
+  configDir: string,
+  env: NodeJS.ProcessEnv = process.env,
 ): Promise<ResolvedStoreConfig> {
-	const filePath = join(configDir, AGENT_CONFIG_FILENAME);
+  const filePath = join(configDir, AGENT_CONFIG_FILENAME);
 
-	let raw: string;
-	try {
-		raw = await readFile(filePath, "utf-8");
-	} catch (err) {
-		if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-			return StoreConfigSchema.parse({});
-		}
-		throw new Error(`failed to read agent config file: ${filePath}`, {
-			cause: err,
-		});
-	}
+  let raw: string;
+  try {
+    raw = await readFile(filePath, "utf-8");
+  } catch (err) {
+    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
+      return StoreConfigSchema.parse({});
+    }
+    throw new Error(`failed to read agent config file: ${filePath}`, {
+      cause: err,
+    });
+  }
 
-	let parsed: unknown;
-	try {
-		parsed = parseYaml(raw);
-	} catch (err) {
-		throw new Error(`invalid YAML in agent config file: ${filePath}`, {
-			cause: err,
-		});
-	}
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(raw);
+  } catch (err) {
+    throw new Error(`invalid YAML in agent config file: ${filePath}`, {
+      cause: err,
+    });
+  }
 
-	if (parsed === null || parsed === undefined) {
-		return StoreConfigSchema.parse({});
-	}
-	if (typeof parsed !== "object") {
-		throw new Error(`invalid agent config file: ${filePath} (not an object)`);
-	}
+  if (parsed === null || parsed === undefined) {
+    return StoreConfigSchema.parse({});
+  }
+  if (typeof parsed !== "object") {
+    throw new Error(`invalid agent config file: ${filePath} (not an object)`);
+  }
 
-	const storeRaw = (parsed as Record<string, unknown>).store;
-	if (storeRaw === undefined) {
-		return StoreConfigSchema.parse({});
-	}
+  const storeRaw = (parsed as Record<string, unknown>).store;
+  if (storeRaw === undefined) {
+    return StoreConfigSchema.parse({});
+  }
 
-	let resolved: unknown;
-	try {
-		resolved = resolveEnvRefs(storeRaw, env);
-	} catch (err) {
-		throw new Error(
-			`failed to resolve env references in ${filePath} (store):`,
-			{ cause: err },
-		);
-	}
+  let resolved: unknown;
+  try {
+    resolved = resolveEnvRefs(storeRaw, env);
+  } catch (err) {
+    throw new Error(
+      `failed to resolve env references in ${filePath} (store):`,
+      { cause: err },
+    );
+  }
 
-	const result = StoreConfigSchema.safeParse(resolved);
-	if (!result.success) {
-		const issues = result.error.issues
-			.map((issue) => `  - store.${issue.path.join(".")}: ${issue.message}`)
-			.join("\n");
-		throw new Error(`invalid store config schema in ${filePath}:\n${issues}`);
-	}
-	return result.data;
+  const result = StoreConfigSchema.safeParse(resolved);
+  if (!result.success) {
+    const issues = result.error.issues
+      .map((issue) => `  - store.${issue.path.join(".")}: ${issue.message}`)
+      .join("\n");
+    throw new Error(`invalid store config schema in ${filePath}:\n${issues}`);
+  }
+  return result.data;
 }

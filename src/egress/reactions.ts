@@ -6,50 +6,50 @@
 
 /** WebClient.reactions.add の薄い IF。テストではフェイクを注入する */
 export interface ReactionClient {
-	add(args: {
-		channel: string;
-		timestamp: string;
-		name: string;
-	}): Promise<unknown>;
+  add(args: {
+    channel: string;
+    timestamp: string;
+    name: string;
+  }): Promise<unknown>;
 }
 
 export class Reactions {
-	constructor(private readonly client: ReactionClient) {}
+  constructor(private readonly client: ReactionClient) {}
 
-	/** 処理開始の合図 (トリガーメッセージに 👀) */
-	async addEyes(channelId: string, messageTs: string): Promise<void> {
-		await this.add(channelId, messageTs, "eyes");
-	}
+  /** 処理開始の合図 (トリガーメッセージに 👀) */
+  async addEyes(channelId: string, messageTs: string): Promise<void> {
+    await this.add(channelId, messageTs, "eyes");
+  }
 
-	/** 完了の合図 (トリガーメッセージに ✅) */
-	async addCheck(channelId: string, messageTs: string): Promise<void> {
-		await this.add(channelId, messageTs, "white_check_mark");
-	}
+  /** 完了の合図 (トリガーメッセージに ✅) */
+  async addCheck(channelId: string, messageTs: string): Promise<void> {
+    await this.add(channelId, messageTs, "white_check_mark");
+  }
 
-	/** 異常終了の合図 (トリガーメッセージに ❌)。pi のクラッシュ・タイムアウト・
-	 * コマンド失敗などセッションが正常に完了しなかったことをユーザーに伝える */
-	async addX(channelId: string, messageTs: string): Promise<void> {
-		await this.add(channelId, messageTs, "x");
-	}
+  /** 異常終了の合図 (トリガーメッセージに ❌)。pi のクラッシュ・タイムアウト・
+   * コマンド失敗などセッションが正常に完了しなかったことをユーザーに伝える */
+  async addX(channelId: string, messageTs: string): Promise<void> {
+    await this.add(channelId, messageTs, "x");
+  }
 
-	private async add(
-		channelId: string,
-		messageTs: string,
-		name: string,
-	): Promise<void> {
-		try {
-			await this.client.add({ channel: channelId, timestamp: messageTs, name });
-		} catch (err) {
-			if (isAlreadyReacted(err)) return;
-			throw err;
-		}
-	}
+  private async add(
+    channelId: string,
+    messageTs: string,
+    name: string,
+  ): Promise<void> {
+    try {
+      await this.client.add({ channel: channelId, timestamp: messageTs, name });
+    } catch (err) {
+      if (isAlreadyReacted(err)) return;
+      throw err;
+    }
+  }
 }
 
 /** @slack/web-api の platform error は err.data.error にエラーコードを持つ */
 function isAlreadyReacted(err: unknown): boolean {
-	if (typeof err !== "object" || err === null) return false;
-	const data = (err as { data?: unknown }).data;
-	if (typeof data !== "object" || data === null) return false;
-	return (data as { error?: unknown }).error === "already_reacted";
+  if (typeof err !== "object" || err === null) return false;
+  const data = (err as { data?: unknown }).data;
+  if (typeof data !== "object" || data === null) return false;
+  return (data as { error?: unknown }).error === "already_reacted";
 }

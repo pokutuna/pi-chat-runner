@@ -7,84 +7,84 @@
 
 /** 会話 (返信先) の参照。Slack: (channelId, threadTs) の 2 つだけ。 */
 export interface ConversationRef {
-	channelId: string;
-	threadTs?: string;
-	/** Slack の im (DM)。DM は ChannelDoc の予約名 dm と既定 passthrough gate の対象になる
-	 * (docs/design/config.md §1, §2)。 */
-	isDm?: boolean;
+  channelId: string;
+  threadTs?: string;
+  /** Slack の im (DM)。DM は ChannelDoc の予約名 dm と既定 passthrough gate の対象になる
+   * (docs/design/config.md §1, §2)。 */
+  isDm?: boolean;
 }
 
 /** 発言者。簡素版のため scope/platform は持たない。 */
 export interface Sender {
-	id: string;
-	isBot: boolean;
-	/** 表示名。EventSource/bridge 層で解決できた場合のみ入る。無ければ id を使う。 */
-	displayName?: string;
+  id: string;
+  isBot: boolean;
+  /** 表示名。EventSource/bridge 層で解決できた場合のみ入る。無ければ id を使う。 */
+  displayName?: string;
 }
 
 /** hermes と同じ平坦化 5 フィールド (chat-model.md §2.3) */
 export interface ReplyContext {
-	messageId: string;
-	excerpt: string;
-	authorId?: string;
-	authorName?: string;
-	isReplyToSelf: boolean;
+  messageId: string;
+  excerpt: string;
+  authorId?: string;
+  authorName?: string;
+  isReplyToSelf: boolean;
 }
 
 /** 添付ファイル。Step 1 では型のみで処理は未実装。 */
 export interface Attachment {
-	kind: "image" | "audio" | "video" | "document" | "text";
-	name: string;
-	mimeType: string;
-	sizeBytes: number;
-	storageUri: string;
+  kind: "image" | "audio" | "video" | "document" | "text";
+  name: string;
+  mimeType: string;
+  sizeBytes: number;
+  storageUri: string;
 }
 
 export interface InboundMessage {
-	kind: "message";
-	id: string;
-	conversation: ConversationRef;
-	sender: Sender;
-	text: string;
-	mentionsBot: boolean;
-	reply?: ReplyContext;
-	attachments: Attachment[];
-	editedFrom?: string;
-	timestamp: Date;
-	raw?: unknown;
-	metadata: Record<string, unknown>;
+  kind: "message";
+  id: string;
+  conversation: ConversationRef;
+  sender: Sender;
+  text: string;
+  mentionsBot: boolean;
+  reply?: ReplyContext;
+  attachments: Attachment[];
+  editedFrom?: string;
+  timestamp: Date;
+  raw?: unknown;
+  metadata: Record<string, unknown>;
 }
 
 export interface ReactionEvent {
-	kind: "reaction";
-	emoji: string;
-	targetMessageId: string;
-	targetIsOwnMessage: boolean;
-	conversation: ConversationRef;
-	sender: Sender;
-	added: boolean;
-	timestamp: Date;
-	raw?: unknown;
+  kind: "reaction";
+  emoji: string;
+  targetMessageId: string;
+  targetIsOwnMessage: boolean;
+  conversation: ConversationRef;
+  sender: Sender;
+  added: boolean;
+  timestamp: Date;
+  raw?: unknown;
 }
 
 /** 編集イベント。Step 1 では最小のスタブ型。 */
 export interface MessageEdited {
-	kind: "message_edited";
-	id: string;
-	conversation: ConversationRef;
-	raw?: unknown;
+  kind: "message_edited";
+  id: string;
+  conversation: ConversationRef;
+  raw?: unknown;
 }
 
 /** channel_joined など。当面はログのみ (chat-model.md §2.3)。Step 1 では最小のスタブ型。 */
 export interface SystemEvent {
-	kind: "system";
-	subtype: string;
-	conversation?: ConversationRef;
-	raw?: unknown;
+  kind: "system";
+  subtype: string;
+  conversation?: ConversationRef;
+  raw?: unknown;
 }
 
 export type ChatEvent =
-	| InboundMessage
-	| ReactionEvent
-	| MessageEdited
-	| SystemEvent;
+  | InboundMessage
+  | ReactionEvent
+  | MessageEdited
+  | SystemEvent;

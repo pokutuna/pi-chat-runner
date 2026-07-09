@@ -11,23 +11,23 @@ import type { AgentEndEvent, PiEvent, ToolExecutionEndEvent } from "./rpc.js";
  * files はこの時点では agent が渡した生の workdir 相対パス — 解決・境界チェックは
  * runner が行う (extensions/reply.ts の details 形と対応) */
 export function extractReply(
-	event: ToolExecutionEndEvent,
+  event: ToolExecutionEndEvent,
 ): EgressPayload | null {
-	if (event.toolName !== "reply" || event.isError) return null;
-	const details = event.result?.details;
-	if (typeof details !== "object" || details === null) return null;
-	const d = details as Record<string, unknown>;
-	if (typeof d.thread_key !== "string" || typeof d.text !== "string")
-		return null;
-	const files =
-		Array.isArray(d.files) && d.files.every((f) => typeof f === "string")
-			? (d.files as string[])
-			: undefined;
-	return {
-		thread_key: d.thread_key,
-		text: d.text,
-		...(files !== undefined ? { files } : {}),
-	};
+  if (event.toolName !== "reply" || event.isError) return null;
+  const details = event.result?.details;
+  if (typeof details !== "object" || details === null) return null;
+  const d = details as Record<string, unknown>;
+  if (typeof d.thread_key !== "string" || typeof d.text !== "string")
+    return null;
+  const files =
+    Array.isArray(d.files) && d.files.every((f) => typeof f === "string")
+      ? (d.files as string[])
+      : undefined;
+  return {
+    thread_key: d.thread_key,
+    text: d.text,
+    ...(files !== undefined ? { files } : {}),
+  };
 }
 
 /**
@@ -38,29 +38,29 @@ export function extractReply(
  * 症状だけが残り、原因が transcript を直接読むまで分からない。
  */
 export function extractTurnErrors(event: AgentEndEvent): string[] {
-	const errors: string[] = [];
-	for (const message of event.messages) {
-		if (typeof message !== "object" || message === null) continue;
-		const m = message as Record<string, unknown>;
-		if (m.role !== "assistant" || m.stopReason !== "error") continue;
-		errors.push(
-			typeof m.errorMessage === "string" ? m.errorMessage : "unknown error",
-		);
-	}
-	return errors;
+  const errors: string[] = [];
+  for (const message of event.messages) {
+    if (typeof message !== "object" || message === null) continue;
+    const m = message as Record<string, unknown>;
+    if (m.role !== "assistant" || m.stopReason !== "error") continue;
+    errors.push(
+      typeof m.errorMessage === "string" ? m.errorMessage : "unknown error",
+    );
+  }
+  return errors;
 }
 
 export interface UsageTotals {
-	input: number;
-	output: number;
-	cacheRead: number;
-	cacheWrite: number;
-	totalTokens: number;
-	costTotal: number;
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  totalTokens: number;
+  costTotal: number;
 }
 
 function numberOrZero(value: unknown): number {
-	return typeof value === "number" && Number.isFinite(value) ? value : 0;
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 /**
@@ -68,41 +68,41 @@ function numberOrZero(value: unknown): number {
  * そのため戻り値はターン単位の増分ではなく「セッション累計」になる点に注意。
  */
 export function extractUsageTotals(event: AgentEndEvent): UsageTotals {
-	const totals: UsageTotals = {
-		input: 0,
-		output: 0,
-		cacheRead: 0,
-		cacheWrite: 0,
-		totalTokens: 0,
-		costTotal: 0,
-	};
-	for (const message of event.messages) {
-		if (typeof message !== "object" || message === null) continue;
-		const m = message as Record<string, unknown>;
-		if (m.role !== "assistant") continue;
-		if (typeof m.usage !== "object" || m.usage === null) continue;
-		const usage = m.usage as Record<string, unknown>;
-		totals.input += numberOrZero(usage.input);
-		totals.output += numberOrZero(usage.output);
-		totals.cacheRead += numberOrZero(usage.cacheRead);
-		totals.cacheWrite += numberOrZero(usage.cacheWrite);
-		totals.totalTokens += numberOrZero(usage.totalTokens);
-		const cost = usage.cost;
-		if (typeof cost === "object" && cost !== null) {
-			totals.costTotal += numberOrZero((cost as Record<string, unknown>).total);
-		}
-	}
-	return totals;
+  const totals: UsageTotals = {
+    input: 0,
+    output: 0,
+    cacheRead: 0,
+    cacheWrite: 0,
+    totalTokens: 0,
+    costTotal: 0,
+  };
+  for (const message of event.messages) {
+    if (typeof message !== "object" || message === null) continue;
+    const m = message as Record<string, unknown>;
+    if (m.role !== "assistant") continue;
+    if (typeof m.usage !== "object" || m.usage === null) continue;
+    const usage = m.usage as Record<string, unknown>;
+    totals.input += numberOrZero(usage.input);
+    totals.output += numberOrZero(usage.output);
+    totals.cacheRead += numberOrZero(usage.cacheRead);
+    totals.cacheWrite += numberOrZero(usage.cacheWrite);
+    totals.totalTokens += numberOrZero(usage.totalTokens);
+    const cost = usage.cost;
+    if (typeof cost === "object" && cost !== null) {
+      totals.costTotal += numberOrZero((cost as Record<string, unknown>).total);
+    }
+  }
+  return totals;
 }
 
 function preview(value: unknown, maxChars = 200): string {
-	let text: string;
-	try {
-		text = typeof value === "string" ? value : JSON.stringify(value);
-	} catch {
-		text = String(value);
-	}
-	return text.length > maxChars ? `${text.slice(0, maxChars)}...` : text;
+  let text: string;
+  try {
+    text = typeof value === "string" ? value : JSON.stringify(value);
+  } catch {
+    text = String(value);
+  }
+  return text.length > maxChars ? `${text.slice(0, maxChars)}...` : text;
 }
 
 /**
@@ -112,55 +112,55 @@ function preview(value: unknown, maxChars = 200): string {
  * 1 ターンで数百行出て他のログを埋めてしまうため。
  */
 export function piEventLogFields(
-	event: PiEvent,
+  event: PiEvent,
 ): Record<string, unknown> | null {
-	const e = event as Record<string, unknown>;
-	switch (event.type) {
-		case "message_update":
-		case "tool_execution_update":
-			return null;
-		case "tool_execution_start":
-			return {
-				toolName: e.toolName,
-				toolCallId: e.toolCallId,
-				args: preview(e.args),
-			};
-		case "tool_execution_end": {
-			const end = event as ToolExecutionEndEvent;
-			const resultChars = (end.result?.content ?? []).reduce(
-				(sum, c) =>
-					sum + (c.type === "text" ? (c as { text: string }).text.length : 0),
-				0,
-			);
-			return {
-				toolName: end.toolName,
-				toolCallId: end.toolCallId,
-				isError: end.isError,
-				resultChars,
-			};
-		}
-		case "message_end": {
-			const message = e.message;
-			if (typeof message !== "object" || message === null) return {};
-			const m = message as Record<string, unknown>;
-			return {
-				role: m.role,
-				...(m.stopReason !== undefined ? { stopReason: m.stopReason } : {}),
-				...(typeof m.errorMessage === "string"
-					? { errorMessage: preview(m.errorMessage) }
-					: {}),
-			};
-		}
-		case "queue_update":
-			return {
-				steering: Array.isArray(e.steering) ? e.steering.length : 0,
-				followUp: Array.isArray(e.followUp) ? e.followUp.length : 0,
-			};
-		case "compaction_start":
-			return { reason: e.reason };
-		case "extension_error":
-			return { error: preview(e.error) };
-		default:
-			return {};
-	}
+  const e = event as Record<string, unknown>;
+  switch (event.type) {
+    case "message_update":
+    case "tool_execution_update":
+      return null;
+    case "tool_execution_start":
+      return {
+        toolName: e.toolName,
+        toolCallId: e.toolCallId,
+        args: preview(e.args),
+      };
+    case "tool_execution_end": {
+      const end = event as ToolExecutionEndEvent;
+      const resultChars = (end.result?.content ?? []).reduce(
+        (sum, c) =>
+          sum + (c.type === "text" ? (c as { text: string }).text.length : 0),
+        0,
+      );
+      return {
+        toolName: end.toolName,
+        toolCallId: end.toolCallId,
+        isError: end.isError,
+        resultChars,
+      };
+    }
+    case "message_end": {
+      const message = e.message;
+      if (typeof message !== "object" || message === null) return {};
+      const m = message as Record<string, unknown>;
+      return {
+        role: m.role,
+        ...(m.stopReason !== undefined ? { stopReason: m.stopReason } : {}),
+        ...(typeof m.errorMessage === "string"
+          ? { errorMessage: preview(m.errorMessage) }
+          : {}),
+      };
+    }
+    case "queue_update":
+      return {
+        steering: Array.isArray(e.steering) ? e.steering.length : 0,
+        followUp: Array.isArray(e.followUp) ? e.followUp.length : 0,
+      };
+    case "compaction_start":
+      return { reason: e.reason };
+    case "extension_error":
+      return { error: preview(e.error) };
+    default:
+      return {};
+  }
 }

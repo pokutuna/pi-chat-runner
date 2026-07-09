@@ -6,20 +6,20 @@
 import type { Gate, GateContext, TriggerDecision } from "../gate.js";
 
 export class ReactionGate implements Gate {
-	readonly name = "reaction";
+  readonly name = "reaction";
 
-	constructor(private readonly emoji: string[]) {}
+  constructor(private readonly emoji: string[]) {}
 
-	decide(ctx: GateContext): TriggerDecision {
-		if (ctx.event.kind !== "reaction") {
-			return { trigger: false, reason: `${this.name}: not a reaction event` };
-		}
-		if (!ctx.event.added) {
-			return { trigger: false, reason: `${this.name}: reaction removed` };
-		}
-		const matched = this.emoji.includes(ctx.event.emoji);
-		return matched
-			? { trigger: true, reason: `${this.name}: :${ctx.event.emoji}:` }
-			: { trigger: false, reason: `${this.name}: emoji not in list` };
-	}
+  decide(ctx: GateContext): TriggerDecision {
+    if (ctx.event.kind !== "reaction") {
+      return { trigger: false, reason: `${this.name}: not a reaction event` };
+    }
+    if (!ctx.event.added) {
+      return { trigger: false, reason: `${this.name}: reaction removed` };
+    }
+    const matched = this.emoji.includes(ctx.event.emoji);
+    return matched
+      ? { trigger: true, reason: `${this.name}: :${ctx.event.emoji}:` }
+      : { trigger: false, reason: `${this.name}: emoji not in list` };
+  }
 }

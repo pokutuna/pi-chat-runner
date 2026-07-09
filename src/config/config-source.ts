@@ -20,16 +20,16 @@ import { isAbsolute, join } from "node:path";
 import { parse as parseYaml } from "yaml";
 
 import {
-	type ChannelDoc,
-	ChannelDocSchema,
-	type ChannelEntry,
-	type ChannelsFile,
-	ChannelsFileSchema,
+  type ChannelDoc,
+  ChannelDocSchema,
+  type ChannelEntry,
+  type ChannelsFile,
+  ChannelsFileSchema,
 } from "./channel-doc.js";
 
 /** channels.yaml を id で解決し、実行時 ChannelDoc を返す抽象 (config.md §6)。 */
 export interface ConfigSource {
-	channel(id: string): Promise<ChannelDoc | null>;
+  channel(id: string): Promise<ChannelDoc | null>;
 }
 
 const CHANNELS_FILE = "channels.yaml";
@@ -54,52 +54,52 @@ export type Provenance = Partial<Record<keyof ChannelDoc, FieldSource>>;
 
 /** ChannelDoc の top-level キー一覧。マージ・provenance 計算で共有する (config.md §2.2)。 */
 const CHANNEL_DOC_KEYS = [
-	"systemPrompt",
-	"context",
-	"trigger",
-	"model",
-	"tools",
-	"excludeTools",
-	"session",
-	"reply",
+  "systemPrompt",
+  "context",
+  "trigger",
+  "model",
+  "tools",
+  "excludeTools",
+  "session",
+  "reply",
 ] as const satisfies readonly (keyof ChannelDoc)[];
 
 /** ChannelEntry から channel フィールドを落とし、ChannelDoc 部分だけを取り出す。 */
 function toChannelDoc(entry: ChannelEntry): ChannelDoc {
-	const { channel: _channel, ...doc } = entry;
-	return doc;
+  const { channel: _channel, ...doc } = entry;
+  return doc;
 }
 
 /** merge(base, own) の規則は 1 つだけ (config.md §2.2):
  * own に書いた top-level フィールド = その値。書かないフィールド = base の値。
  * 深いマージ (部分マージ) は一切しない。 */
 export function mergeChannelDoc(base: ChannelDoc, own: ChannelDoc): ChannelDoc {
-	return mergeWithProvenance(base, "default", own).doc;
+  return mergeWithProvenance(base, "default", own).doc;
 }
 
 /** マージ結果と、各フィールドがどちらのエントリ由来かを同時に返す (config.md §6 実効設定)。
  * baseSource は base エントリの出所 ("default" | "dm")。own 由来のフィールドは常に "channel"。 */
 export function mergeWithProvenance(
-	base: ChannelDoc,
-	baseSource: "default" | "dm",
-	own: ChannelDoc,
+  base: ChannelDoc,
+  baseSource: "default" | "dm",
+  own: ChannelDoc,
 ): { doc: ChannelDoc; provenance: Provenance } {
-	const doc: ChannelDoc = {};
-	const provenance: Provenance = {};
+  const doc: ChannelDoc = {};
+  const provenance: Provenance = {};
 
-	for (const key of CHANNEL_DOC_KEYS) {
-		if (key in own) {
-			// biome-ignore lint/suspicious/noExplicitAny: 単一キーの代入は ChannelDoc の型上安全
-			(doc as any)[key] = own[key];
-			provenance[key] = "channel";
-		} else if (key in base) {
-			// biome-ignore lint/suspicious/noExplicitAny: 単一キーの代入は ChannelDoc の型上安全
-			(doc as any)[key] = base[key];
-			provenance[key] = baseSource;
-		}
-	}
+  for (const key of CHANNEL_DOC_KEYS) {
+    if (key in own) {
+      // biome-ignore lint/suspicious/noExplicitAny: 単一キーの代入は ChannelDoc の型上安全
+      (doc as any)[key] = own[key];
+      provenance[key] = "channel";
+    } else if (key in base) {
+      // biome-ignore lint/suspicious/noExplicitAny: 単一キーの代入は ChannelDoc の型上安全
+      (doc as any)[key] = base[key];
+      provenance[key] = baseSource;
+    }
+  }
 
-	return { doc, provenance };
+  return { doc, provenance };
 }
 
 /** id からエントリを解決し、default (または DM は dm) + 固有エントリをマージした
@@ -111,49 +111,49 @@ export function mergeWithProvenance(
  * - 固有エントリが無ければ土台単独 (全フィールドが土台由来の provenance) を返す。
  */
 export function resolveChannelConfig(
-	file: ChannelsFile,
-	id: string,
+  file: ChannelsFile,
+  id: string,
 ): { doc: ChannelDoc; provenance: Provenance } | null {
-	const defaultEntry = file.channels.find((c) => c.channel === DEFAULT_CHANNEL);
-	const dmEntry = file.channels.find((c) => c.channel === DM_CHANNEL);
-	const ownEntry = file.channels.find((c) => c.channel === id);
+  const defaultEntry = file.channels.find((c) => c.channel === DEFAULT_CHANNEL);
+  const dmEntry = file.channels.find((c) => c.channel === DM_CHANNEL);
+  const ownEntry = file.channels.find((c) => c.channel === id);
 
-	const baseSource: "default" | "dm" = id === DM_CHANNEL ? "dm" : "default";
-	const baseEntry = baseSource === "dm" ? dmEntry : defaultEntry;
+  const baseSource: "default" | "dm" = id === DM_CHANNEL ? "dm" : "default";
+  const baseEntry = baseSource === "dm" ? dmEntry : defaultEntry;
 
-	if (baseEntry === undefined) {
-		if (baseSource === "dm") {
-			return null;
-		}
-		throw new Error(
-			`channels.yaml is missing the required "${DEFAULT_CHANNEL}" entry`,
-		);
-	}
+  if (baseEntry === undefined) {
+    if (baseSource === "dm") {
+      return null;
+    }
+    throw new Error(
+      `channels.yaml is missing the required "${DEFAULT_CHANNEL}" entry`,
+    );
+  }
 
-	const base = toChannelDoc(baseEntry);
-	// DM は dm エントリ自体が土台であり、その上に重ねる固有エントリは無い
-	// (own === base になると全フィールドが "channel" 由来に化けて provenance が壊れる)。
-	// 通常チャンネルのみ id 一致エントリを own として default に重ねる。
-	const own =
-		id !== DM_CHANNEL && ownEntry !== undefined ? toChannelDoc(ownEntry) : {};
-	return mergeWithProvenance(base, baseSource, own);
+  const base = toChannelDoc(baseEntry);
+  // DM は dm エントリ自体が土台であり、その上に重ねる固有エントリは無い
+  // (own === base になると全フィールドが "channel" 由来に化けて provenance が壊れる)。
+  // 通常チャンネルのみ id 一致エントリを own として default に重ねる。
+  const own =
+    id !== DM_CHANNEL && ownEntry !== undefined ? toChannelDoc(ownEntry) : {};
+  return mergeWithProvenance(base, baseSource, own);
 }
 
 /** ローカル/お試し用の ConfigSource。config ディレクトリ (channels.yaml と prompts/ を
  * 含む親) を受け取り、apply を経ずに直接 YAML を読む (config.md §6)。 */
 export class FileConfigSource implements ConfigSource {
-	constructor(private readonly configDir: string) {}
+  constructor(private readonly configDir: string) {}
 
-	async channel(id: string): Promise<ChannelDoc | null> {
-		const filePath = join(this.configDir, CHANNELS_FILE);
-		const file = await loadChannelsFile(filePath);
+  async channel(id: string): Promise<ChannelDoc | null> {
+    const filePath = join(this.configDir, CHANNELS_FILE);
+    const file = await loadChannelsFile(filePath);
 
-		const resolved = resolveChannelConfig(file, id);
-		if (resolved === null) {
-			return null;
-		}
-		return await resolveFileReferences(resolved.doc, filePath, this.configDir);
-	}
+    const resolved = resolveChannelConfig(file, id);
+    if (resolved === null) {
+      return null;
+    }
+    return await resolveFileReferences(resolved.doc, filePath, this.configDir);
+  }
 }
 
 /** channels.yaml を読み、YAML パース + strict 検証する。単一ファイルなので不在
@@ -161,34 +161,34 @@ export class FileConfigSource implements ConfigSource {
  * ファイルパス + zod issue 付きで throw する。server の通常経路 (FileConfigSource)
  * と dump (config.md §6) が同じローダを共有する — dump 専用の読み込みを持たない。 */
 export async function loadChannelsFile(
-	filePath: string,
+  filePath: string,
 ): Promise<ChannelsFile> {
-	let raw: string;
-	try {
-		raw = await readFile(filePath, "utf-8");
-	} catch (err) {
-		throw new Error(`failed to read channels file: ${filePath}`, {
-			cause: err,
-		});
-	}
+  let raw: string;
+  try {
+    raw = await readFile(filePath, "utf-8");
+  } catch (err) {
+    throw new Error(`failed to read channels file: ${filePath}`, {
+      cause: err,
+    });
+  }
 
-	let parsed: unknown;
-	try {
-		parsed = parseYaml(raw);
-	} catch (err) {
-		throw new Error(`invalid YAML in channels file: ${filePath}`, {
-			cause: err,
-		});
-	}
+  let parsed: unknown;
+  try {
+    parsed = parseYaml(raw);
+  } catch (err) {
+    throw new Error(`invalid YAML in channels file: ${filePath}`, {
+      cause: err,
+    });
+  }
 
-	const result = ChannelsFileSchema.safeParse(parsed);
-	if (!result.success) {
-		const issues = result.error.issues
-			.map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`)
-			.join("\n");
-		throw new Error(`invalid channels file schema in ${filePath}:\n${issues}`);
-	}
-	return result.data;
+  const result = ChannelsFileSchema.safeParse(parsed);
+  if (!result.success) {
+    const issues = result.error.issues
+      .map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`)
+      .join("\n");
+    throw new Error(`invalid channels file schema in ${filePath}:\n${issues}`);
+  }
+  return result.data;
 }
 
 /** systemPrompt / context の値が "./" か "../" で始まる場合、config ディレクトリ
@@ -196,59 +196,59 @@ export async function loadChannelsFile(
  * (config.md §6 の apply 時インライン化と同じ規則)。マージ後の doc に対して一括で適用する
  * — どのエントリ由来でも相対パスの起点は configDir で共通なため。 */
 async function resolveFileReferences(
-	doc: ChannelDoc,
-	yamlFilePath: string,
-	baseDir: string,
+  doc: ChannelDoc,
+  yamlFilePath: string,
+  baseDir: string,
 ): Promise<ChannelDoc> {
-	const systemPrompt =
-		doc.systemPrompt !== undefined
-			? await inlineIfFileRef(doc.systemPrompt, baseDir, yamlFilePath)
-			: undefined;
+  const systemPrompt =
+    doc.systemPrompt !== undefined
+      ? await inlineIfFileRef(doc.systemPrompt, baseDir, yamlFilePath)
+      : undefined;
 
-	const context =
-		doc.context !== undefined
-			? await Promise.all(
-					doc.context.map((value) =>
-						inlineIfFileRef(value, baseDir, yamlFilePath),
-					),
-				)
-			: undefined;
+  const context =
+    doc.context !== undefined
+      ? await Promise.all(
+          doc.context.map((value) =>
+            inlineIfFileRef(value, baseDir, yamlFilePath),
+          ),
+        )
+      : undefined;
 
-	const resolved: ChannelDoc = {
-		...doc,
-		...(systemPrompt !== undefined ? { systemPrompt } : {}),
-		...(context !== undefined ? { context } : {}),
-	};
+  const resolved: ChannelDoc = {
+    ...doc,
+    ...(systemPrompt !== undefined ? { systemPrompt } : {}),
+    ...(context !== undefined ? { context } : {}),
+  };
 
-	// インライン化後の doc が実行時スキーマの形を守っていることの保証として再度 strict 検証する。
-	const validated = ChannelDocSchema.safeParse(resolved);
-	if (!validated.success) {
-		throw new Error(
-			`resolved channel doc failed validation (${yamlFilePath}): ${validated.error.message}`,
-		);
-	}
-	return validated.data;
+  // インライン化後の doc が実行時スキーマの形を守っていることの保証として再度 strict 検証する。
+  const validated = ChannelDocSchema.safeParse(resolved);
+  if (!validated.success) {
+    throw new Error(
+      `resolved channel doc failed validation (${yamlFilePath}): ${validated.error.message}`,
+    );
+  }
+  return validated.data;
 }
 
 function isFileRef(value: string): boolean {
-	return value.startsWith("./") || value.startsWith("../");
+  return value.startsWith("./") || value.startsWith("../");
 }
 
 async function inlineIfFileRef(
-	value: string,
-	baseDir: string,
-	yamlFilePath: string,
+  value: string,
+  baseDir: string,
+  yamlFilePath: string,
 ): Promise<string> {
-	if (!isFileRef(value)) {
-		return value;
-	}
-	const resolvedPath = isAbsolute(value) ? value : join(baseDir, value);
-	try {
-		return await readFile(resolvedPath, "utf-8");
-	} catch (err) {
-		throw new Error(
-			`failed to inline file reference "${value}" from ${yamlFilePath} (resolved to ${resolvedPath})`,
-			{ cause: err },
-		);
-	}
+  if (!isFileRef(value)) {
+    return value;
+  }
+  const resolvedPath = isAbsolute(value) ? value : join(baseDir, value);
+  try {
+    return await readFile(resolvedPath, "utf-8");
+  } catch (err) {
+    throw new Error(
+      `failed to inline file reference "${value}" from ${yamlFilePath} (resolved to ${resolvedPath})`,
+      { cause: err },
+    );
+  }
 }
