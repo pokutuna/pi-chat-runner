@@ -412,7 +412,7 @@ store:
 pi:
   provider: ${env.PI_PROVIDER:-google-vertex}   # pi の --provider
   turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000} # 1 ターン上限 ms。超過で kill (session-runtime.md §6)
-  progressNoticeIntervalMs: ${env.PROGRESS_NOTICE_INTERVAL_MS:-15000}  # 長時間ターンの進捗通知の間隔 ms。0 で無効化 (progress-notice.md)
+  progressNoticeIntervalMs: ${env.PROGRESS_NOTICE_INTERVAL_MS:-5000}  # 長時間ターンの進捗通知の間隔 ms。0 で無効化 (progress-notice.md)
 
 # --- agent: pi 子プロセスの env と実行環境 ---
 agent:

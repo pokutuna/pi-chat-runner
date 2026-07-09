@@ -1417,16 +1417,24 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     expect(h.poster.updateCalls.every((c) => c.messageId === "msg-1")).toBe(
       true,
     );
+    const updateCountBeforeReply = h.poster.updateCalls.length;
 
-    // ターンを終わらせる (steer → reply → agent_end)
+    // ターンを終わらせる (steer → reply → agent_end)。最終的な reply は
+    // 進捗メッセージ (msg-1) への update として届く (新規投稿は増えない)
     const followUp = message({
       id: "1700000000.000700",
       conversation: { channelId: "C01", threadTs: trigger.id },
       text: "wrap it up",
     });
     await h.runner.handle(followUp);
-    await waitFor(() => h.poster.calls.length === 2, "final reply posted");
+    await waitFor(
+      () => h.poster.updateCalls.length > updateCountBeforeReply,
+      "final reply merged into progress message",
+    );
     await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+    expect(h.poster.calls).toHaveLength(1);
+    expect(h.poster.updateCalls.at(-1)?.messageId).toBe("msg-1");
 
     // 進捗通知メッセージへの update はターン終了後は増えない
     const updateCountAtEnd = h.poster.updateCalls.length;

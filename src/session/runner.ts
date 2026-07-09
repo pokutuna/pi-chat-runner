@@ -153,7 +153,7 @@ export interface SessionRunnerOptions {
   /** lease の TTL。既定 60_000ms。renew は ttl/3 間隔 */
   leaseTtlMs?: number;
   /** 長時間ターンの進捗通知の間隔 (progress-notice.md)。初回発火までの猶予も同じ値を使う。
-   * 既定 15_000ms。0 を渡すと機能自体を無効化する (負値は指定しない想定) */
+   * 既定 5_000ms。0 を渡すと機能自体を無効化する (負値は指定しない想定) */
   progressNoticeIntervalMs?: number;
   /** agent_end 後に追いメッセージを待つ時間。既定 3_000ms */
   lingerMs?: number;
@@ -205,11 +205,16 @@ interface SessionRecord {
    * agent_end 冒頭でクリアする (turnTimeoutTimer と同じ寿命管理) */
   progressNoticeTimer: NodeJS.Timeout | undefined;
   /** 直近に開始した、または直近に完了したツール呼び出し。tool_execution_start/end の
-   * 購読だけで更新する (LLM 呼び出し・session.jsonl を経由しない、progress-notice.md) */
-  currentTool: { name: string; argsPreview: string } | undefined;
+   * 購読だけで更新する (LLM 呼び出し・session.jsonl を経由しない、progress-notice.md)。
+   * emoji は tool_execution_start 時点で確定させる (bash は候補からランダムに選ぶため、
+   * タイマー発火のたびに選び直すと同じ呼び出し中に表示が変わってしまう) */
+  currentTool: { name: string; emoji: string; argsPreview: string } | undefined;
   /** このセッションでの tool_execution_start 累計回数 (progress-notice.md の
    * 進捗表示用。ターンをまたいで積算する) */
   toolCallCount: number;
+  /** 直前に進捗通知として送信したテキスト (progress-notice.md)。同じ内容なら
+   * tick をスキップし、Slack API を呼ばない (状況が進んでいないのに更新し続けない) */
+  lastProgressNoticeText: string | undefined;
   /** 直近の agent_end から集計した usage の累計 (agent_end.messages は毎回全履歴
    * を返すため、ターンごとの増分ではなくセッション累計になる) */
   usageTotals?: UsageTotals;
@@ -347,14 +352,19 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** 進捗通知でツール名ごとに絵文字を出し分ける (progress-notice.md)。
- * 分類が当たらないツールは既定の :gear: にフォールバックする */
+ * 分類が当たらないツールは既定の :gear: にフォールバックする。bash は頻出のため
+ * 呼び出しごとに候補からランダムに1つ選び、単調な見た目にならないようにする */
 function progressEmoji(toolName: string): string {
   switch (toolName) {
     case "bash":
-      return ":computer:";
+      return (
+        BASH_EMOJIS[Math.floor(Math.random() * BASH_EMOJIS.length)] ??
+        ":computer:"
+      );
     case "read":
     case "grep":
-    case "glob":
+    case "find":
+    case "ls":
       return ":mag:";
     case "write":
     case "edit":
@@ -365,6 +375,45 @@ function progressEmoji(toolName: string): string {
       return ":gear:";
   }
 }
+
+const BASH_EMOJIS = [
+  ":computer:",
+  ":keyboard:",
+  ":zap:",
+  ":gear:",
+  ":hammer_and_wrench:",
+  ":rocket:",
+  ":robot_face:",
+  ":satellite:",
+];
+
+/** pi 組み込みツール (bash/read/write/edit/grep/find/ls) の主要な引数キー1つの
+ * 値だけを取り出す。JSON.stringify のキー名込み表示 (`{"command":"..."}`) は
+ * 進捗通知としては冗長なため。組み込み以外の (extension 由来の) ツールは
+ * キー構成を把握できないので preview() の汎用フォールバックに委ねる */
+function toolArgsPreview(
+  toolName: string,
+  args: unknown,
+  maxChars: number,
+): string {
+  const key = BUILTIN_TOOL_PRIMARY_ARG_KEY[toolName];
+  if (key === undefined) return preview(args, maxChars);
+  const value =
+    typeof args === "object" && args !== null
+      ? (args as Record<string, unknown>)[key]
+      : undefined;
+  return value === undefined ? "" : preview(value, maxChars);
+}
+
+const BUILTIN_TOOL_PRIMARY_ARG_KEY: Record<string, string> = {
+  bash: "command",
+  read: "path",
+  ls: "path",
+  write: "path",
+  edit: "path",
+  grep: "pattern",
+  find: "pattern",
+};
 
 /** dir 配下 (dir 自身含む) を再帰的に chown する。UID 分離時、restore で
  * root 所有のままコピーされたファイルを agent 所有に揃えるための最小実装
@@ -443,7 +492,7 @@ export class SessionRunner {
     this.agentHome = options.agentHome ?? "/home/agent";
     this.piPermission = options.piPermission;
     this.leaseTtlMs = options.leaseTtlMs ?? 60_000;
-    this.progressNoticeIntervalMs = options.progressNoticeIntervalMs ?? 15_000;
+    this.progressNoticeIntervalMs = options.progressNoticeIntervalMs ?? 5_000;
     this.lingerMs = options.lingerMs ?? 3_000;
     this.turnTimeoutMs = options.turnTimeoutMs ?? 600_000;
     this.owner = options.owner ?? `${hostname()}:${process.pid}`;
@@ -777,6 +826,7 @@ export class SessionRunner {
       progressNoticeTimer: undefined,
       currentTool: undefined,
       toolCallCount: 0,
+      lastProgressNoticeText: undefined,
     };
     this.sessions.set(sessionKey, record);
 
@@ -789,7 +839,7 @@ export class SessionRunner {
       this.stopRenewTimer(record);
       this.clearTurnTimeout(record);
       this.clearProgressNotice(record);
-      this.router.clearProgress(sessionKey);
+      await this.router.clearProgress(sessionKey);
       try {
         await record.process?.stop();
       } catch {
@@ -1042,10 +1092,13 @@ export class SessionRunner {
         record.toolCallCount += 1;
         record.currentTool = {
           name: piEvent.toolName,
+          emoji: progressEmoji(piEvent.toolName),
           // reply の args にはユーザーへの返信本文がそのまま入る。ここで切り詰めて
           // 見せると本来の reply 投稿と内容が重複・矮小化するため出さない
           argsPreview:
-            piEvent.toolName === "reply" ? "" : preview(piEvent.args, 60),
+            piEvent.toolName === "reply"
+              ? ""
+              : toolArgsPreview(piEvent.toolName, piEvent.args, 60),
         };
       }
       if (isToolExecutionEnd(piEvent)) {
@@ -1064,6 +1117,14 @@ export class SessionRunner {
               thread_key: payload.thread_key,
               text: payload.text,
               ...(files !== undefined ? { files } : {}),
+            })
+            .then((result) => {
+              // reply が進捗メッセージをその場で消費できたら、agent_end を待たず
+              // タイマーを即止める。待つとその間にタイマーが再発火し、消費済みの
+              // 進捗メッセージの跡地に (古いツール名のまま) 新規投稿してしまう
+              if (result.progressConsumed) {
+                this.clearProgressNotice(record);
+              }
             })
             .catch((err) => {
               this.logger.warn(
@@ -1088,6 +1149,10 @@ export class SessionRunner {
         const totals = extractUsageTotals(piEvent);
         record.usageTotals = totals;
         this.logger.info({ sessionKey, ...totals }, "turn usage");
+        // 進捗タイマーは agent_end を受けた時点で即止める。onAgentEnd の
+        // teardown まで待つと、その間の await の隙間でタイマー tick がもう一件
+        // 発火し、deliver 済みの reply の後に古いツール名で新規投稿してしまう
+        this.clearProgressNotice(record);
         void this.onAgentEnd(sessionKey, proc).catch((err) => {
           this.logger.warn({ sessionKey, err }, "agent_end handling failed");
         });
@@ -1134,7 +1199,9 @@ export class SessionRunner {
         this.stopRenewTimer(current);
         this.clearTurnTimeout(current);
         this.clearProgressNotice(current);
-        this.router.clearProgress(sessionKey);
+        void this.router.clearProgress(sessionKey).catch((err) => {
+          this.logger.warn({ sessionKey, err }, "clear progress failed");
+        });
         // このターンで prompt 済みだった item は ack して捨てる。retry しない
         // (session-model.md §6)。捨てないと未 ack のまま inbox に残り、次の新規
         // イベントの drain が巻き込んで再 prompt するため、workdir/transcript を
@@ -1281,7 +1348,7 @@ export class SessionRunner {
     this.stopRenewTimer(record);
     this.clearTurnTimeout(record);
     this.clearProgressNotice(record);
-    this.router.clearProgress(sessionKey);
+    await this.router.clearProgress(sessionKey);
     await this.store.leases.release(record.lease);
     this.sessions.delete(sessionKey);
     this.logger.info(
@@ -1375,7 +1442,7 @@ export class SessionRunner {
     this.stopRenewTimer(record);
     this.clearTurnTimeout(record);
     this.clearProgressNotice(record);
-    this.router.clearProgress(sessionKey);
+    await this.router.clearProgress(sessionKey);
 
     // register 済み (kick で必ず register している) なので deliver できる。
     // 通知の配達が失敗してもセッションの畳み込みは続ける
@@ -1453,7 +1520,7 @@ export class SessionRunner {
         this.stopRenewTimer(record);
         this.clearTurnTimeout(record);
         this.clearProgressNotice(record);
-        this.router.clearProgress(sessionKey);
+        await this.router.clearProgress(sessionKey);
         await record.process?.stop();
       })().catch((err) => {
         this.logger.error({ sessionKey, err }, "lease renew handling failed");
@@ -1497,6 +1564,8 @@ export class SessionRunner {
    * (progress-notice.md)。間隔ごとに currentTool のスナップショットを投稿/更新する */
   private resetProgressNotice(sessionKey: string, record: SessionRecord): void {
     this.clearProgressNotice(record);
+    // 新しいターンの内容と比較できるよう、前ターン分の記憶は引き継がない
+    record.lastProgressNoticeText = undefined;
     if (this.progressNoticeIntervalMs === 0) return;
     const timer = setInterval(() => {
       const tool = record.currentTool;
@@ -1505,8 +1574,11 @@ export class SessionRunner {
         tool === undefined
           ? `:thinking_face: ... (step ${count})`
           : tool.argsPreview === ""
-            ? `${progressEmoji(tool.name)} \`${tool.name}\` ... (step ${count})`
-            : `${progressEmoji(tool.name)} \`${tool.name}\` \`${tool.argsPreview}\` ... (step ${count})`;
+            ? `${tool.emoji} \`${tool.name}\` ... (step ${count})`
+            : `${tool.emoji} \`${tool.name}\` \`${tool.argsPreview}\` ... (step ${count})`;
+      // 前回送信時から状況が進んでいなければ何もしない (Slack API を呼ばない)
+      if (text === record.lastProgressNoticeText) return;
+      record.lastProgressNoticeText = text;
       this.router.notifyProgress(sessionKey, text).catch((err) => {
         this.logger.warn({ sessionKey, err }, "progress notice failed");
       });

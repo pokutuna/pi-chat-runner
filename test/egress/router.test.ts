@@ -32,6 +32,7 @@ class FakePoster implements ChatPoster {
     files?: string[];
   }[] = [];
   updateCalls: { channelId: string; messageId: string; text: string }[] = [];
+  failUpdate = false;
   private nextMessageId = 0;
 
   async postMessage(
@@ -55,6 +56,7 @@ class FakePoster implements ChatPoster {
     messageId: string,
     text: string,
   ): Promise<void> {
+    if (this.failUpdate) throw new Error("update failed");
     this.updateCalls.push({ channelId, messageId, text });
   }
 }
@@ -279,6 +281,115 @@ describe("EgressRouter", () => {
 
       expect(poster.calls).toHaveLength(2);
       expect(poster.updateCalls).toEqual([]);
+    });
+  });
+
+  describe("deliver overwriting a pending progress message", () => {
+    it("updates the progress message instead of posting a new one", async () => {
+      const poster = new FakePoster();
+      const router = new EgressRouter({ poster });
+      router.register("k", { channelId: "C01", threadTs: "1" });
+      await router.notifyProgress("k", "running");
+
+      await router.deliver({ thread_key: "k", text: "final answer" });
+
+      expect(poster.calls).toEqual([
+        { channelId: "C01", threadTs: "1", text: "running" },
+      ]);
+      expect(poster.updateCalls).toEqual([
+        { channelId: "C01", messageId: "msg-1", text: "final answer" },
+      ]);
+    });
+
+    it("consumes the progress messageId so a later reply posts fresh", async () => {
+      const poster = new FakePoster();
+      const router = new EgressRouter({ poster });
+      router.register("k", { channelId: "C01", threadTs: "1" });
+      await router.notifyProgress("k", "running");
+
+      await router.deliver({ thread_key: "k", text: "first reply" });
+      await router.deliver({ thread_key: "k", text: "second reply" });
+
+      expect(poster.updateCalls).toHaveLength(1);
+      expect(poster.calls.map((c) => c.text)).toEqual([
+        "running",
+        "second reply",
+      ]);
+    });
+
+    it("does not overwrite the progress message when files are attached", async () => {
+      const poster = new FakePoster();
+      const router = new EgressRouter({ poster });
+      router.register("k", { channelId: "C01", threadTs: "1" });
+      await router.notifyProgress("k", "running");
+
+      await router.deliver({
+        thread_key: "k",
+        text: "see attached",
+        files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
+      });
+
+      expect(poster.updateCalls).toEqual([]);
+      expect(poster.calls).toEqual([
+        { channelId: "C01", threadTs: "1", text: "running" },
+        {
+          channelId: "C01",
+          threadTs: "1",
+          text: "see attached",
+          files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
+        },
+      ]);
+    });
+
+    it("falls back to a new post when the progress update fails", async () => {
+      const poster = new FakePoster();
+      const router = new EgressRouter({ poster });
+      router.register("k", { channelId: "C01", threadTs: "1" });
+      await router.notifyProgress("k", "running");
+      poster.failUpdate = true;
+
+      await router.deliver({ thread_key: "k", text: "final answer" });
+
+      expect(poster.updateCalls).toEqual([]);
+      expect(poster.calls).toEqual([
+        { channelId: "C01", threadTs: "1", text: "running" },
+        { channelId: "C01", threadTs: "1", text: "final answer" },
+      ]);
+    });
+
+    it("only overwrites the first chunk when text is split into multiple posts", async () => {
+      const poster = new FakePoster();
+      const router = new EgressRouter({ poster });
+      router.register("k", { channelId: "C01", threadTs: "1" });
+      await router.notifyProgress("k", "running");
+
+      const paragraph = "a".repeat(3000);
+      const text = `${paragraph}\n\n${paragraph}`;
+      await router.deliver({ thread_key: "k", text });
+
+      expect(poster.updateCalls).toEqual([
+        { channelId: "C01", messageId: "msg-1", text: paragraph },
+      ]);
+      expect(poster.calls).toEqual([
+        { channelId: "C01", threadTs: "1", text: "running" },
+        { channelId: "C01", threadTs: "1", text: paragraph },
+      ]);
+    });
+
+    it("does not touch progress messages from other thread_keys", async () => {
+      const poster = new FakePoster();
+      const router = new EgressRouter({ poster });
+      router.register("k1", { channelId: "C01", threadTs: "1" });
+      router.register("k2", { channelId: "C01", threadTs: "2" });
+      await router.notifyProgress("k1", "running");
+
+      await router.deliver({ thread_key: "k2", text: "reply to k2" });
+
+      expect(poster.updateCalls).toEqual([]);
+      expect(poster.calls).toEqual([
+        { channelId: "C01", threadTs: "1", text: "running" },
+        { channelId: "C01", threadTs: "2", text: "reply to k2" },
+      ]);
     });
   });
 });
