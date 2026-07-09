@@ -10,7 +10,6 @@ See [docs/design/README.md](docs/design/README.md) for the design.
 - The agent replies only through the `reply` tool; the host owns the actual destination
 - Per-channel trigger conditions, prompts, and models are declared in YAML — a message mention, keyword, or LLM classifier, or an emoji reaction on an existing message, can kick a session
 - DB (inbox/session/lease) and workdir archival are independent, swappable backends
-- The pi agent itself is customized by consumers: extend the base image with your own Dockerfile to add commands or skills (`/app/skills/`, etc.)
 
 ## Components
 
@@ -62,7 +61,84 @@ Chat (e.g. Slack)
 
 A real deployment (your own Slack App, your own Cloud Run service) lives in a separate repo that extends the base image with `FROM` and fills in the `examples/` templates with real values — see [docs/design/session-runtime.md](docs/design/session-runtime.md) §5.
 
-## Usage
+## Usage Patterns
+
+There are three ways to use this project, from least to most integration effort.
+
+### 1. Run the published container image as-is
+
+Deploy the base image directly (e.g. to Cloud Run — see `examples/service.yaml`) and only supply config: `agent.yaml` (bridge-wide) and `channels.yaml` (per-channel triggers/prompts/models), plus a Slack App from one of the `examples/slack-app-manifest.*.yaml` templates. No image build required.
+
+This gets you mention/keyword/classifier/reaction triggers, threaded replies, and persistence — but only the CLI tools baked into the base image (`git`/`curl`/`jq`/`ripgrep`/`fd`) and whatever skills/extensions ship in `skills/`/`extensions/` (empty by default).
+
+You can go a bit further without rebuilding, by bind-mounting extra files onto the running container instead of baking them into the image — pi discovers skills and extensions by directory, not by build-time manifest:
+
+```sh
+docker run \
+  -v ./my-config:/app/examples/config:ro \
+  -v ./my-skills:/home/agent/.pi/agent/skills:ro \
+  -v ./my-extensions:/home/agent/.pi/agent/extensions:ro \
+  -e CONFIG_DIR=examples/config \
+  pi-chat-runner:latest
+```
+
+This works for skills/extensions and config, but not for installing additional CLI tools (`apt-get`, etc.) — that needs pattern 2.
+
+### 2. Customize the image
+
+Extend the base image with your own Dockerfile — add CLI tools the agent's `bash` tool can call, or ship skills/extensions baked in rather than mounted. See [`examples/gc-logging-agent/`](examples/gc-logging-agent) for a complete example (adds `gcloud`/`duckdb`/`uv` and a log-investigation skill).
+
+```dockerfile
+ARG BASE_IMAGE=pi-chat-runner:local
+FROM ${BASE_IMAGE}
+
+# Add a CLI tool the agent can call via bash
+RUN apt-get update && apt-get install -y --no-install-recommends duckdb \
+  && rm -rf /var/lib/apt/lists/*
+
+# Skills: pi's default discovery path is $AGENT_HOME/.pi/agent/skills/
+COPY --chown=1001:1001 skills/ /home/agent/.pi/agent/skills/
+
+# Extensions: any .ts/.js directly under $AGENT_HOME/.pi/agent/extensions/
+# is passed to pi's --extension automatically (in addition to the runner's
+# own reply/permission-gate/export extensions, which are always injected)
+COPY --chown=1001:1001 extensions/ /home/agent/.pi/agent/extensions/
+```
+
+Runtime user is uid/gid `1001` (`agent`) when UID separation is enabled (`PI_AGENT_UID`/`PI_AGENT_GID`), so `--chown=1001:1001` keeps files writable/readable by the process that actually runs pi.
+
+### 3. Embed just the runner (no bundled Slack server)
+
+If you already have a Slack bot (or any other event source) and just want to kick a pi session from it — without running this project's HTTP/Socket-Mode server — import `SessionRunner` directly and call `handle()`/`handleReaction()` from your own event handler:
+
+```ts
+import {
+  SessionRunner,
+  FileConfigSource,
+  InMemoryStateStore,
+  EgressRouter,
+  Reactions,
+  SlackIngressAdapter, // reuse Slack raw-event → InboundMessage normalization if useful
+  toMrkdwn,
+} from "pi-chat-runner";
+
+const runner = new SessionRunner({
+  configSource: new FileConfigSource("./config"),
+  store: new InMemoryStateStore(), // or a SQLite/Firestore-backed StateStore
+  router: new EgressRouter({ poster: myPoster, formatter: toMrkdwn }),
+  reactions: new Reactions(myReactionClient),
+  workdirStorage: myWorkdirStorage,
+  extensionPaths: [/* absolute paths to reply.ts / permission-gate.ts / export.ts */],
+  mentionFormat: (userId) => `<@${userId}>`, // your platform's mention syntax
+});
+
+// Inside your own bot's message handler:
+await runner.handle(inboundMessage);
+```
+
+`SessionRunner` owns gating, inbox/lease/dedupe, spawning pi, and steering — everything below the event source. You only need to normalize your incoming event into an `InboundMessage` (or reuse `SlackIngressAdapter` if the source is Slack) and supply a `ChatPoster` for replies. See `src/index.ts` for the full list of exported building blocks.
+
+## Local Development
 
 ```sh
 pnpm install
