@@ -28,7 +28,8 @@ InboxStore: durable, dedupe'd queue of accepted events
 ▼
 SessionRunner: acquires lease, drains inbox, kicks a turn
 │                └─ Store: SessionStore / LeaseStore / WorkdirStorage
-│                   decides new vs. resume from SessionStore, restores workdir accordingly
+│                   restores workdir via WorkdirStorage; new vs. resume follows
+│                   from whether a transcript exists after restore
 │  turn input
 ▼
 SessionRuntime: spawns and drives pi via RPC (pi)
@@ -51,7 +52,7 @@ Chat (e.g. Slack)
 | `src/egress/` | thread_key resolution, mrkdwn formatting, message chunking, reactions |
 | `extensions/` | Extensions injected into pi: `reply.ts`, `permission-gate.ts`, `export.ts` (HTML session export) |
 | `home/` | Baked into the base image as `/home/agent` (default `settings.json`, etc.) |
-| `skills/` | Baked into the base image as `/app/skills` (sample skills for pi; empty by default) |
+| `skills/` | Baked into the base image as `/home/agent/.pi/agent/skills/` (sample skills for pi; empty by default) |
 | `examples/config/` | Sample channel configuration and prompts |
 | `examples/service.yaml` | Cloud Run deployment template (copy and edit) |
 | `examples/slack-app-manifest.socket.yaml` | Slack App manifest template, Socket Mode |
@@ -78,7 +79,6 @@ docker run \
   -v ./my-config:/app/examples/config:ro \
   -v ./my-skills:/home/agent/.pi/agent/skills:ro \
   -v ./my-extensions:/home/agent/.pi/agent/extensions:ro \
-  -e CONFIG_DIR=examples/config \
   pi-chat-runner:latest
 ```
 
@@ -138,6 +138,15 @@ await runner.handle(inboundMessage);
 
 `SessionRunner` owns gating, inbox/lease/dedupe, spawning pi, and steering — everything below the event source. You only need to normalize your incoming event into an `InboundMessage` (or reuse `SlackIngressAdapter` if the source is Slack) and supply a `ChatPoster` for replies. See `src/index.ts` for the full list of exported building blocks.
 
+## Configuration
+
+Two YAML files, read from `CONFIG_DIR` (default `examples/config`):
+
+- **`agent.yaml`** — bridge-wide, read once at boot: Slack connector (mode/tokens), store backend, pi provider/timeout, agent runtime (UID separation, env passthrough to the pi child process). See [`examples/config/agent.yaml`](examples/config/agent.yaml) for an annotated template.
+- **`channels.yaml`** — per-channel behavior, re-read on every message (no restart needed): trigger gates, `systemPrompt`, `model`, `tools`/`excludeTools`, session mode. A single file listing all channels as an array, with a required `default` entry as the fallback. See [`examples/config/channels.yaml`](examples/config/channels.yaml) and the excerpt below.
+
+Both support `${env.X}` / `${env.X:-default}` references to pull values from the process environment (secrets included). Full schema and semantics: [docs/design/config.md](docs/design/config.md).
+
 ## Local Development
 
 ```sh
@@ -146,7 +155,7 @@ pnpm run dev:socket   # local dev, Socket Mode
 pnpm run dev          # Events API
 ```
 
-Set Slack credentials in `.env.socket` or `.env`. Bridge-wide behavior (connector/store/pi/agent) is configured in `examples/config/agent.yaml`; per-channel behavior is configured in `examples/config/channels.yaml`, a single file listing all channels:
+Set Slack credentials in `.env.socket` or `.env`. See [Configuration](#configuration) above for `agent.yaml`/`channels.yaml`; a `channels.yaml` excerpt:
 
 ```yaml
 channels:
@@ -167,7 +176,7 @@ channels:
           emoji: [eyes, robot_face]
 ```
 
-DB defaults to InMemory (`./store/sqlite` / `./store/firestore` for persistence). Workdir archival defaults to no-op unless `archiveDir` is set. See [docs/design/persistence.md](docs/design/persistence.md).
+DB defaults to in-memory (`store.backend: memory` in `agent.yaml`, or `STORE_BACKEND` env); set it to `sqlite` (default path `/tmp/pi-chat-runner/state.db`) or `firestore` for persistence. Workdir archival defaults to no-op unless `archiveDir` is set. See [docs/design/persistence.md](docs/design/persistence.md).
 
 ```sh
 pnpm test
