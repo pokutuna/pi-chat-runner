@@ -5,7 +5,7 @@ import { defineConfig } from "vitest/config";
 process.env.LOG_LEVEL ??= "silent";
 
 export default defineConfig({
-	test: {
-		include: ["test/**/*.test.ts"],
-	},
+  test: {
+    include: ["test/**/*.test.ts"],
+  },
 });

@@ -5,212 +5,212 @@ import { type ChatPoster, EgressRouter } from "../../src/egress/router.js";
 
 /** pino のログ 1 行 (JSON) を配列に集めるテスト用ロガー */
 function collectingLogger(): { logger: pino.Logger; lines: () => unknown[] } {
-	const chunks: string[] = [];
-	const stream = {
-		write(chunk: string) {
-			chunks.push(chunk);
-			return true;
-		},
-	};
-	const logger = pino({ level: "info" }, stream);
-	return {
-		logger,
-		lines: () =>
-			chunks
-				.join("")
-				.split("\n")
-				.filter((line) => line.length > 0)
-				.map((line) => JSON.parse(line)),
-	};
+  const chunks: string[] = [];
+  const stream = {
+    write(chunk: string) {
+      chunks.push(chunk);
+      return true;
+    },
+  };
+  const logger = pino({ level: "info" }, stream);
+  return {
+    logger,
+    lines: () =>
+      chunks
+        .join("")
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line)),
+  };
 }
 
 class FakePoster implements ChatPoster {
-	calls: {
-		channelId: string;
-		threadTs?: string;
-		text: string;
-		files?: string[];
-	}[] = [];
+  calls: {
+    channelId: string;
+    threadTs?: string;
+    text: string;
+    files?: string[];
+  }[] = [];
 
-	async postMessage(
-		channelId: string,
-		text: string,
-		threadTs?: string,
-		files?: string[],
-	): Promise<void> {
-		this.calls.push({
-			channelId,
-			text,
-			...(threadTs !== undefined ? { threadTs } : {}),
-			...(files !== undefined ? { files } : {}),
-		});
-	}
+  async postMessage(
+    channelId: string,
+    text: string,
+    threadTs?: string,
+    files?: string[],
+  ): Promise<void> {
+    this.calls.push({
+      channelId,
+      text,
+      ...(threadTs !== undefined ? { threadTs } : {}),
+      ...(files !== undefined ? { files } : {}),
+    });
+  }
 }
 
 describe("EgressRouter", () => {
-	it("delivers to the registered destination", async () => {
-		const poster = new FakePoster();
-		const router = new EgressRouter({ poster });
-		router.register("C01:1700.1", { channelId: "C01", threadTs: "1700.1" });
+  it("delivers to the registered destination", async () => {
+    const poster = new FakePoster();
+    const router = new EgressRouter({ poster });
+    router.register("C01:1700.1", { channelId: "C01", threadTs: "1700.1" });
 
-		await router.deliver({ thread_key: "C01:1700.1", text: "hello" });
+    await router.deliver({ thread_key: "C01:1700.1", text: "hello" });
 
-		expect(poster.calls).toEqual([
-			{ channelId: "C01", threadTs: "1700.1", text: "hello" },
-		]);
-	});
+    expect(poster.calls).toEqual([
+      { channelId: "C01", threadTs: "1700.1", text: "hello" },
+    ]);
+  });
 
-	it("applies the formatter hook before posting", async () => {
-		const poster = new FakePoster();
-		const router = new EgressRouter({
-			poster,
-			formatter: (text) => `*${text}*`,
-		});
-		router.register("k", { channelId: "C01", threadTs: "1" });
+  it("applies the formatter hook before posting", async () => {
+    const poster = new FakePoster();
+    const router = new EgressRouter({
+      poster,
+      formatter: (text) => `*${text}*`,
+    });
+    router.register("k", { channelId: "C01", threadTs: "1" });
 
-		await router.deliver({ thread_key: "k", text: "bold" });
+    await router.deliver({ thread_key: "k", text: "bold" });
 
-		expect(poster.calls[0]?.text).toBe("*bold*");
-	});
+    expect(poster.calls[0]?.text).toBe("*bold*");
+  });
 
-	it("drops unknown thread_key with a warning instead of throwing", async () => {
-		const poster = new FakePoster();
-		const { logger, lines } = collectingLogger();
-		const router = new EgressRouter({ poster, logger });
+  it("drops unknown thread_key with a warning instead of throwing", async () => {
+    const poster = new FakePoster();
+    const { logger, lines } = collectingLogger();
+    const router = new EgressRouter({ poster, logger });
 
-		await router.deliver({ thread_key: "nope", text: "lost" });
+    await router.deliver({ thread_key: "nope", text: "lost" });
 
-		expect(poster.calls).toEqual([]);
-		const warnings = lines().filter(
-			(line) => (line as { level: number }).level === 40,
-		);
-		expect(warnings).toHaveLength(1);
-		expect((warnings[0] as { threadKey: string }).threadKey).toBe("nope");
-	});
+    expect(poster.calls).toEqual([]);
+    const warnings = lines().filter(
+      (line) => (line as { level: number }).level === 40,
+    );
+    expect(warnings).toHaveLength(1);
+    expect((warnings[0] as { threadKey: string }).threadKey).toBe("nope");
+  });
 
-	it("re-registering a thread_key overwrites the destination", async () => {
-		const poster = new FakePoster();
-		const router = new EgressRouter({ poster });
-		router.register("k", { channelId: "C01", threadTs: "1" });
-		router.register("k", { channelId: "C01", threadTs: "2" });
+  it("re-registering a thread_key overwrites the destination", async () => {
+    const poster = new FakePoster();
+    const router = new EgressRouter({ poster });
+    router.register("k", { channelId: "C01", threadTs: "1" });
+    router.register("k", { channelId: "C01", threadTs: "2" });
 
-		await router.deliver({ thread_key: "k", text: "x" });
+    await router.deliver({ thread_key: "k", text: "x" });
 
-		expect(poster.calls[0]?.threadTs).toBe("2");
-	});
+    expect(poster.calls[0]?.threadTs).toBe("2");
+  });
 
-	it("posts flat (no thread_ts) when the destination omits threadTs", async () => {
-		const poster = new FakePoster();
-		const router = new EgressRouter({ poster });
-		router.register("k", { channelId: "C01" });
+  it("posts flat (no thread_ts) when the destination omits threadTs", async () => {
+    const poster = new FakePoster();
+    const router = new EgressRouter({ poster });
+    router.register("k", { channelId: "C01" });
 
-		await router.deliver({ thread_key: "k", text: "flat reply" });
+    await router.deliver({ thread_key: "k", text: "flat reply" });
 
-		expect(poster.calls).toEqual([{ channelId: "C01", text: "flat reply" }]);
-	});
+    expect(poster.calls).toEqual([{ channelId: "C01", text: "flat reply" }]);
+  });
 
-	it("passes payload.files through to the poster", async () => {
-		const poster = new FakePoster();
-		const router = new EgressRouter({ poster });
-		router.register("k", { channelId: "C01", threadTs: "1" });
+  it("passes payload.files through to the poster", async () => {
+    const poster = new FakePoster();
+    const router = new EgressRouter({ poster });
+    router.register("k", { channelId: "C01", threadTs: "1" });
 
-		await router.deliver({
-			thread_key: "k",
-			text: "see attached",
-			files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
-		});
+    await router.deliver({
+      thread_key: "k",
+      text: "see attached",
+      files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
+    });
 
-		expect(poster.calls).toEqual([
-			{
-				channelId: "C01",
-				threadTs: "1",
-				text: "see attached",
-				files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
-			},
-		]);
-	});
+    expect(poster.calls).toEqual([
+      {
+        channelId: "C01",
+        threadTs: "1",
+        text: "see attached",
+        files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
+      },
+    ]);
+  });
 
-	it("omits files from the poster call when the payload has none", async () => {
-		const poster = new FakePoster();
-		const router = new EgressRouter({ poster });
-		router.register("k", { channelId: "C01", threadTs: "1" });
+  it("omits files from the poster call when the payload has none", async () => {
+    const poster = new FakePoster();
+    const router = new EgressRouter({ poster });
+    router.register("k", { channelId: "C01", threadTs: "1" });
 
-		await router.deliver({ thread_key: "k", text: "no attachment" });
+    await router.deliver({ thread_key: "k", text: "no attachment" });
 
-		expect(poster.calls[0]).toEqual({
-			channelId: "C01",
-			threadTs: "1",
-			text: "no attachment",
-		});
-	});
+    expect(poster.calls[0]).toEqual({
+      channelId: "C01",
+      threadTs: "1",
+      text: "no attachment",
+    });
+  });
 
-	it("splits long text into multiple sequential posts to the same thread", async () => {
-		const poster = new FakePoster();
-		const router = new EgressRouter({ poster });
-		router.register("k", { channelId: "C01", threadTs: "1" });
+  it("splits long text into multiple sequential posts to the same thread", async () => {
+    const poster = new FakePoster();
+    const router = new EgressRouter({ poster });
+    router.register("k", { channelId: "C01", threadTs: "1" });
 
-		const paragraph = "a".repeat(3000);
-		const text = `${paragraph}\n\n${paragraph}`;
-		await router.deliver({ thread_key: "k", text });
+    const paragraph = "a".repeat(3000);
+    const text = `${paragraph}\n\n${paragraph}`;
+    await router.deliver({ thread_key: "k", text });
 
-		expect(poster.calls).toHaveLength(2);
-		expect(poster.calls[0]).toEqual({
-			channelId: "C01",
-			threadTs: "1",
-			text: paragraph,
-		});
-		expect(poster.calls[1]).toEqual({
-			channelId: "C01",
-			threadTs: "1",
-			text: paragraph,
-		});
-	});
+    expect(poster.calls).toHaveLength(2);
+    expect(poster.calls[0]).toEqual({
+      channelId: "C01",
+      threadTs: "1",
+      text: paragraph,
+    });
+    expect(poster.calls[1]).toEqual({
+      channelId: "C01",
+      threadTs: "1",
+      text: paragraph,
+    });
+  });
 
-	it("attaches files only to the last post when splitting long text", async () => {
-		const poster = new FakePoster();
-		const router = new EgressRouter({ poster });
-		router.register("k", { channelId: "C01", threadTs: "1" });
+  it("attaches files only to the last post when splitting long text", async () => {
+    const poster = new FakePoster();
+    const router = new EgressRouter({ poster });
+    router.register("k", { channelId: "C01", threadTs: "1" });
 
-		const paragraph = "a".repeat(3000);
-		const text = `${paragraph}\n\n${paragraph}`;
-		await router.deliver({
-			thread_key: "k",
-			text,
-			files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
-		});
+    const paragraph = "a".repeat(3000);
+    const text = `${paragraph}\n\n${paragraph}`;
+    await router.deliver({
+      thread_key: "k",
+      text,
+      files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
+    });
 
-		expect(poster.calls).toHaveLength(2);
-		expect(poster.calls[0]).toEqual({
-			channelId: "C01",
-			threadTs: "1",
-			text: paragraph,
-		});
-		expect(poster.calls[1]).toEqual({
-			channelId: "C01",
-			threadTs: "1",
-			text: paragraph,
-			files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
-		});
-	});
+    expect(poster.calls).toHaveLength(2);
+    expect(poster.calls[0]).toEqual({
+      channelId: "C01",
+      threadTs: "1",
+      text: paragraph,
+    });
+    expect(poster.calls[1]).toEqual({
+      channelId: "C01",
+      threadTs: "1",
+      text: paragraph,
+      files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
+    });
+  });
 
-	it("posts once with empty text when only files are attached", async () => {
-		const poster = new FakePoster();
-		const router = new EgressRouter({ poster });
-		router.register("k", { channelId: "C01", threadTs: "1" });
+  it("posts once with empty text when only files are attached", async () => {
+    const poster = new FakePoster();
+    const router = new EgressRouter({ poster });
+    router.register("k", { channelId: "C01", threadTs: "1" });
 
-		await router.deliver({
-			thread_key: "k",
-			text: "",
-			files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
-		});
+    await router.deliver({
+      thread_key: "k",
+      text: "",
+      files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
+    });
 
-		expect(poster.calls).toEqual([
-			{
-				channelId: "C01",
-				threadTs: "1",
-				text: "",
-				files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
-			},
-		]);
-	});
+    expect(poster.calls).toEqual([
+      {
+        channelId: "C01",
+        threadTs: "1",
+        text: "",
+        files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
+      },
+    ]);
+  });
 });

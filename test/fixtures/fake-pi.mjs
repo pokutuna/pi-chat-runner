@@ -34,158 +34,158 @@ import { appendFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 function argValue(flag) {
-	const index = process.argv.indexOf(flag);
-	return index === -1 ? undefined : process.argv[index + 1];
+  const index = process.argv.indexOf(flag);
+  return index === -1 ? undefined : process.argv[index + 1];
 }
 
 const sessionPath = argValue("--session");
 if (!sessionPath) {
-	console.error("fake-pi: --session is required");
-	process.exit(1);
+  console.error("fake-pi: --session is required");
+  process.exit(1);
 }
 const workdir = dirname(sessionPath);
 const commandsLog = join(workdir, "commands.jsonl");
 writeFileSync(join(workdir, "env-seen.json"), JSON.stringify(process.env));
 writeFileSync(
-	join(workdir, "argv-seen.json"),
-	JSON.stringify(process.argv.slice(2)),
+  join(workdir, "argv-seen.json"),
+  JSON.stringify(process.argv.slice(2)),
 );
 
 const systemPrompt = argValue("--append-system-prompt") ?? "";
 const fallbackMatch = systemPrompt.match(
-	/Fallback thread_key for this session: (\S+)/,
+  /Fallback thread_key for this session: (\S+)/,
 );
 const fallbackThreadKey = fallbackMatch ? fallbackMatch[1] : "unknown";
 
 /** message 本文中の直近の "(thread_key: <key>):" を拾う。無ければ session の
  * fallback thread_key を使う (buildSystemPrompt の指示と同じ規則) */
 function threadKeyFromMessage(message) {
-	const matches = [...message.matchAll(/\(thread_key: (\S+)\):/g)];
-	const last = matches.at(-1);
-	return last ? last[1] : fallbackThreadKey;
+  const matches = [...message.matchAll(/\(thread_key: (\S+)\):/g)];
+  const last = matches.at(-1);
+  return last ? last[1] : fallbackThreadKey;
 }
 
 function emit(event) {
-	process.stdout.write(`${JSON.stringify(event)}\n`);
+  process.stdout.write(`${JSON.stringify(event)}\n`);
 }
 
 function emitReply(threadKey, text, files) {
-	emit({
-		type: "tool_execution_end",
-		toolCallId: `tc-${Date.now()}`,
-		toolName: "reply",
-		result: {
-			content: [{ type: "text", text: "Reply queued." }],
-			details: {
-				thread_key: threadKey,
-				text,
-				...(files !== undefined ? { files } : {}),
-			},
-		},
-		isError: false,
-	});
+  emit({
+    type: "tool_execution_end",
+    toolCallId: `tc-${Date.now()}`,
+    toolName: "reply",
+    result: {
+      content: [{ type: "text", text: "Reply queued." }],
+      details: {
+        thread_key: threadKey,
+        text,
+        ...(files !== undefined ? { files } : {}),
+      },
+    },
+    isError: false,
+  });
 }
 
 function emitAgentEnd() {
-	emit({
-		type: "agent_end",
-		messages: [
-			{
-				role: "assistant",
-				usage: {
-					input: 100,
-					output: 50,
-					cacheRead: 10,
-					cacheWrite: 5,
-					totalTokens: 150,
-					cost: { total: 0.01 },
-				},
-			},
-		],
-	});
+  emit({
+    type: "agent_end",
+    messages: [
+      {
+        role: "assistant",
+        usage: {
+          input: 100,
+          output: 50,
+          cacheRead: 10,
+          cacheWrite: 5,
+          totalTokens: 150,
+          cost: { total: 0.01 },
+        },
+      },
+    ],
+  });
 }
 
 let waitingForSteer = false;
 
 function handleCommand(command) {
-	appendFileSync(commandsLog, `${JSON.stringify(command)}\n`);
+  appendFileSync(commandsLog, `${JSON.stringify(command)}\n`);
 
-	if (command.type === "prompt") {
-		if (command.message.includes("WAIT_FOR_STEER")) {
-			waitingForSteer = true;
-			return;
-		}
-		if (command.message.includes("NO_REPLY")) {
-			emitAgentEnd();
-			return;
-		}
-		if (command.message.includes("FAIL_PROMPT")) {
-			emit({
-				type: "response",
-				command: "prompt",
-				success: false,
-				error: "No API key found for google-vertex",
-			});
-			return;
-		}
-		if (command.message.includes("HANG_FOREVER")) {
-			// 何も返さない。runner 側の turn timeout がタイマーで kill するまで
-			// このプロセスは生き続ける (SIGKILL を受けて終了する)
-			return;
-		}
-		if (command.message.includes("CRASH_NOW")) {
-			// response も agent_end も返さず、running のまま即クラッシュする。
-			// runner の proc.on("exit") 異常分岐 (item を捨てる処理) を検証する
-			process.exit(1);
-		}
-		if (command.message.includes("WITH_FILES")) {
-			emitReply(
-				threadKeyFromMessage(command.message),
-				`echo: ${command.message}`,
-				["ok.txt", "../escape.txt", "/etc/passwd"],
-			);
-			emitAgentEnd();
-			return;
-		}
-		if (command.message.includes("ALL_ESCAPE_FILES")) {
-			emitReply(
-				threadKeyFromMessage(command.message),
-				`echo: ${command.message}`,
-				["../escape.txt", "/etc/passwd"],
-			);
-			emitAgentEnd();
-			return;
-		}
-		emitReply(
-			threadKeyFromMessage(command.message),
-			`echo: ${command.message}`,
-		);
-		emitAgentEnd();
-		return;
-	}
+  if (command.type === "prompt") {
+    if (command.message.includes("WAIT_FOR_STEER")) {
+      waitingForSteer = true;
+      return;
+    }
+    if (command.message.includes("NO_REPLY")) {
+      emitAgentEnd();
+      return;
+    }
+    if (command.message.includes("FAIL_PROMPT")) {
+      emit({
+        type: "response",
+        command: "prompt",
+        success: false,
+        error: "No API key found for google-vertex",
+      });
+      return;
+    }
+    if (command.message.includes("HANG_FOREVER")) {
+      // 何も返さない。runner 側の turn timeout がタイマーで kill するまで
+      // このプロセスは生き続ける (SIGKILL を受けて終了する)
+      return;
+    }
+    if (command.message.includes("CRASH_NOW")) {
+      // response も agent_end も返さず、running のまま即クラッシュする。
+      // runner の proc.on("exit") 異常分岐 (item を捨てる処理) を検証する
+      process.exit(1);
+    }
+    if (command.message.includes("WITH_FILES")) {
+      emitReply(
+        threadKeyFromMessage(command.message),
+        `echo: ${command.message}`,
+        ["ok.txt", "../escape.txt", "/etc/passwd"],
+      );
+      emitAgentEnd();
+      return;
+    }
+    if (command.message.includes("ALL_ESCAPE_FILES")) {
+      emitReply(
+        threadKeyFromMessage(command.message),
+        `echo: ${command.message}`,
+        ["../escape.txt", "/etc/passwd"],
+      );
+      emitAgentEnd();
+      return;
+    }
+    emitReply(
+      threadKeyFromMessage(command.message),
+      `echo: ${command.message}`,
+    );
+    emitAgentEnd();
+    return;
+  }
 
-	if (command.type === "steer" && waitingForSteer) {
-		waitingForSteer = false;
-		emitReply(
-			threadKeyFromMessage(command.message),
-			`steered: ${command.message}`,
-		);
-		emitAgentEnd();
-	}
+  if (command.type === "steer" && waitingForSteer) {
+    waitingForSteer = false;
+    emitReply(
+      threadKeyFromMessage(command.message),
+      `steered: ${command.message}`,
+    );
+    emitAgentEnd();
+  }
 }
 
 let buffer = "";
 process.stdin.setEncoding("utf8");
 process.stdin.on("data", (chunk) => {
-	buffer += chunk;
-	let index = buffer.indexOf("\n");
-	while (index !== -1) {
-		const line = buffer.slice(0, index).trim();
-		buffer = buffer.slice(index + 1);
-		if (line.length > 0) handleCommand(JSON.parse(line));
-		index = buffer.indexOf("\n");
-	}
+  buffer += chunk;
+  let index = buffer.indexOf("\n");
+  while (index !== -1) {
+    const line = buffer.slice(0, index).trim();
+    buffer = buffer.slice(index + 1);
+    if (line.length > 0) handleCommand(JSON.parse(line));
+    index = buffer.indexOf("\n");
+  }
 });
 process.stdin.on("end", () => {
-	process.exit(0);
+  process.exit(0);
 });
