@@ -6,7 +6,7 @@ allowed-tools: bash(timeout *) bash(gcloud logging *) bash(jq *) bash(duckdb *)
 
 # Cloud Logging Investigation
 
-GOOGLE_CLOUD_PROJECT (env) is the default project ID. If the user names a different project, override it with `--project`.
+Auth and the default project are already configured at startup — don't run `gcloud auth` / `gcloud config` to check them, just call `gcloud logging read` directly. If the user names a different project, override it with `--project`.
 
 ## Principles
 

@@ -913,6 +913,20 @@ export class SessionRunner {
     const sessionPath = join(workdirReal, SESSION_FILE);
     const resumed = await transcriptExists(sessionPath);
 
+    // 利用者が拡張イメージに焼き込んだ extension を skill と同じ規約で拾う場所
+    // (session-runtime.md §5)。pi の --extension はディレクトリを直接受け付けない
+    // ため、直下の .ts/.js を個別に列挙して渡す。ディレクトリが無ければ何も
+    // 足さない (ベースイメージのみの利用者はこのディレクトリを持たない)
+    const agentExtensionsDir = join(agentHomeReal, ".pi/agent/extensions");
+    const agentExtensionFiles = await readdir(agentExtensionsDir)
+      .then((names) =>
+        names
+          .filter((name) => name.endsWith(".ts") || name.endsWith(".js"))
+          .map((name) => join(agentExtensionsDir, name)),
+      )
+      .catch(() => []);
+    const extensionPaths = [...this.extensionPaths, ...agentExtensionFiles];
+
     const model = doc?.model;
     // 常に HOME を agentHome に上書きする (Runner 自身の HOME は継承しない)。
     // extraEnv で HOME を上書きする (buildPiEnv は extraEnv が PATH/HOME を
@@ -929,7 +943,7 @@ export class SessionRunner {
     // 各ファイルの所在ディレクトリを個別に read 許可する (write は与えない —
     // 読めるが書けない)。ディレクトリ単位なので重複していても Set で 1 回に畳む
     const extensionReadDirs = [
-      ...new Set(this.extensionPaths.map((p) => dirname(p))),
+      ...new Set(extensionPaths.map((p) => dirname(p))),
     ];
     const permission =
       this.piPermission !== undefined
@@ -949,7 +963,7 @@ export class SessionRunner {
         : undefined;
     const proc = new PiProcess({
       sessionPath,
-      extensionPaths: this.extensionPaths,
+      extensionPaths,
       cwd: workdirReal,
       appendSystemPrompt: buildSystemPrompt(
         sessionKey,

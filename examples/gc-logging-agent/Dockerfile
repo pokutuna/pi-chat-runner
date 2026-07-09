@@ -23,3 +23,4 @@ RUN curl -fsSL https://astral.sh/uv/install.sh | sh \
   && cp /root/.local/bin/uv /root/.local/bin/uvx /usr/local/bin/
 
 COPY --chown=1001:1001 skills/ /home/agent/.pi/agent/skills/
+COPY --chown=1001:1001 extensions/ /home/agent/.pi/agent/extensions/

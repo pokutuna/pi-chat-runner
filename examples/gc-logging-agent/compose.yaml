@@ -1,0 +1,30 @@
+# ローカル実行用 (README.md の docker run と同内容)。
+#
+# 起動: docker compose up -d
+# 停止: docker compose down
+#
+# 事前に examples/gc-logging-agent/.env を用意する (下記変数を埋める)。
+# GOOGLE_APPLICATION_CREDENTIALS はホスト上の絶対パス (コンテナ内でも同じパスに
+# マウントするので、ホスト側の値のまま渡してよい)。`gcloud auth application-default
+# login` 済みなら ${HOME}/.config/gcloud/application_default_credentials.json でよい
+
+services:
+  gc-logging-agent:
+    image: gc-logging-agent:local
+    environment:
+      SLACK_MODE: socket
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_BOT_USER_ID: ${SLACK_BOT_USER_ID}
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT}
+      GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS}
+      # config/ を examples/config に mount するため、既定の develop/config から上書きする
+      CONFIG_DIR: examples/config
+    volumes:
+      - ./config:/app/examples/config:ro
+      - ${GOOGLE_APPLICATION_CREDENTIALS}:${GOOGLE_APPLICATION_CREDENTIALS}:ro
+      - workdir:/tmp/pi-chat-runner
+
+volumes:
+  workdir:
