@@ -68,7 +68,7 @@ There are three ways to use this project, from least to most integration effort.
 
 ### 1. Run the published container image as-is
 
-Deploy the base image directly (e.g. to Cloud Run — see `examples/service.yaml`) and only supply config: `agent.yaml` (bridge-wide) and `channels.yaml` (per-channel triggers/prompts/models), plus a Slack App from one of the `examples/slack-app-manifest.*.yaml` templates. No image build required.
+Deploy the base image directly — published to `ghcr.io/pokutuna/pi-chat-runner` on each tagged release (see `.github/workflows/docker-publish.yaml`) — e.g. to Cloud Run (see `examples/service.yaml`), and only supply config: `agent.yaml` (bridge-wide) and `channels.yaml` (per-channel triggers/prompts/models), plus a Slack App from one of the `examples/slack-app-manifest.*.yaml` templates. No image build required.
 
 This gets you mention/keyword/classifier/reaction triggers, threaded replies, and persistence — but only the CLI tools baked into the base image (`git`/`curl`/`jq`/`ripgrep`/`fd`) and whatever skills/extensions ship in `skills/`/`extensions/` (empty by default).
 
@@ -79,7 +79,7 @@ docker run \
   -v ./my-config:/app/examples/config:ro \
   -v ./my-skills:/home/agent/.pi/agent/skills:ro \
   -v ./my-extensions:/home/agent/.pi/agent/extensions:ro \
-  pi-chat-runner:latest
+  ghcr.io/pokutuna/pi-chat-runner:latest
 ```
 
 This works for skills/extensions and config, but not for installing additional CLI tools (`apt-get`, etc.) — that needs pattern 2.
