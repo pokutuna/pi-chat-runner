@@ -359,6 +359,28 @@ describe("SessionRunner (fake-pi integration)", () => {
     await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
   });
 
+  it("a reply file that is a symlink escaping the workdir is dropped even though its path stays inside", async () => {
+    const h = await harness();
+    const trigger = message({ mentionsBot: true, text: "SYMLINK_FILE" });
+
+    await h.runner.handle(trigger);
+
+    await waitFor(() => h.poster.calls.length === 1, "reply posted");
+    // fake-pi は workdir 内に evil.txt -> /etc/passwd の symlink を作って渡す。
+    // パス文字列上は workdir 内に見えるが、実体は workdir 外なので除外される
+    expect(h.poster.calls[0]?.files).toBeUndefined();
+
+    const warnings = h
+      .logLines()
+      .filter(
+        (l) =>
+          l.msg === "reply file is a symlink or not a regular file; dropped",
+      );
+    expect(warnings.map((w) => w.path)).toEqual(["evil.txt"]);
+
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+  });
+
   it("mentionFormat に Slack の記法を渡すと、system prompt にその記法の説明が含まれる", async () => {
     const h = await harness({}, { mentionFormat: (id) => `<@${id}>` });
     const trigger = message({
@@ -1509,6 +1531,56 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     expect(commands.map((c) => c.type)).toEqual(["prompt"]);
     expect(commands[0]?.message).toContain("first burst message");
     expect(commands[0]?.message).toContain("second burst message");
+    expect(await h.store.inbox.drain(threadKey)).toEqual([]);
+  });
+
+  it("trigger.debounceSec: 連投バースト A→B→C の 3 通が 1 回の kick にまとめられる", async () => {
+    const h = await harness({
+      C01: {
+        trigger: {
+          when: [{ kind: "passthrough" }],
+          debounceSec: 0.2,
+        },
+      },
+    });
+    const a = message({ text: "message A" });
+    const threadKey = threadKeyOf(a);
+
+    await h.runner.handle(a);
+    expect(h.runner.activeSessionCount).toBe(0);
+
+    await sleep(50); // debounceSec (200ms) 未満のうちに B を送る (スライドして延長)
+    const b = message({
+      id: "1700000000.000700",
+      conversation: { channelId: "C01", threadTs: a.id },
+      text: "message B",
+    });
+    await h.runner.handle(b);
+    expect(h.runner.activeSessionCount).toBe(0);
+
+    await sleep(50); // debounceSec 未満のうちに C を送る (さらにスライド)
+    const c = message({
+      id: "1700000000.000800",
+      conversation: { channelId: "C01", threadTs: a.id },
+      text: "message C",
+    });
+    await h.runner.handle(c);
+    expect(h.runner.activeSessionCount).toBe(0);
+
+    await waitFor(
+      () => h.poster.calls.length === 1,
+      "reply posted after debounce",
+    );
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+    const commands = (await h.commandsLog("C01", a.id)).map((line) =>
+      JSON.parse(line),
+    );
+    // kick は 1 回だけ (prompt 1 件) で、初回 prompt に A/B/C 3 通とも含まれる
+    expect(commands.map((c) => c.type)).toEqual(["prompt"]);
+    expect(commands[0]?.message).toContain("message A");
+    expect(commands[0]?.message).toContain("message B");
+    expect(commands[0]?.message).toContain("message C");
     expect(await h.store.inbox.drain(threadKey)).toEqual([]);
   });
 

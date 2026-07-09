@@ -16,11 +16,15 @@
 //     "SLOW_TOOL"      … tool_execution_start ("dummy_tool") を吐いた後、steer が
 //                        届くまで待つ (runner の進捗通知タイマーが currentTool を
 //                        観測できる状態を維持する。progress-notice.md)
-//     "WITH_FILES"     … reply の details.files に ["ok.txt", "../escape.txt",
-//                        "/etc/passwd"] を積む (runner の workdir 境界チェックを検証する)
+//     "WITH_FILES"     … workdir に ok.txt を実体として書き、reply の details.files に
+//                        ["ok.txt", "../escape.txt", "/etc/passwd"] を積む
+//                        (runner の workdir 境界チェックを検証する)
 //     "ALL_ESCAPE_FILES" … reply の details.files が全件 workdir 外 (["../escape.txt",
 //                        "/etc/passwd"])。全件除外後に files を素の相対パスへ戻さない
 //                        ことを検証する
+//     "SYMLINK_FILE"   … workdir に workdir 外 (/etc/passwd) への symlink evil.txt を
+//                        作り、reply の details.files に ["evil.txt"] を積む
+//                        (runner の symlink 経由ファイル漏洩防止を検証する)
 //     それ以外          … `echo: <本文>` の reply → agent_end を吐く
 // - agent_end.messages には固定の usage 付き assistant message を 1 件含める
 //   (SessionRunner の usage 集計ロジックをテストから確認するため)
@@ -33,7 +37,7 @@
 // - 起動時に <workdir>/argv-seen.json へ process.argv (先頭 2 要素を除く実引数) を書く
 //   (SessionRunner → PiProcess → buildPiArgs の --skill 等の透過をテストから確認するため)
 
-import { appendFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 function argValue(flag) {
@@ -156,6 +160,7 @@ function handleCommand(command) {
       return;
     }
     if (command.message.includes("WITH_FILES")) {
+      writeFileSync(join(workdir, "ok.txt"), "ok");
       emitReply(
         threadKeyFromMessage(command.message),
         `echo: ${command.message}`,
@@ -169,6 +174,16 @@ function handleCommand(command) {
         threadKeyFromMessage(command.message),
         `echo: ${command.message}`,
         ["../escape.txt", "/etc/passwd"],
+      );
+      emitAgentEnd();
+      return;
+    }
+    if (command.message.includes("SYMLINK_FILE")) {
+      symlinkSync("/etc/passwd", join(workdir, "evil.txt"));
+      emitReply(
+        threadKeyFromMessage(command.message),
+        `echo: ${command.message}`,
+        ["evil.txt"],
       );
       emitAgentEnd();
       return;

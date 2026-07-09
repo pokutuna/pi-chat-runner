@@ -876,13 +876,16 @@ export class SessionRunner {
 
   /** reply の files (agent が渡した workdir 相対パス) を workdirReal 基準の絶対パスへ
    * 解決し、workdir 外へ出るパス (`../` エスケープ、絶対パス指定) は除外して warn する
-   * (trust boundary: agent は semi-trusted)。files 未指定、または全件除外後に空なら
-   * undefined を返し、text だけの従来 payload として deliver させる */
-  private resolveReplyFiles(
+   * (trust boundary: agent は semi-trusted)。加えて symlink 越しの workdir 外ファイル
+   * 参照 (例: `/proc/1/environ` への symlink を workdir 内に作る) を防ぐため、lstat で
+   * symlink/非通常ファイルを拒否し、realpath 済みの実体が workdir 配下にあることも
+   * 確認する。files 未指定、または全件除外後に空なら undefined を返し、text だけの
+   * 従来 payload として deliver させる */
+  private async resolveReplyFiles(
     sessionKey: string,
     workdirReal: string,
     files: string[] | undefined,
-  ): string[] | undefined {
+  ): Promise<string[] | undefined> {
     if (files === undefined) return undefined;
     const resolved: string[] = [];
     for (const file of files) {
@@ -893,6 +896,34 @@ export class SessionRunner {
         this.logger.warn(
           { sessionKey, path: file },
           "reply file path escapes workdir; dropped",
+        );
+        continue;
+      }
+      let fileStat: Awaited<ReturnType<typeof lstat>>;
+      try {
+        fileStat = await lstat(abs);
+      } catch {
+        this.logger.warn(
+          { sessionKey, path: file },
+          "reply file does not exist; dropped",
+        );
+        continue;
+      }
+      if (!fileStat.isFile()) {
+        this.logger.warn(
+          { sessionKey, path: file },
+          "reply file is a symlink or not a regular file; dropped",
+        );
+        continue;
+      }
+      const real = await realpath(abs);
+      const realRel = relative(workdirReal, real);
+      const realInside =
+        realRel !== "" && !realRel.startsWith("..") && !isAbsolute(realRel);
+      if (!realInside) {
+        this.logger.warn(
+          { sessionKey, path: file },
+          "reply file resolves outside workdir; dropped",
         );
         continue;
       }
@@ -1104,20 +1135,17 @@ export class SessionRunner {
       if (isToolExecutionEnd(piEvent)) {
         const payload = extractReply(piEvent);
         if (payload !== null) {
-          const files = this.resolveReplyFiles(
-            sessionKey,
-            workdirReal,
-            payload.files,
-          );
           // files は必ず resolveReplyFiles の結果で上書きする。payload.files には
           // agent が渡した生の相対パスが残っているため、全件除外時 (files === undefined)
           // にそれをそのまま poster へ流すと境界チェックを素通りしてしまう
-          this.router
-            .deliver({
-              thread_key: payload.thread_key,
-              text: payload.text,
-              ...(files !== undefined ? { files } : {}),
-            })
+          this.resolveReplyFiles(sessionKey, workdirReal, payload.files)
+            .then((files) =>
+              this.router.deliver({
+                thread_key: payload.thread_key,
+                text: payload.text,
+                ...(files !== undefined ? { files } : {}),
+              }),
+            )
             .then((result) => {
               // reply が進捗メッセージをその場で消費できたら、agent_end を待たず
               // タイマーを即止める。待つとその間にタイマーが再発火し、消費済みの
