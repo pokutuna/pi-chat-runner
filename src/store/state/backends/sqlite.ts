@@ -4,6 +4,7 @@
 // 1 ファイル (":memory:" も可)。ローカルで永続化・排他込みの動作確認に使う想定。
 
 import Database from "better-sqlite3";
+
 import type { InboundMessage } from "../../../ingress/chat-event.js";
 import type {
 	InboxItem,

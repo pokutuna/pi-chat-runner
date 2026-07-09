@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import { resolveEnvRefs } from "../../src/config/env-ref.js";
 
 describe("resolveEnvRefs", () => {

@@ -16,7 +16,9 @@
 
 import { readFile } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
+
 import { parse as parseYaml } from "yaml";
+
 import {
 	type ChannelDoc,
 	ChannelDocSchema,

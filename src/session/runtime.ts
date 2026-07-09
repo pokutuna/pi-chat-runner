@@ -15,6 +15,7 @@ import { type ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
+
 import {
 	JsonlDecoder,
 	type PiEvent,

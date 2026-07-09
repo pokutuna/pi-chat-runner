@@ -11,7 +11,9 @@
 
 import { basename } from "node:path";
 import { fileURLToPath } from "node:url";
+
 import type { WebClient } from "@slack/web-api";
+
 import {
 	type ClassifierClient,
 	GeminiClassifierClient,

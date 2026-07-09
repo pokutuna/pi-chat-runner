@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import type { ClassifierClient } from "../../src/classifier/client.js";
 import {
 	buildWhen,

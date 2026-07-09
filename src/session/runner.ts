@@ -22,6 +22,7 @@ import {
 } from "node:fs/promises";
 import { hostname } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+
 import type { ClassifierClient } from "../classifier/client.js";
 import type { ChannelDoc } from "../config/channel-doc.js";
 import { type ConfigSource, DM_CHANNEL } from "../config/config-source.js";

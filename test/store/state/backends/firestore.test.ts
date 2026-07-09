@@ -1,5 +1,6 @@
 import { Firestore } from "@google-cloud/firestore";
 import { describe } from "vitest";
+
 import { FirestoreStateStore } from "../../../../src/store/state/backends/firestore.js";
 import { describeStateStoreContract } from "../contract.js";
 

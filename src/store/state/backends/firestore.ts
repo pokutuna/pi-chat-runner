@@ -19,6 +19,7 @@
 
 import type { Firestore, Transaction } from "@google-cloud/firestore";
 import { Timestamp } from "@google-cloud/firestore";
+
 import type { InboundMessage } from "../../../ingress/chat-event.js";
 import type {
 	InboxItem,

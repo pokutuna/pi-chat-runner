@@ -3,6 +3,7 @@
 // 直接テストする (docs/research/pi-tools-and-sandbox.md の方針通り、
 // 事故防止層としての判定であり敵対的入力への境界ではないことを前提にした表)。
 import { describe, expect, it } from "vitest";
+
 import { matchDenylist } from "../../extensions/permission-gate.js";
 
 describe("matchDenylist", () => {

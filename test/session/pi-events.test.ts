@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import {
 	extractReply,
 	extractTurnErrors,
@@ -258,7 +259,9 @@ describe("piEventLogFields", () => {
 			toolName: "bash",
 			args: { command: "x".repeat(500) },
 		});
-		expect((fields?.args as string).length).toBeLessThanOrEqual(203);
+		expect((fields?.args as string | undefined)?.length).toBeLessThanOrEqual(
+			203,
+		);
 		expect(fields?.args).toMatch(/\.\.\.$/);
 	});
 

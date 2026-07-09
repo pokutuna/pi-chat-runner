@@ -10,9 +10,11 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+
 import type { WebClient } from "@slack/web-api";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
+
 import { startBridge } from "../src/bridge.js";
 import { FileConfigSource } from "../src/config/config-source.js";
 import type { ChatEvent } from "../src/ingress/chat-event.js";

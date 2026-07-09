@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import { KeywordGate } from "../../../src/gate/gates/keyword.js";
 import type { InboundMessage } from "../../../src/ingress/chat-event.js";
 

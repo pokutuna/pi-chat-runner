@@ -4,6 +4,7 @@
 // インタフェースに対するテストを 1 セットだけ書き、実装ごとにパラメタライズして流す。
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
+
 import type { InboundMessage } from "../../../src/ingress/chat-event.js";
 import type {
 	InboxItem,

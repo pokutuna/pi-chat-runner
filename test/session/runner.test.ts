@@ -15,8 +15,10 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+
 import pino from "pino";
 import { describe, expect, it } from "vitest";
+
 import type { ChannelDoc } from "../../src/config/channel-doc.js";
 import type { ConfigSource } from "../../src/config/config-source.js";
 import { Reactions } from "../../src/egress/reactions.js";

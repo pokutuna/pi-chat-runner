@@ -1,6 +1,7 @@
 // SocketIngress — Slack Socket Mode 経由の Ingress — docs/design/architecture.md §1
 
 import { SocketModeClient } from "@slack/socket-mode";
+
 import type { ChatEvent } from "../chat-event.js";
 import type { Ack, Ingress } from "../ingress.js";
 import { SlackIngressAdapter, type SlackRawEvent } from "./adapter.js";

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import { chunkMessage } from "../../src/egress/chunker.js";
 
 describe("chunkMessage", () => {
@@ -61,7 +62,7 @@ describe("chunkMessage", () => {
 		const restoredLines = chunks
 			.join("\n")
 			.split("\n")
-			.filter((line) => !/^```/.test(line));
+			.filter((line) => !line.startsWith("```"));
 		expect(restoredLines).toEqual(codeLines);
 	});
 
@@ -81,7 +82,7 @@ describe("chunkMessage", () => {
 		const restoredLines = chunks
 			.join("\n")
 			.split("\n")
-			.filter((line) => !/^```/.test(line));
+			.filter((line) => !line.startsWith("```"));
 		expect(restoredLines).toEqual(codeLines);
 	});
 });

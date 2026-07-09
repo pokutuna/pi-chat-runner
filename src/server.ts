@@ -10,8 +10,10 @@
 import { mkdirSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+
 import { Firestore } from "@google-cloud/firestore";
 import { WebClient } from "@slack/web-api";
+
 import { startBridge } from "./bridge.js";
 import {
 	loadAgentConfig,

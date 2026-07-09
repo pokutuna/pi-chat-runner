@@ -8,7 +8,9 @@
 
 import { createHmac, timingSafeEqual } from "node:crypto";
 import { createServer, type Server } from "node:http";
+
 import { Hono } from "hono";
+
 import type { Logger } from "../../logger.js";
 import type { ChatEvent } from "../chat-event.js";
 import type { Ack, Ingress } from "../ingress.js";

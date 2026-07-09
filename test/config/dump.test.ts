@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import { ChannelsFileSchema } from "../../src/config/channel-doc.js";
 import { formatEffectiveConfig, formatWhen } from "../../src/config/dump.js";
 

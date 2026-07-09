@@ -8,3 +8,6 @@ dist/
 
 # ローカル動作確認用 (実チャンネル ID を含む設定など)
 develop/config/
+
+# 個人のツールバージョン管理設定
+mise.toml

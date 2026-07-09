@@ -15,8 +15,10 @@
 
 import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
+
 import { resolveEnvRefs } from "./env-ref.js";
 
 const AgentConfigPiSchema = z

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import { PassthroughGate } from "../../../src/gate/gates/passthrough.js";
 import type { InboundMessage } from "../../../src/ingress/chat-event.js";
 

@@ -1,5 +1,6 @@
 import pino from "pino";
 import { describe, expect, it } from "vitest";
+
 import { type ChatPoster, EgressRouter } from "../../src/egress/router.js";
 
 /** pino のログ 1 行 (JSON) を配列に集めるテスト用ロガー */

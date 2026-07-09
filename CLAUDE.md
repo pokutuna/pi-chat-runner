@@ -12,7 +12,7 @@ Full design docs live in `docs/design/` (start at `docs/design/README.md`). Road
 
 - Node.js >= 26, TypeScript, ESM (`NodeNext`)
 - Hono (HTTP), `@slack/web-api` + `@slack/socket-mode` (no Bolt framework)
-- pnpm, tsdown (build), vitest (test), biome (lint/format)
+- pnpm, tsdown (build), vitest (test), oxlint + oxfmt (lint/format)
 - Persistence backends: in-memory / SQLite / Firestore
 
 ## Essential Commands
@@ -22,11 +22,11 @@ pnpm test                                          # vitest run (all tests)
 pnpm exec vitest run test/session/runner.test.ts   # single file
 pnpm exec vitest run -t "some test name"           # single test by name
 pnpm run typecheck                                 # tsc --noEmit
-pnpm run lint                                      # biome check .
+pnpm run lint                                      # oxlint . && oxfmt --check .
 pnpm run dev:socket                                # local dev, Slack Socket Mode (.env.socket)
 ```
 
-After editing a file, run `pnpm exec biome check --write <file>` — biome enforces tabs and import order, and a plain edit commonly leaves 2-space indentation or unsorted exports.
+After editing a file, run `pnpm exec oxfmt --write <file>` — oxfmt enforces tabs and import order, and a plain edit commonly leaves 2-space indentation or unsorted exports.
 
 `STORE_BACKEND=firestore` tests need a live emulator (`FIRESTORE_EMULATOR_HOST`) and skip otherwise. `test/store/state/contract.ts` is a shared contract suite parameterized across backends — add new backend behavior there, not per-backend.
 

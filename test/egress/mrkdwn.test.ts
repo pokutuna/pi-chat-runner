@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import { toMrkdwn } from "../../src/egress/mrkdwn.js";
 
 describe("toMrkdwn", () => {

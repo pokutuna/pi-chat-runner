@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+
 import { type ReactionClient, Reactions } from "../../src/egress/reactions.js";
 
 function client(impl?: Partial<ReactionClient>): ReactionClient & {
