@@ -23,6 +23,10 @@ RUN npm install -g pnpm@10.30.3
 
 WORKDIR /app
 
+# prepare script (git dependency 利用者向けの自動ビルド) はこのステージでは
+# 不要かつ src 未コピー時点では失敗するため無効化する
+ENV SKIP_PREPARE=1
+
 # 依存解決とビルドに必要な最小構成のみ先にコピーしキャッシュを効かせる
 COPY package.json pnpm-lock.yaml ./
 RUN pnpm install --frozen-lockfile
