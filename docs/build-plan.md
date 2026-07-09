@@ -25,27 +25,27 @@
 
 作るもの: TypeScript プロジェクト設定、後述のディレクトリ骨格、CI (lint + test)。
 
-- [ ] `npm run build` / `npm test` が通る
+- [x] `npm run build` / `npm test` が通る
 
 ## Step 1: Slack App での疎通 (Socket Mode)
 
 作るもの: Slack App (manifest)、`SocketEventSource`、`IngressAdapter` の最小 codec、
 WebClient での投稿。Gate も pi も無し — mention に固定文字列を返すだけ。
 
-- [ ] mention → スレッドに固定返信が付く
-- [ ] トリガーメッセージに 👀 リアクションが付く
-- [ ] mention 以外のメッセージには反応しない
+- [x] mention → スレッドに固定返信が付く
+- [x] トリガーメッセージに 👀 リアクションが付く
+- [x] mention 以外のメッセージには反応しない
 
 ## Step 2: pi 単体の起動を試す (Slack なし)
 
 作るもの: `SessionRuntime` の spawn 部分 ([design/session-runtime.md](design/session-runtime.md) §1-2)、reply extension、
 RPC イベント (stdout) の購読。ターミナルから叩く使い捨てスクリプトで駆動する。
 
-- [ ] prompt 投入 → `tool_execution_end` で reply の引数が host に届く
-- [ ] reply が 1 ターンに複数回呼ばれるケースを観測できる
-- [ ] 実行中に steer を stdin へ書く → 次のステップ境界で反映される
-- [ ] `--session` の JSONL を指定して再 spawn → 文脈が継続する
-- [ ] pi の bash で `env` → allowlist 以外が見えない
+- [x] prompt 投入 → `tool_execution_end` で reply の引数が host に届く
+- [x] reply が 1 ターンに複数回呼ばれるケースを観測できる
+- [x] 実行中に steer を stdin へ書く → 次のステップ境界で反映される
+- [x] `--session` の JSONL を指定して再 spawn → 文脈が継続する
+- [x] pi の bash で `env` → allowlist 以外が見えない
 
 ## Step 3: 一気通貫 (ローカル・インメモリ)
 
@@ -54,11 +54,11 @@ RPC イベント (stdout) の購読。ターミナルから叩く使い捨てス
 formatter フック (identity)、inbox はメモリ実装。**ここで「ローカルで動く
 #ask-ai」が完成する** ([design/architecture.md](design/architecture.md) §8 の中間ゴール)。
 
-- [ ] mention → Gate 通過 → pi 起動 → reply がスレッドに付く
-- [ ] スレッド内の追いメッセージが実行中の pi に steer される
-- [ ] keyword Gate のチャンネルで発火/非発火が YAML どおり
-- [ ] reply を呼ばず終わるケースで沈黙し、✅ だけ付く
-- [ ] YAML 編集 → 再起動なしで挙動が変わる (File watch は任意)
+- [x] mention → Gate 通過 → pi 起動 → reply がスレッドに付く
+- [x] スレッド内の追いメッセージが実行中の pi に steer される
+- [x] keyword Gate のチャンネルで発火/非発火が YAML どおり
+- [x] reply を呼ばず終わるケースで沈黙し、✅ だけ付く
+- [x] YAML 編集 → 再起動なしで挙動が変わる (`FileConfigSource` がキャッシュせず毎回読み直すため file watch なしで成立。[src/config/config-source.ts](../src/config/config-source.ts))
 
 ## Step 4: 永続化と排他 (Store/Storage 抽象)
 
@@ -74,15 +74,15 @@ develop/compose.yaml (Firestore エミュレータ)。設計は [design/persiste
 自動でそちらへ接続するため、store 実装にエミュレータ用の分岐は要らない。
 ローカルで未起動ならテストは skip)。
 
-- [ ] 3 実装が共通コントラクトテスト (dedupe / drain-ack / lease 排他・期限切れ) を通る
-- [ ] `docker compose up` → Firestore 実装のコントラクトテストがエミュレータで通る
-- [ ] SQLite: プロセス kill → 再起動 → 同スレッドの会話が再開する
-- [ ] 2 プロセス同時起動で lease が排他し、負けた側は inbox 投入のみ
-- [ ] 同じ event_id の再送が二重処理されない
-- [ ] kick 失敗後に同じ入力で再 kick できる (ack しない限り inbox に残る)
-- [ ] agent_end 直後の追いメッセージが linger で拾われ、同一セッションで処理される
-- [ ] flush 前クラッシュ → 再起動後に同じ入力から再実行される (at-least-once)
-- [ ] `WORKDIR_ARCHIVE_DIR` 指定で restore/flush が働き、workdir 削除後も文脈が戻る
+- [x] 3 実装が共通コントラクトテスト (dedupe / drain-ack / lease 排他・期限切れ) を通る ([test/store/state/contract.ts](../test/store/state/contract.ts))
+- [x] `docker compose up` → Firestore 実装のコントラクトテストがエミュレータで通る (`FIRESTORE_EMULATOR_HOST` 未起動時は skip)
+- [x] SQLite: プロセス kill → 再起動 → 同スレッドの会話が再開する (workdir restore + ファイルベース永続化により成立。プロセス再起動を模した専用テストは無い)
+- [x] 2 プロセス同時起動で lease が排他し、負けた側は inbox 投入のみ
+- [x] 同じ event_id の再送が二重処理されない
+- [x] kick 失敗後に同じ入力で再 kick できる (ack しない限り inbox に残る)
+- [x] agent_end 直後の追いメッセージが linger で拾われ、同一セッションで処理される
+- [x] flush 前クラッシュ → 再起動後に同じ入力から再実行される (at-least-once)
+- [x] `WORKDIR_ARCHIVE_DIR` 指定で restore/flush が働き、workdir 削除後も文脈が戻る
 
 ## Step 5: Cloud Run デプロイ (Events API)
 
