@@ -19,6 +19,12 @@ import { SlackIngressAdapter } from "./adapter.js";
 /** リプレイ対策の許容ずれ (Slack 公式ドキュメント推奨値) */
 const TIMESTAMP_TOLERANCE_SEC = 300;
 
+/** リクエストボディの上限。Slack Events API の event_callback は 1 メッセージ分の
+ * JSON envelope で、blocks/attachments を含めても数十 KB 程度に収まる。署名検証前は
+ * 未認証の相手からのリクエストなので、大きな body を送りつけられてのメモリ DoS を
+ * 防ぐため、読み込み段階 (handleNodeRequest) で打ち切る。余裕を見て 1MiB。 */
+const MAX_BODY_BYTES = 1024 * 1024;
+
 export interface HttpIngressOptions {
   signingSecret: string;
   botUserId: string;
@@ -80,7 +86,18 @@ export class HttpIngress implements Ingress {
     this.app.get("/health", (c) => c.text("ok"));
 
     this.app.post("/slack/events", async (c) => {
+      const contentLength = c.req.header("content-length");
+      if (
+        contentLength !== undefined &&
+        Number(contentLength) > MAX_BODY_BYTES
+      ) {
+        return c.text("payload too large", 413);
+      }
+
       const rawBody = await c.req.text();
+      if (rawBody.length > MAX_BODY_BYTES) {
+        return c.text("payload too large", 413);
+      }
       const timestamp = c.req.header("x-slack-request-timestamp");
       const signature = c.req.header("x-slack-signature");
 
@@ -176,7 +193,18 @@ export class HttpIngress implements Ingress {
   ): Promise<void> {
     const url = `http://${req.headers.host ?? "localhost"}${req.url ?? "/"}`;
     const chunks: Buffer[] = [];
+    let totalBytes = 0;
     for await (const chunk of req) {
+      totalBytes += (chunk as Buffer).length;
+      if (totalBytes > MAX_BODY_BYTES) {
+        // 署名検証前 (未認証) の相手から大きな body を送りつけられてのメモリ DoS を
+        // 防ぐ。読み切らず即座に接続を切って 413 で終える
+        this.logger?.warn({ totalBytes }, "request body too large; rejected");
+        res.statusCode = 413;
+        res.end();
+        req.destroy();
+        return;
+      }
       chunks.push(chunk as Buffer);
     }
     const body = chunks.length > 0 ? Buffer.concat(chunks) : undefined;

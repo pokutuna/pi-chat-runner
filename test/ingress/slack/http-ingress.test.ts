@@ -274,6 +274,31 @@ describe("HttpIngress", () => {
     await source.stop();
   });
 
+  it("rejects an oversized body with 413 and does not call onEvent", async () => {
+    const source = build();
+    let called = false;
+    await startWithHandler(source, async (_e, ack) => {
+      called = true;
+      await ack();
+    });
+
+    // 署名検証前に弾かれる想定なので、正しい署名を付けずに大きな body を送る
+    const oversized = "x".repeat(1024 * 1024 + 1);
+    const res = await source.honoApp.request("/slack/events", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "content-length": String(oversized.length),
+      },
+      body: oversized,
+    });
+
+    expect(res.status).toBe(413);
+    expect(called).toBe(false);
+
+    await source.stop();
+  });
+
   it("GET /health returns 200 ok", async () => {
     const source = build();
     await startWithHandler(source, async (_e, ack) => {
