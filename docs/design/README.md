@@ -96,17 +96,15 @@ flowchart LR
 | CLI | `status` (sessions 一覧・transcript dump) / `init` (拡張イメージ・config の scaffold 生成) |
 | 拡張 Dockerfile | `FROM <base-image>` に 1 段重ねるだけの拡張。`$AGENT_HOME/.pi/agent/skills/` (skill 配置) 等の pi 既定パス規約に従う ([session-runtime.md](session-runtime.md)) |
 
-`channels/*.yaml` の例 (mention と分類器を or (any) で束ねる Gate 設定。classifier は初期版スコープ外の type だが、YAML の形はこのまま変わらない):
+`channels/*.yaml` の例 (mention と分類器を OR で束ねる Gate 設定。配列 = OR、`{and}`/`{or}` で明示的に合成する):
 
 ```yaml
 trigger:
-  combinator: any
-  gates:
+  when:
     - kind: mention
     - kind: classifier
       model: gemini-2.5-flash-lite
-      prompt: ./prompts/gate-triage.md
-  cooldownSec: 60
+      criteria: "..."
 ```
 
 ## Dependencies / Infrastructure
