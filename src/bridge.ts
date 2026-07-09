@@ -48,6 +48,7 @@ export interface BridgeOptions {
   configSource: ConfigSource;
   provider?: string;
   turnTimeoutMs?: number;
+  progressNoticeIntervalMs?: number;
   /** classifier gate 用 LLM client の注入口 (主にテスト用)。省略時は
    * GOOGLE_CLOUD_PROJECT があれば GeminiClassifierClient を内部構築する。 */
   classifierClient?: ClassifierClient;
@@ -84,7 +85,10 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
     });
 
   // 注入があればそれを使い、なければ web (WebClient) から内部構築する。files 指定時は
-  // files.uploadV2 (initial_comment に text を乗せる)、無指定時は従来の chat.postMessage
+  // files.uploadV2 (initial_comment に text を乗せる)、無指定時は従来の chat.postMessage。
+  // messageId (Slack の ts) は進捗通知 (progress-notice.md) の updateMessage が使う —
+  // files.uploadV2 は投稿本体のメッセージ ts を返さないため、その場合は messageId 抽象を
+  // 持たない (updateMessage の対象にはならない。進捗通知は files を使わないので実害はない)
   const poster: ChatPoster = options.poster ?? {
     async postMessage(channelId, text, threadTs, files) {
       if (files !== undefined && files.length > 0) {
@@ -97,13 +101,17 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
             filename: basename(path),
           })),
         });
-        return;
+        return { messageId: "" };
       }
-      await web.chat.postMessage({
+      const res = await web.chat.postMessage({
         channel: channelId,
         text,
         ...(threadTs !== undefined ? { thread_ts: threadTs } : {}),
       });
+      return { messageId: res.ts ?? "" };
+    },
+    async updateMessage(channelId, messageId, text) {
+      await web.chat.update({ channel: channelId, ts: messageId, text });
     },
   };
   const reactions =
@@ -193,6 +201,10 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
     // turnTimeoutMs 未設定なら SessionRunner の既定 (600_000ms) を使う
     ...(options.turnTimeoutMs !== undefined
       ? { turnTimeoutMs: options.turnTimeoutMs }
+      : {}),
+    // progressNoticeIntervalMs 未設定なら SessionRunner の既定 (30_000ms) を使う
+    ...(options.progressNoticeIntervalMs !== undefined
+      ? { progressNoticeIntervalMs: options.progressNoticeIntervalMs }
       : {}),
     // classifierClient 未構築なら classifier gate 非対応 (createGate が throw する)
     ...(classifierClient !== undefined ? { classifierClient } : {}),

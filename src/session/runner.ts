@@ -50,9 +50,10 @@ import {
   extractTurnErrors,
   extractUsageTotals,
   piEventLogFields,
+  preview,
   type UsageTotals,
 } from "./pi-events.js";
-import { isAgentEnd, isToolExecutionEnd } from "./rpc.js";
+import { isAgentEnd, isToolExecutionEnd, isToolExecutionStart } from "./rpc.js";
 import { buildPiPermissionOptions, PiProcess } from "./runtime.js";
 import { rotatedSessionFile, SESSION_FILE } from "./session-file.js";
 
@@ -151,6 +152,9 @@ export interface SessionRunnerOptions {
   piPermission?: PiPermissionConfig;
   /** lease の TTL。既定 60_000ms。renew は ttl/3 間隔 */
   leaseTtlMs?: number;
+  /** 長時間ターンの進捗通知の間隔 (progress-notice.md)。初回発火までの猶予も同じ値を使う。
+   * 既定 15_000ms。0 を渡すと機能自体を無効化する (負値は指定しない想定) */
+  progressNoticeIntervalMs?: number;
   /** agent_end 後に追いメッセージを待つ時間。既定 3_000ms */
   lingerMs?: number;
   /** 1 ターン (prompt/steer 送信から agent_end まで) の上限。既定 600_000ms (10 分)。
@@ -197,6 +201,15 @@ interface SessionRecord {
    * リセットし、agent_end 冒頭でクリアする。セッション終了パスでも必ずクリアする
    * (session-runtime.md §6 の turn timeout) */
   turnTimeoutTimer: NodeJS.Timeout | undefined;
+  /** 進捗通知タイマー (progress-notice.md)。prompt/steer 送信ごとにリセットし、
+   * agent_end 冒頭でクリアする (turnTimeoutTimer と同じ寿命管理) */
+  progressNoticeTimer: NodeJS.Timeout | undefined;
+  /** 直近に開始した、または直近に完了したツール呼び出し。tool_execution_start/end の
+   * 購読だけで更新する (LLM 呼び出し・session.jsonl を経由しない、progress-notice.md) */
+  currentTool: { name: string; argsPreview: string } | undefined;
+  /** このセッションでの tool_execution_start 累計回数 (progress-notice.md の
+   * 進捗表示用。ターンをまたいで積算する) */
+  toolCallCount: number;
   /** 直近の agent_end から集計した usage の累計 (agent_end.messages は毎回全履歴
    * を返すため、ターンごとの増分ではなくセッション累計になる) */
   usageTotals?: UsageTotals;
@@ -333,6 +346,26 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+/** 進捗通知でツール名ごとに絵文字を出し分ける (progress-notice.md)。
+ * 分類が当たらないツールは既定の :gear: にフォールバックする */
+function progressEmoji(toolName: string): string {
+  switch (toolName) {
+    case "bash":
+      return ":computer:";
+    case "read":
+    case "grep":
+    case "glob":
+      return ":mag:";
+    case "write":
+    case "edit":
+      return ":memo:";
+    case "reply":
+      return ":speech_balloon:";
+    default:
+      return ":gear:";
+  }
+}
+
 /** dir 配下 (dir 自身含む) を再帰的に chown する。UID 分離時、restore で
  * root 所有のままコピーされたファイルを agent 所有に揃えるための最小実装
  * (エントリ数が少ない workdir 前提。fs.cp に uid/gid オプションは無いため
@@ -386,6 +419,7 @@ export class SessionRunner {
   private readonly agentHome: string;
   private readonly piPermission: PiPermissionConfig | undefined;
   private readonly leaseTtlMs: number;
+  private readonly progressNoticeIntervalMs: number;
   private readonly lingerMs: number;
   private readonly turnTimeoutMs: number;
   private readonly owner: string;
@@ -409,6 +443,7 @@ export class SessionRunner {
     this.agentHome = options.agentHome ?? "/home/agent";
     this.piPermission = options.piPermission;
     this.leaseTtlMs = options.leaseTtlMs ?? 60_000;
+    this.progressNoticeIntervalMs = options.progressNoticeIntervalMs ?? 15_000;
     this.lingerMs = options.lingerMs ?? 3_000;
     this.turnTimeoutMs = options.turnTimeoutMs ?? 600_000;
     this.owner = options.owner ?? `${hostname()}:${process.pid}`;
@@ -564,6 +599,7 @@ export class SessionRunner {
         for (const p of pending) existing.promptedIds.add(p.id);
         existing.turnEpoch += 1;
         this.resetTurnTimeout(sessionKey, existing);
+        this.resetProgressNotice(sessionKey, existing);
         existing.process.steer(renderItems(pending));
         this.logger.info(
           { sessionKey, items: pending.length },
@@ -738,6 +774,9 @@ export class SessionRunner {
       turnEpoch: 0,
       renewTimer: undefined,
       turnTimeoutTimer: undefined,
+      progressNoticeTimer: undefined,
+      currentTool: undefined,
+      toolCallCount: 0,
     };
     this.sessions.set(sessionKey, record);
 
@@ -749,6 +788,8 @@ export class SessionRunner {
       this.sessions.delete(sessionKey);
       this.stopRenewTimer(record);
       this.clearTurnTimeout(record);
+      this.clearProgressNotice(record);
+      this.router.clearProgress(sessionKey);
       try {
         await record.process?.stop();
       } catch {
@@ -995,6 +1036,18 @@ export class SessionRunner {
           "pi event",
         );
       }
+      // 進捗通知 (progress-notice.md) のための状態更新のみ。LLM 呼び出しも
+      // session.jsonl への書き込みも発生しない — pi の RPC イベントの観測だけ
+      if (isToolExecutionStart(piEvent)) {
+        record.toolCallCount += 1;
+        record.currentTool = {
+          name: piEvent.toolName,
+          // reply の args にはユーザーへの返信本文がそのまま入る。ここで切り詰めて
+          // 見せると本来の reply 投稿と内容が重複・矮小化するため出さない
+          argsPreview:
+            piEvent.toolName === "reply" ? "" : preview(piEvent.args, 60),
+        };
+      }
       if (isToolExecutionEnd(piEvent)) {
         const payload = extractReply(piEvent);
         if (payload !== null) {
@@ -1080,6 +1133,8 @@ export class SessionRunner {
         this.sessions.delete(sessionKey);
         this.stopRenewTimer(current);
         this.clearTurnTimeout(current);
+        this.clearProgressNotice(current);
+        this.router.clearProgress(sessionKey);
         // このターンで prompt 済みだった item は ack して捨てる。retry しない
         // (session-model.md §6)。捨てないと未 ack のまま inbox に残り、次の新規
         // イベントの drain が巻き込んで再 prompt するため、workdir/transcript を
@@ -1149,6 +1204,7 @@ export class SessionRunner {
     }
     record.turnEpoch += 1;
     this.resetTurnTimeout(sessionKey, record);
+    this.resetProgressNotice(sessionKey, record);
     proc.prompt(prependContext(body, doc));
 
     await this.store.sessions.put(sessionKey, {
@@ -1224,6 +1280,8 @@ export class SessionRunner {
     await proc.stop();
     this.stopRenewTimer(record);
     this.clearTurnTimeout(record);
+    this.clearProgressNotice(record);
+    this.router.clearProgress(sessionKey);
     await this.store.leases.release(record.lease);
     this.sessions.delete(sessionKey);
     this.logger.info(
@@ -1316,6 +1374,8 @@ export class SessionRunner {
     record.state = "stopping";
     this.stopRenewTimer(record);
     this.clearTurnTimeout(record);
+    this.clearProgressNotice(record);
+    this.router.clearProgress(sessionKey);
 
     // register 済み (kick で必ず register している) なので deliver できる。
     // 通知の配達が失敗してもセッションの畳み込みは続ける
@@ -1368,6 +1428,7 @@ export class SessionRunner {
     }
     record.turnEpoch += 1;
     this.resetTurnTimeout(sessionKey, record);
+    this.resetProgressNotice(sessionKey, record);
     proc.prompt(renderItems(items));
     this.logger.info({ sessionKey, items: items.length }, "session continued");
     return true;
@@ -1391,6 +1452,8 @@ export class SessionRunner {
         this.sessions.delete(sessionKey);
         this.stopRenewTimer(record);
         this.clearTurnTimeout(record);
+        this.clearProgressNotice(record);
+        this.router.clearProgress(sessionKey);
         await record.process?.stop();
       })().catch((err) => {
         this.logger.error({ sessionKey, err }, "lease renew handling failed");
@@ -1426,6 +1489,36 @@ export class SessionRunner {
     if (record.turnTimeoutTimer !== undefined) {
       clearTimeout(record.turnTimeoutTimer);
       record.turnTimeoutTimer = undefined;
+    }
+  }
+
+  /** 進捗通知タイマーをリセットする (prompt/steer 送信ごとに呼ぶ。既存タイマーが
+   * あれば止めて張り直す)。turnTimeoutTimer と同じ寿命管理パターン
+   * (progress-notice.md)。間隔ごとに currentTool のスナップショットを投稿/更新する */
+  private resetProgressNotice(sessionKey: string, record: SessionRecord): void {
+    this.clearProgressNotice(record);
+    if (this.progressNoticeIntervalMs === 0) return;
+    const timer = setInterval(() => {
+      const tool = record.currentTool;
+      const count = record.toolCallCount;
+      const text =
+        tool === undefined
+          ? `:thinking_face: ... (step ${count})`
+          : tool.argsPreview === ""
+            ? `${progressEmoji(tool.name)} \`${tool.name}\` ... (step ${count})`
+            : `${progressEmoji(tool.name)} \`${tool.name}\` \`${tool.argsPreview}\` ... (step ${count})`;
+      this.router.notifyProgress(sessionKey, text).catch((err) => {
+        this.logger.warn({ sessionKey, err }, "progress notice failed");
+      });
+    }, this.progressNoticeIntervalMs);
+    timer.unref();
+    record.progressNoticeTimer = timer;
+  }
+
+  private clearProgressNotice(record: SessionRecord): void {
+    if (record.progressNoticeTimer !== undefined) {
+      clearInterval(record.progressNoticeTimer);
+      record.progressNoticeTimer = undefined;
     }
   }
 

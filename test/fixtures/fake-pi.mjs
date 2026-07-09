@@ -13,6 +13,9 @@
 //                        ケース。runner の turn timeout 処理を検証する)
 //     "CRASH_NOW"      … running のまま即 process.exit(1) する (pi プロセスの
 //                        クラッシュ。runner の proc.on("exit") 異常分岐を検証する)
+//     "SLOW_TOOL"      … tool_execution_start ("dummy_tool") を吐いた後、steer が
+//                        届くまで待つ (runner の進捗通知タイマーが currentTool を
+//                        観測できる状態を維持する。progress-notice.md)
 //     "WITH_FILES"     … reply の details.files に ["ok.txt", "../escape.txt",
 //                        "/etc/passwd"] を積む (runner の workdir 境界チェックを検証する)
 //     "ALL_ESCAPE_FILES" … reply の details.files が全件 workdir 外 (["../escape.txt",
@@ -86,6 +89,15 @@ function emitReply(threadKey, text, files) {
   });
 }
 
+function emitToolExecutionStart(toolName, args) {
+  emit({
+    type: "tool_execution_start",
+    toolCallId: `tc-${Date.now()}`,
+    toolName,
+    ...(args !== undefined ? { args } : {}),
+  });
+}
+
 function emitAgentEnd() {
   emit({
     type: "agent_end",
@@ -137,6 +149,11 @@ function handleCommand(command) {
       // response も agent_end も返さず、running のまま即クラッシュする。
       // runner の proc.on("exit") 異常分岐 (item を捨てる処理) を検証する
       process.exit(1);
+    }
+    if (command.message.includes("SLOW_TOOL")) {
+      emitToolExecutionStart("dummy_tool", { command: "sleep 300" });
+      waitingForSteer = true;
+      return;
     }
     if (command.message.includes("WITH_FILES")) {
       emitReply(

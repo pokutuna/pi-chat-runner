@@ -31,19 +31,31 @@ class FakePoster implements ChatPoster {
     text: string;
     files?: string[];
   }[] = [];
+  updateCalls: { channelId: string; messageId: string; text: string }[] = [];
+  private nextMessageId = 0;
 
   async postMessage(
     channelId: string,
     text: string,
     threadTs?: string,
     files?: string[],
-  ): Promise<void> {
+  ): Promise<{ messageId: string }> {
     this.calls.push({
       channelId,
       text,
       ...(threadTs !== undefined ? { threadTs } : {}),
       ...(files !== undefined ? { files } : {}),
     });
+    this.nextMessageId += 1;
+    return { messageId: `msg-${this.nextMessageId}` };
+  }
+
+  async updateMessage(
+    channelId: string,
+    messageId: string,
+    text: string,
+  ): Promise<void> {
+    this.updateCalls.push({ channelId, messageId, text });
   }
 }
 
@@ -212,5 +224,61 @@ describe("EgressRouter", () => {
         files: ["/tmp/pi-chat-runner/sessions/C01/1/report.csv"],
       },
     ]);
+  });
+
+  describe("notifyProgress", () => {
+    it("posts a new message on the first call", async () => {
+      const poster = new FakePoster();
+      const router = new EgressRouter({ poster });
+      router.register("k", { channelId: "C01", threadTs: "1" });
+
+      await router.notifyProgress("k", "running");
+
+      expect(poster.calls).toEqual([
+        { channelId: "C01", threadTs: "1", text: "running" },
+      ]);
+      expect(poster.updateCalls).toEqual([]);
+    });
+
+    it("updates the same message on subsequent calls", async () => {
+      const poster = new FakePoster();
+      const router = new EgressRouter({ poster });
+      router.register("k", { channelId: "C01", threadTs: "1" });
+
+      await router.notifyProgress("k", "running: bash");
+      await router.notifyProgress("k", "running: grep");
+
+      expect(poster.calls).toHaveLength(1);
+      expect(poster.updateCalls).toEqual([
+        { channelId: "C01", messageId: "msg-1", text: "running: grep" },
+      ]);
+    });
+
+    it("drops unknown thread_key with a warning instead of throwing", async () => {
+      const poster = new FakePoster();
+      const { logger, lines } = collectingLogger();
+      const router = new EgressRouter({ poster, logger });
+
+      await router.notifyProgress("nope", "running");
+
+      expect(poster.calls).toEqual([]);
+      const warnings = lines().filter(
+        (line) => (line as { level: number }).level === 40,
+      );
+      expect(warnings).toHaveLength(1);
+    });
+
+    it("clearProgress makes the next call post a new message again", async () => {
+      const poster = new FakePoster();
+      const router = new EgressRouter({ poster });
+      router.register("k", { channelId: "C01", threadTs: "1" });
+
+      await router.notifyProgress("k", "running");
+      router.clearProgress("k");
+      await router.notifyProgress("k", "running again");
+
+      expect(poster.calls).toHaveLength(2);
+      expect(poster.updateCalls).toEqual([]);
+    });
   });
 });

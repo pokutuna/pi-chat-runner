@@ -32,6 +32,13 @@ export interface ToolResultContentText {
   text: string;
 }
 
+export interface ToolExecutionStartEvent {
+  type: "tool_execution_start";
+  toolCallId: string;
+  toolName: string;
+  args?: unknown;
+}
+
 export interface ToolExecutionEndEvent {
   type: "tool_execution_end";
   toolCallId: string;
@@ -56,7 +63,11 @@ export interface UnknownPiEvent {
   [key: string]: unknown;
 }
 
-export type PiEvent = ToolExecutionEndEvent | AgentEndEvent | UnknownPiEvent;
+export type PiEvent =
+  | ToolExecutionStartEvent
+  | ToolExecutionEndEvent
+  | AgentEndEvent
+  | UnknownPiEvent;
 
 export type PiOutputLine =
   | { kind: "response"; response: RpcResponse }
@@ -89,6 +100,12 @@ export function parsePiOutputLine(line: string): PiOutputLine {
     return { kind: "response", response: obj as unknown as RpcResponse };
   }
   return { kind: "event", event: obj as PiEvent };
+}
+
+export function isToolExecutionStart(
+  event: PiEvent,
+): event is ToolExecutionStartEvent {
+  return event.type === "tool_execution_start";
 }
 
 export function isToolExecutionEnd(

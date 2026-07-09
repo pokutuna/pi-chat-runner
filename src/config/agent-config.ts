@@ -26,6 +26,8 @@ const AgentConfigPiSchema = z
     provider: z.string().optional(),
     /** ${env.X} 解決後は文字列で来る可能性があるため coerce する (uid/gid 等と同じ理由)。 */
     turnTimeoutMs: z.coerce.number().int().positive().optional(),
+    /** 長時間ターンの進捗通知の間隔 (progress-notice.md)。0 で機能自体を無効化する。 */
+    progressNoticeIntervalMs: z.coerce.number().int().nonnegative().optional(),
   })
   .strict();
 
@@ -148,6 +150,7 @@ export async function loadAgentConfig(configDir: string): Promise<AgentConfig> {
 export interface ResolvedAgentConfig {
   provider?: string;
   turnTimeoutMs?: number;
+  progressNoticeIntervalMs?: number;
   /** pi 子プロセスへ明示的に渡す env (agent.env の解決結果)。コード既定 (gcpEnv 等)
    * と合流させるかどうかは呼び出し側の責務。 */
   env: Record<string, string>;
@@ -174,6 +177,22 @@ function parseTurnTimeoutMsEnv(raw: string | undefined): number | undefined {
   if (Number.isNaN(value) || value <= 0 || !Number.isInteger(value)) {
     throw new Error(
       "TURN_TIMEOUT_MS must be a positive integer (milliseconds)",
+    );
+  }
+  return value;
+}
+
+/** env PROGRESS_NOTICE_INTERVAL_MS をパースする (parseTurnTimeoutMsEnv と同形)。
+ * 未設定/空文字は undefined。0 は機能自体の無効化として許容する (turnTimeoutMs と
+ * 異なり positive を要求しない)。負数・非整数は fail-loud で弾く。 */
+function parseProgressNoticeIntervalMsEnv(
+  raw: string | undefined,
+): number | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  const value = Number.parseInt(raw, 10);
+  if (Number.isNaN(value) || value < 0 || !Number.isInteger(value)) {
+    throw new Error(
+      "PROGRESS_NOTICE_INTERVAL_MS must be a non-negative integer (milliseconds)",
     );
   }
   return value;
@@ -221,6 +240,9 @@ export function resolveAgentConfig(
   const provider = env.PI_PROVIDER ?? file.pi?.provider;
   const turnTimeoutMs =
     parseTurnTimeoutMsEnv(env.TURN_TIMEOUT_MS) ?? file.pi?.turnTimeoutMs;
+  const progressNoticeIntervalMs =
+    parseProgressNoticeIntervalMsEnv(env.PROGRESS_NOTICE_INTERVAL_MS) ??
+    file.pi?.progressNoticeIntervalMs;
 
   const agentEnv = file.agent?.env ?? {};
 
@@ -236,6 +258,9 @@ export function resolveAgentConfig(
   return {
     ...(provider !== undefined ? { provider } : {}),
     ...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
+    ...(progressNoticeIntervalMs !== undefined
+      ? { progressNoticeIntervalMs }
+      : {}),
     env: agentEnv,
     runtime: {
       ...(uid !== undefined ? { uid } : {}),

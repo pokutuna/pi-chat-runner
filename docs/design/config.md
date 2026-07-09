@@ -412,6 +412,7 @@ store:
 pi:
   provider: ${env.PI_PROVIDER:-google-vertex}   # pi の --provider
   turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000} # 1 ターン上限 ms。超過で kill (session-runtime.md §6)
+  progressNoticeIntervalMs: ${env.PROGRESS_NOTICE_INTERVAL_MS:-15000}  # 長時間ターンの進捗通知の間隔 ms。0 で無効化 (progress-notice.md)
 
 # --- agent: pi 子プロセスの env と実行環境 ---
 agent:
@@ -427,12 +428,13 @@ agent:
 agent.yaml に**モデルは置かない**。pi 本体のモデルは `channels.yaml` の
 default.model / channel.model、classifier のモデルは `trigger.when` の各 classifier
 ノードの `model` に書く (§2.3)。service 単位のモデル既定という中間層を持たないので、
-agent.yaml には connector / store / provider / turnTimeoutMs / agent.env / agent.runtime の
-ような**モデル以外の bridge 構成**だけが残る。
+agent.yaml には connector / store / provider / turnTimeoutMs / progressNoticeIntervalMs /
+agent.env / agent.runtime のような**モデル以外の bridge 構成**だけが残る。
 
-pi/agent の一部フィールド (provider / turnTimeoutMs / runtime.*) は env も直接 override
-できる。優先順位は **env > agent.yaml > コード既定** (PI_PROVIDER / TURN_TIMEOUT_MS /
-PI_AGENT_UID・GID / PI_PERMISSION_MODE / PI_AGENT_HOME が対応。resolveAgentConfig)。
+pi/agent の一部フィールド (provider / turnTimeoutMs / progressNoticeIntervalMs / runtime.*)
+は env も直接 override できる。優先順位は **env > agent.yaml > コード既定**
+(PI_PROVIDER / TURN_TIMEOUT_MS / PROGRESS_NOTICE_INTERVAL_MS / PI_AGENT_UID・GID /
+PI_PERMISSION_MODE / PI_AGENT_HOME が対応。resolveAgentConfig)。
 これは `${env.X}` 参照とは別のロジックで二重に効きうるが、実運用では agent.yaml 側で
 `${env.X:-default}` に一本化するのが読みやすい (env override 経路は「ローカルで一時的に
 上書き」用に残す)。boot 時に strict に validate し、未知キーは fail-loud で落とす。

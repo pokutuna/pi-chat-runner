@@ -56,6 +56,20 @@ describe("AgentConfigSchema", () => {
     ).toBe(false);
   });
 
+  it("accepts a zero progressNoticeIntervalMs (disables the feature)", () => {
+    expect(
+      AgentConfigSchema.safeParse({ pi: { progressNoticeIntervalMs: 0 } })
+        .success,
+    ).toBe(true);
+  });
+
+  it("rejects a negative progressNoticeIntervalMs", () => {
+    expect(
+      AgentConfigSchema.safeParse({ pi: { progressNoticeIntervalMs: -1 } })
+        .success,
+    ).toBe(false);
+  });
+
   it("rejects a model field under pi (removed)", () => {
     expect(
       AgentConfigSchema.safeParse({ pi: { model: "gemini-x" } }).success,
@@ -234,6 +248,36 @@ describe("resolveAgentConfig", () => {
     expect(() =>
       resolveAgentConfig({}, { TURN_TIMEOUT_MS: "not-a-number" }),
     ).toThrow(/TURN_TIMEOUT_MS/);
+  });
+
+  it("leaves progressNoticeIntervalMs undefined when neither env nor file set it", () => {
+    const resolved = resolveAgentConfig({}, {});
+    expect(resolved.progressNoticeIntervalMs).toBeUndefined();
+  });
+
+  it("parses PROGRESS_NOTICE_INTERVAL_MS from env and prefers it over file", () => {
+    const resolved = resolveAgentConfig(
+      { pi: { progressNoticeIntervalMs: 1000 } },
+      { PROGRESS_NOTICE_INTERVAL_MS: "5000" },
+    );
+    expect(resolved.progressNoticeIntervalMs).toBe(5000);
+  });
+
+  it("allows PROGRESS_NOTICE_INTERVAL_MS=0 to disable the feature via env", () => {
+    const resolved = resolveAgentConfig(
+      { pi: { progressNoticeIntervalMs: 5000 } },
+      { PROGRESS_NOTICE_INTERVAL_MS: "0" },
+    );
+    expect(resolved.progressNoticeIntervalMs).toBe(0);
+  });
+
+  it("throws for an invalid PROGRESS_NOTICE_INTERVAL_MS", () => {
+    expect(() =>
+      resolveAgentConfig({}, { PROGRESS_NOTICE_INTERVAL_MS: "-1" }),
+    ).toThrow(/PROGRESS_NOTICE_INTERVAL_MS/);
+    expect(() =>
+      resolveAgentConfig({}, { PROGRESS_NOTICE_INTERVAL_MS: "not-a-number" }),
+    ).toThrow(/PROGRESS_NOTICE_INTERVAL_MS/);
   });
 
   describe("runtime.permissionMode", () => {

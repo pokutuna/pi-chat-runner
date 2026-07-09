@@ -69,6 +69,8 @@ class FakePoster implements ChatPoster {
     text: string;
     files?: string[];
   }[] = [];
+  updateCalls: { channelId: string; messageId: string; text: string }[] = [];
+  private nextMessageId = 0;
   async postMessage(
     channelId: string,
     text: string,
@@ -81,6 +83,11 @@ class FakePoster implements ChatPoster {
       ...(threadTs !== undefined ? { threadTs } : {}),
       ...(files !== undefined ? { files } : {}),
     });
+    this.nextMessageId += 1;
+    return { messageId: `msg-${this.nextMessageId}` };
+  }
+  async updateMessage(channelId: string, messageId: string, text: string) {
+    this.updateCalls.push({ channelId, messageId, text });
   }
 }
 
@@ -184,6 +191,7 @@ interface HarnessOptions {
   agentHome?: string;
   piPermission?: PiPermissionConfig;
   turnTimeoutMs?: number;
+  progressNoticeIntervalMs?: number;
   mentionFormat?: MentionFormat;
 }
 
@@ -235,6 +243,9 @@ async function harness(
       : {}),
     ...(options.turnTimeoutMs !== undefined
       ? { turnTimeoutMs: options.turnTimeoutMs }
+      : {}),
+    ...(options.progressNoticeIntervalMs !== undefined
+      ? { progressNoticeIntervalMs: options.progressNoticeIntervalMs }
       : {}),
     // SessionRunner では必須パラメータ。テストでは既定として Slack の
     // `<@USER_ID>` 記法を使う (個々のテストが上書きしない限り)
@@ -1381,6 +1392,75 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
       renderEvent(followUp, replyThreadKeyOf(followUp)),
     );
     expect(commands[1]?.message).not.toContain("WAIT_FOR_STEER");
+  });
+
+  it("progress notice: タイマー発火で実行中のツール名を通知し、初回は新規投稿・以後は同じメッセージを更新する", async () => {
+    // fake-pi の SLOW_TOOL は tool_execution_start ("dummy_tool") を吐いた後、
+    // steer が届くまで応答を止める。進捗タイマー (30ms) が 2 回発火するまで待ち、
+    // 1 回目は新規投稿・2 回目以降は同じ message を更新することを確認する
+    // (progress-notice.md)
+    const h = await harness({}, { progressNoticeIntervalMs: 30 });
+    const trigger = message({ mentionsBot: true, text: "SLOW_TOOL" });
+
+    await h.runner.handle(trigger);
+
+    await waitFor(
+      () =>
+        h.poster.updateCalls.some(
+          (c) => c.text.includes("dummy_tool") && c.text.includes("sleep 300"),
+        ),
+      "progress updated with tool name and args preview",
+    );
+
+    expect(h.poster.calls).toHaveLength(1);
+    // 初回投稿で返された messageId (FakePoster の "msg-1") を以後の update が使う
+    expect(h.poster.updateCalls.every((c) => c.messageId === "msg-1")).toBe(
+      true,
+    );
+
+    // ターンを終わらせる (steer → reply → agent_end)
+    const followUp = message({
+      id: "1700000000.000700",
+      conversation: { channelId: "C01", threadTs: trigger.id },
+      text: "wrap it up",
+    });
+    await h.runner.handle(followUp);
+    await waitFor(() => h.poster.calls.length === 2, "final reply posted");
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+    // 進捗通知メッセージへの update はターン終了後は増えない
+    const updateCountAtEnd = h.poster.updateCalls.length;
+    await sleep(90);
+    expect(h.poster.updateCalls.length).toBe(updateCountAtEnd);
+  });
+
+  it("progress notice: progressNoticeIntervalMs: 0 で機能を無効化できる", async () => {
+    const h = await harness({}, { progressNoticeIntervalMs: 0 });
+    const trigger = message({ mentionsBot: true, text: "SLOW_TOOL" });
+
+    await h.runner.handle(trigger);
+    await waitFor(async () => {
+      try {
+        return (await h.commandsLog("C01", trigger.id)).length >= 1;
+      } catch {
+        return false;
+      }
+    }, "initial prompt recorded");
+
+    // タイマーが張られていれば dummy_tool の進捗が届くはずの時間だけ待っても、
+    // 一切通知されない
+    await sleep(90);
+    expect(h.poster.calls).toEqual([]);
+    expect(h.poster.updateCalls).toEqual([]);
+
+    const followUp = message({
+      id: "1700000000.000701",
+      conversation: { channelId: "C01", threadTs: trigger.id },
+      text: "wrap it up",
+    });
+    await h.runner.handle(followUp);
+    await waitFor(() => h.poster.calls.length === 1, "final reply posted");
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
   });
 
   it("trigger.debounceSec: 連投バーストの 2 通が 1 回の kick にまとめられる", async () => {

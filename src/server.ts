@@ -194,7 +194,10 @@ function missingConnectorConfig(configDir: string): never {
     "  TURN_TIMEOUT_MS     1 ターンの上限 ms (既定 600000 = 10 分。超過で pi を kill してセッションを畳む)",
   );
   console.error(
-    "  上記 PI_PROVIDER/TURN_TIMEOUT_MS は CONFIG_DIR/agent.yaml でも設定可 (env が優先)。pi へ渡す追加 env は agent.yaml の agent.env で明示列挙する",
+    "  PROGRESS_NOTICE_INTERVAL_MS  長時間ターンの進捗通知の間隔 ms (既定 30000。0 で無効化)",
+  );
+  console.error(
+    "  上記 PI_PROVIDER/TURN_TIMEOUT_MS/PROGRESS_NOTICE_INTERVAL_MS は CONFIG_DIR/agent.yaml の pi ブロックでも設定可 (env が優先)。pi へ渡す追加 env は agent.yaml の agent.env で明示列挙する",
   );
   console.error("");
   console.error("例 (.env ファイル推奨):");
@@ -293,7 +296,8 @@ async function main() {
   // agent.yaml (config.md §6) + env を解決する。優先順位は env > agent.yaml > コード既定
   const agentConfigFile = await loadAgentConfig(configDir);
   const agentConfig = resolveAgentConfig(agentConfigFile, process.env);
-  const { provider, turnTimeoutMs, runtime } = agentConfig;
+  const { provider, turnTimeoutMs, progressNoticeIntervalMs, runtime } =
+    agentConfig;
 
   const gcpEnv = collectGcpEnv();
   const piPaths = resolvePiPaths();
@@ -343,6 +347,10 @@ async function main() {
     ...(piPermission !== undefined ? { piPermission } : {}),
     // TURN_TIMEOUT_MS 未設定なら SessionRunner の既定 (600_000ms) を使う
     ...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
+    // PROGRESS_NOTICE_INTERVAL_MS 未設定なら SessionRunner の既定 (30_000ms) を使う
+    ...(progressNoticeIntervalMs !== undefined
+      ? { progressNoticeIntervalMs }
+      : {}),
     logger,
   });
 }

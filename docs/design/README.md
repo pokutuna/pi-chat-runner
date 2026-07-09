@@ -35,7 +35,7 @@ Slack のチャンネル/スレッドから pi コーディングエージェン
 - 悪意あるプロンプトインジェクションへの完全サンドボックスは初期版では提供しない ([Security](#security) 参照。事故防止と影響半径の最小化にとどめる)
 - Slack 以外のチャット面の初期実装はしない (Ingress 抽象で将来の口だけ確保する)
 - MCP 接続はしない (pi にネイティブサポートが無い)
-- リアルタイムのストリーミング表示はしない (reply 単位の投稿にとどめる)
+- リアルタイムのストリーミング表示はしない (reply 単位の投稿にとどめる)。長時間ターンの粗い進捗通知 (数十秒間隔のスナップショット更新) は別カテゴリとして許容する ([progress-notice.md](progress-notice.md))
 
 ## Scenarios
 
@@ -182,6 +182,7 @@ Mitigations:
 - [components.md](components.md) — コンポーネント全体像 (Trigger/Gate/Inbox/Session/Runner/Reply)
 - [config.md](config.md) — Config の置き場所判断・ChannelDoc スキーマ・YAML 記述形式
 - [session-runtime.md](session-runtime.md) — pi の kick シーケンス・env の受け渡し・最小イメージ・隔離
+- [progress-notice.md](progress-notice.md) — 長時間ターンの進捗通知 (chat.update によるスナップショット表示)
 - [../initial-scope.md](../initial-scope.md) — 初期版スコープの決定事項
 - [../build-plan.md](../build-plan.md) — 実装順序プラン
 - [../research/hermes-chat-modeling.md](../research/hermes-chat-modeling.md) / [../research/hermes-session-model.md](../research/hermes-session-model.md) / [../research/pi-session-model.md](../research/pi-session-model.md) — as-is 実装調査

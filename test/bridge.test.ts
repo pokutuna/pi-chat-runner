@@ -183,7 +183,9 @@ describe("startBridge", () => {
           text,
           ...(threadTs !== undefined ? { threadTs } : {}),
         });
+        return { messageId: "msg-1" };
       },
+      async updateMessage() {},
     };
     const agentHome = await mkdtemp(
       join(tmpdir(), "pi-chat-runner-bridge-poster-home-"),

@@ -95,12 +95,16 @@ export function extractUsageTotals(event: AgentEndEvent): UsageTotals {
   return totals;
 }
 
-function preview(value: unknown, maxChars = 200): string {
+export function preview(value: unknown, maxChars = 200): string {
   let text: string;
-  try {
-    text = typeof value === "string" ? value : JSON.stringify(value);
-  } catch {
-    text = String(value);
+  if (typeof value === "string") {
+    text = value;
+  } else {
+    try {
+      text = JSON.stringify(value) ?? String(value);
+    } catch {
+      text = String(value);
+    }
   }
   return text.length > maxChars ? `${text.slice(0, maxChars)}...` : text;
 }

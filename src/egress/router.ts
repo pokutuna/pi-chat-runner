@@ -24,14 +24,22 @@ export interface EgressDestination {
   threadTs?: string;
 }
 
-/** WebClient.chat.postMessage の薄い IF。テストではフェイクを注入する。
- * files は添付するローカルファイルの絶対パス配列 */
+/** WebClient.chat.postMessage/chat.update の薄い IF。テストではフェイクを注入する。
+ * files は添付するローカルファイルの絶対パス配列。
+ * postMessage の戻り値 messageId は「後から更新できる識別子」の共通抽象
+ * (Slack: ts、Discord: message id 等)。進捗通知 (progress-notice.md) が
+ * updateMessage でこの識別子を使って同一メッセージを上書きする */
 export interface ChatPoster {
   postMessage(
     channelId: string,
     text: string,
     threadTs?: string,
     files?: string[],
+  ): Promise<{ messageId: string }>;
+  updateMessage(
+    channelId: string,
+    messageId: string,
+    text: string,
   ): Promise<void>;
 }
 
@@ -46,6 +54,9 @@ export interface EgressRouterOptions {
 
 export class EgressRouter {
   private readonly destinations = new Map<string, EgressDestination>();
+  /** 進捗通知メッセージの thread_key → messageId (progress-notice.md)。
+   * reply の確定出力とは別レーンなので destinations とは別に持つ */
+  private readonly progressMessageIds = new Map<string, string>();
   private readonly poster: ChatPoster;
   private readonly formatter: EgressFormatter;
   private readonly logger: Logger;
@@ -98,5 +109,45 @@ export class EgressRouter {
       );
       throw err;
     }
+  }
+
+  /** 長時間ターンの進捗スナップショット (progress-notice.md)。reply とは別レーンの
+   * 単一メッセージで、初回は新規投稿、以降は同じメッセージを上書きする。formatter は
+   * 通さない (ツール名程度の短い定型文で、GFM→mrkdwn 変換を要さない)。
+   * 未知の thread_key は deliver と同様 warn して捨てる */
+  async notifyProgress(threadKey: string, text: string): Promise<void> {
+    const destination = this.destinations.get(threadKey);
+    if (destination === undefined) {
+      this.logger.warn(
+        { threadKey },
+        "unknown thread_key; dropping progress notice",
+      );
+      return;
+    }
+    try {
+      const existingMessageId = this.progressMessageIds.get(threadKey);
+      if (existingMessageId !== undefined) {
+        await this.poster.updateMessage(
+          destination.channelId,
+          existingMessageId,
+          text,
+        );
+        return;
+      }
+      const { messageId } = await this.poster.postMessage(
+        destination.channelId,
+        text,
+        destination.threadTs,
+      );
+      this.progressMessageIds.set(threadKey, messageId);
+    } catch (err) {
+      this.logger.warn({ threadKey, err }, "progress notice post failed");
+    }
+  }
+
+  /** セッション終了時に進捗通知メッセージの記憶を捨てる (次セッションが同じ
+   * thread_key を再利用しても古い messageId に update しないようにする) */
+  clearProgress(threadKey: string): void {
+    this.progressMessageIds.delete(threadKey);
   }
 }
