@@ -1,0 +1,26 @@
+connector:
+  slack:
+    mode: ${env.SLACK_MODE:-socket}
+    appToken: ${env.SLACK_APP_TOKEN}
+    signingSecret: ${env.SLACK_SIGNING_SECRET:-}
+    port: ${env.PORT:-8080}
+    botToken: ${env.SLACK_BOT_TOKEN}
+    botUserId: ${env.SLACK_BOT_USER_ID}
+
+store:
+  backend: ${env.STORE_BACKEND:-memory}
+  sqlitePath: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db}
+
+pi:
+  provider: ${env.PI_PROVIDER:-google-vertex}
+  turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000}
+
+agent:
+  env:
+    GH_TOKEN: ${env.GH_TOKEN:-}
+    GOOGLE_CLOUD_PROJECT: ${env.GOOGLE_CLOUD_PROJECT}
+    GOOGLE_APPLICATION_CREDENTIALS: ${env.GOOGLE_APPLICATION_CREDENTIALS:-}
+
+  runtime:
+    permissionMode: ${env.PI_PERMISSION_MODE:-true}
+    home: ${env.PI_AGENT_HOME:-/home/agent}
