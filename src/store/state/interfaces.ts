@@ -31,6 +31,9 @@ export interface SessionDoc {
   channelId: string;
   threadTs: string;
   triggerTs: string;
+  // TODO: status は書かれるだけで読まれていない (どこも .status を参照しない)。
+  // 実際の再開判定は workdir/session.jsonl の有無で決まる。design (session-model.md
+  // §6) の resume_pending/suspended を含む状態機械を実装するまでは死んでいる値。
   status: "active" | "finished";
   updatedAt: Date;
 }
