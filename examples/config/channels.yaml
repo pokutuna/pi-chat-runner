@@ -1,17 +1,10 @@
-# 全チャンネル設定を配列で 1 ファイルに。先頭 default は必須の土台 (config.md §2)。
-# 実行時は常に merge(default, channel) = 全 top-level フィールド一律置換で動く (§2.2)。
+# One array of channel configs. "default" is required as the fallback base;
+# every other entry replaces default's fields wholesale (no deep-merge).
 channels:
   - channel: "default"
-    # 旧 channels/default.yaml 相当。どの channel エントリにも一致しないチャンネルの
-    # フォールバック定義 (このエントリを外すと組み込み既定 = mention 起動のみ)。
-    # DM には適用されない — DM の振る舞いは "dm" エントリ (無ければ passthrough 起動、
-    # config.md §2.1)。セッションやメッセージの管理は常に実チャンネル ID で行われ、
-    # ここは振る舞い定義のみ。
-    # 注意: passthrough を書くと bot がいる全チャンネルで全発言に反応するため、
-    # フォールバックは mention 起動に留めるのが安全。
-    # model は必須級: pi 本体はモデル未指定だと起動を拒否するため、土台の default に
-    # 書いておく (channel が model を書かなければこれを継承する)。classifier のモデルは
-    # 別で、trigger.when の classifier ノードの model に書く (config.md §2.3)。
+    # Fallback for any channel below with no matching entry. Doesn't apply to
+    # DMs (see the "dm" entry). Keep this mention-only — passthrough here
+    # would react to every message in every channel the bot is in.
     model: gemini-3.5-flash
     systemPrompt: ./prompts/ask-ai.md
     trigger:
@@ -19,53 +12,46 @@ channels:
         - kind: mention
 
   - channel: "dm"
-    # DM の振る舞い定義 (config.md §2.1)。このエントリが無いと DM は既定で passthrough
-    # (bot への DM 全件で起動) になる。DM を一切許可しない運用にしたい場合は、
-    # ここに trigger.when: [] を書いて明示的に無効化する
-    # (evaluateWhen は空配列を「vacuously false」= 常に非発火として扱う。gate.ts 参照)。
+    # Fallback for DMs. Without this entry, DMs default to passthrough (every
+    # DM triggers a session); `when: []` disables them entirely (also works
+    # on "default").
     trigger:
       when: []
 
-  - channel: "C0000000001" # 自分のチャンネル ID に置き換える (他の example と重複させない)
-    # 旧 channels/ask-ai.yaml 相当。mention 起動の汎用アシスタント
-    # (docs/design/config.md §1 の #ask-ai に相当)
+  - channel: "C0000000001" # REPLACE: your channel ID
+    # General-purpose assistant, mention-triggered.
     systemPrompt: ./prompts/ask-ai.md
     trigger:
       when:
         - kind: mention
 
-  - channel: "C0000000003" # 自分のチャンネル ID に置き換える (他の example と重複させない)
-    # 旧 channels/cooking.yaml 相当。classifier Gate (session-model.md §5 Layer 2) の
-    # 動作確認用。mention なしで全発言を classifier に入力し、「料理の話題」と判定
-    # された発言だけで起動する (単一 classifier の OR = 配列 1 要素。passthrough を
-    # 足すと全発言に反応してしまうため入れない)。
-    # model は未指定 → コード既定 (gemini-3.1-flash-lite) を使う (config.md §2.3)。
+  - channel: "C0000000003" # REPLACE: your channel ID
+    # Classifier demo: judges every message, no mention needed. Only
+    # cooking-related messages trigger a session.
     systemPrompt: ./prompts/ask-ai.md
     trigger:
       when:
         - kind: classifier
-          criteria: "料理・レシピ・食材・調理法など、食べ物を作ることに関する話題かどうか。外食やお店の話だけの場合は含めない。"
+          criteria: "Is this about cooking — recipes, ingredients, or techniques? Exclude messages only about eating out or restaurants."
 
-  - channel: "C0000000002" # 自分のチャンネル ID に置き換える (他の example と重複させない)
-    # 旧 channels/keyword-demo.yaml 相当。keyword Gate と mention の OR 合成デモ。
-    # "help" / "エラー" を含む発言、または mention のいずれかで起動する。
+  - channel: "C0000000002" # REPLACE: your channel ID
+    # Keyword-or-mention demo: triggers on "help"/"エラー", or any bot mention.
     trigger:
       when:
         - kind: keyword
-          pattern: "([Hh]elp|エラー)" # JS の RegExp はインラインフラグ (?i) 非対応な点に注意
+          pattern: "([Hh]elp|エラー)"
         - kind: mention
-    # tools: [read, grep, bash]      # 調査専用にする例 (reply は自動で許可される)
-    # excludeTools: [write, edit]    # 書き込み系だけ外す例
+    # Optional tool limits — reply is always allowed. UNCOMMENT to enable:
+    # tools: [read, grep, bash] # investigation-only allowlist
+    # excludeTools: [write, edit] # or just drop the write-capable tools
 
-  - channel: "C0000000004" # 自分のチャンネル ID に置き換える (他の example と重複させない)
-    # reaction Gate (session-model.md §5「人間によるリアクション起動」) の動作確認用。
-    # 既存メッセージに :eyes: / :robot_face: を付けると、その対象メッセージ本文で
-    # セッションが起動する。mention との OR なので mention でも起動する。
-    # 対象メッセージがスレッド返信なら親スレッドの sessionKey に着地し、棚に
-    # transcript があれば restore 経由で文脈継続する (実質再開)。
+  - channel: "C0000000004" # REPLACE: your channel ID
+    # Reaction-or-mention demo: reacting :eyes:/:robot_face: on an existing
+    # message starts a session on that message (resumes its thread if it's a
+    # thread reply).
     systemPrompt: ./prompts/ask-ai.md
     trigger:
       when:
         - kind: reaction
-          emoji: [eyes, robot_face] # Slack の正規化名 (: は付けない)
+          emoji: [eyes, robot_face] # Slack's normalized names, no leading ":"
         - kind: mention

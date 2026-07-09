@@ -1,82 +1,55 @@
-# agent.yaml — bridge 本体の設定 (docs/design/config.md §6)。boot 時に 1 回だけ読まれる。
+# agent.yaml — bridge-wide settings, read once at boot.
+# Separate from channels.yaml, which controls per-channel behavior.
+# Layout follows entry -> exit: connector (chat I/O) -> store (persistence) -> pi/agent (agent process).
 #
-# channels.yaml (チャンネルごとの振る舞い差分) とは別の設定ファイル。ここは
-# チャンネル横断の bridge プロセスの挙動を決める。connector (接続) → store (永続化)
-# → pi/agent (エージェント実行) の順で「入口 → 出口」に並べてある。
+# Values may reference env vars: ${env.X} (fails if unset) or ${env.X:-default}.
+# Don't inline secrets — reference them via ${env.X} instead (see service.yaml).
+# "SET:" comments mark env vars you must export; the rest have defaults.
 #
-# 値には ${env.X} (未設定なら fail-loud) / ${env.X:-default} (未設定・空文字なら
-# default) で環境変数を参照できる。secret (トークン等) は値を直書きせず ${env.X} で
-# Secret Manager 由来の env (service.yaml 参照) を拾う。
-#
-# モデルは agent.yaml に書かない。pi 本体のモデルは channels.yaml の
-# default.model / channel.model、classifier のモデルは channels.yaml の
-# trigger.when 内の各 classifier ノードの model に書く (どちらも省略時はコード既定
-# gemini-3.1-flash-lite。ただし pi 本体は実作業向けに高性能なモデルを明示するのが
-# 通例)。service 単位のモデル既定という中間層は持たない (config.md §2.3)。
+# Models aren't set here: pi's model goes in channels.yaml (default.model /
+# a channel's model), and a classifier gate's model goes on that gate's node.
 
-# --- connector: チャット接続 (受信 Ingress + 送信 Egress) ---
+# --- connector: chat I/O (ingress + egress) ---
 connector:
   slack:
-    # 入口の選択 (任意。socket | events。既定 socket。design/architecture.md §1)
-    # socket: ローカル確認・お試し用途 (WebSocket)。events: Cloud Run 本番用途 (HTTP push)
+    # socket: local/dev (WebSocket). events: production (HTTP push).
     mode: ${env.SLACK_MODE:-socket}
 
-    # mode: socket のとき必須。App-Level Token (connections:write scope)
-    appToken: ${env.SLACK_APP_TOKEN}
+    # appToken is an App-Level Token with the connections:write scope.
+    appToken: ${env.SLACK_APP_TOKEN} # SET: required for mode: socket
+    signingSecret: ${env.SLACK_SIGNING_SECRET:-} # SET: required for mode: events; leave unset for socket
+    port: ${env.PORT:-8080} # listen port, mode: events only
 
-    # mode: events のとき必須。Signing Secret (/slack/events の署名検証に使う)
-    # socket 運用では未設定のままでよい
-    signingSecret: ${env.SLACK_SIGNING_SECRET:-}
+    # botUserId is the bot's own user ID (auth.test's user_id), used to
+    # detect mentions and filter self-echo.
+    botToken: ${env.SLACK_BOT_TOKEN} # SET: always required
+    botUserId: ${env.SLACK_BOT_USER_ID} # SET: always required
 
-    # mode: events の listen ポート (任意。既定 8080)
-    port: ${env.PORT:-8080}
-
-    # 送受信の認証・自己判定 (常に必須)。値を直書きせず Secret Manager 由来の env を拾う
-    botToken: ${env.SLACK_BOT_TOKEN}
-    # bot の User ID (auth.test の user_id)。自己エコー除外・mention 判定に使う
-    botUserId: ${env.SLACK_BOT_USER_ID}
-
-# --- store: 永続化バックエンド ---
+# --- store: persistence backend ---
 store:
-  # 永続化バックエンド (任意。memory | sqlite | firestore。既定 memory)
-  backend: ${env.STORE_BACKEND:-memory}
-  # backend: sqlite のときだけ使う (任意。既定 /tmp/pi-chat-runner/state.db)
-  sqlitePath: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db}
+  backend: ${env.STORE_BACKEND:-memory} # memory | sqlite | firestore
+  sqlitePath: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db} # backend: sqlite only
 
-# --- pi: pi 本体の挙動 ---
+# --- pi: pi's own behavior ---
 pi:
-  # pi の --provider (任意)。Vertex AI (ADC 認証) で動かす例。GOOGLE_CLOUD_PROJECT /
-  # GOOGLE_CLOUD_LOCATION は env で渡す (service.yaml / .env)。省略すると pi 本体の
-  # 既定 provider に従う
+  # Default provider is Vertex AI with ADC auth.
+  # SET: GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION for google-vertex.
   provider: ${env.PI_PROVIDER:-google-vertex}
+  turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000} # pi is killed if a turn runs past this
 
-  # 1 ターンの上限 (ms)。超過で pi を kill する (docs/design/session-runtime.md §6)。
-  # 省略時は SessionRunner の既定 (600000 = 10 分)
-  turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000}
-
-# --- agent: pi 子プロセスの env と実行環境 ---
+# --- agent: the pi child process's env and execution environment ---
 agent:
-  # pi 子プロセスへ渡す env の名前=値マップ (足し算モデル)。値は ${env.X} 参照可。
-  # コード既定 (GOOGLE_CLOUD_* 等の gcpEnv) に「足す」形で、ここに書いた名前だけが
-  # 追加で pi に渡る (旧 envPassthrough の allowlist / RESERVED prefix 拒否は廃止)
+  # Extra env vars passed to the pi child process, added on top of the code's
+  # built-in defaults (e.g. GOOGLE_CLOUD_*).
   env:
     GH_TOKEN: ${env.GH_TOKEN:-}
 
-  # コンテナイメージの作り方と対になる実行環境設定 (docs/design/session-runtime.md §6)
   runtime:
-    # UID/GID 分離 (任意)。設定する場合は両方セット必須 (片方だけは fail-loud)。
-    # 省略すればコード既定 (実行ユーザーのまま) に従う。uid/gid は number スキーマ
-    # なので ${env.X:-} (空文字) を書くと 0 に化けてしまう — 値を渡さないときは
-    # このように行ごとコメントアウトする (env 側で PI_AGENT_UID/GID を渡すデプロイでは
-    # そちらが優先されるので、この2行は省略したままでよい)
+    # UID/GID separation for the pi child process.
+    # UNCOMMENT both to enable (set both or neither):
     # uid: ${env.PI_AGENT_UID}
     # gid: ${env.PI_AGENT_GID}
 
-    # Node Permission Model 起動の有効/無効 (任意)。コード既定は ON (true) —
-    # 書かなければ隔離が効く。Cloud Run 実イメージ向けで、ローカル開発の fake pi では
-    # 無効化してよい。無効化は "false" / "0" / "" のいずれか (permissionMode: false と
-    # 直書き、または env PI_PERMISSION_MODE=0)。それ以外の値は有効化として扱う
-    permissionMode: ${env.PI_PERMISSION_MODE:-true}
-
-    # pi 子プロセスへ常に HOME として渡すディレクトリ (任意。既定 /home/agent)
-    home: ${env.PI_AGENT_HOME:-/home/agent}
+    # permissionMode toggles Node Permission Model sandboxing.
+    permissionMode: ${env.PI_PERMISSION_MODE:-true} # SET: false for local dev against a fake pi binary
+    home: ${env.PI_AGENT_HOME:-/home/agent} # HOME passed to the pi child process
