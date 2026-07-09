@@ -140,7 +140,15 @@ turn timeout (10 分) + エラー投稿 + ❌、DM 既定 config (`dm`)、base i
   受信の正規化 (`ReactionEvent` 型・Slack の `reaction_added`/`removed` → `normalizeReaction`) は
   実装済みだが、`targetIsOwnMessage` は常に false のスタブ ([src/ingress/slack/adapter.ts](../src/ingress/slack/adapter.ts))
   で、bridge が `kind !== "message"` のイベントを破棄するため再開への結線が未実装
-- [ ] EgressAdapter / InboundDebouncer ([design/chat-model.md](design/chat-model.md) §3.2, §3.4)
+- [ ] EgressAdapter ([design/chat-model.md](design/chat-model.md) §3.2)。マルチプラットフォーム抽象
+  (platform/capabilities を持ち send/edit/react/uploadFile/fetchHistory/renderMarkdown を束ねる)
+  としては未実装。現状の [src/egress/router.ts](../src/egress/router.ts) (`EgressRouter`/`ChatPoster`)
+  は Slack 前提の薄い抽象のまま
+- [x] InboundDebouncer 相当の機能 ([design/chat-model.md](design/chat-model.md) §3.4)。design の
+  `add`/`onFlush` インターフェースとしては存在しないが、「最後の発言から debounceSec」
+  「最初の発言から debounceSec×3 (hard cap)」の早い方でフラッシュする限定時間バッファリングは
+  `trigger.debounceSec` として実装済み ([src/session/runner.ts](../src/session/runner.ts) の
+  スライディングタイマー、上記「実装済みの追加機能」参照)
 
 ## 想定ディレクトリツリー (新規リポジトリ)
 
