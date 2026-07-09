@@ -18,7 +18,7 @@
 | スキーマ検証 | zod | channels.yaml のロード時 strict 検証 ([design/config.md](design/config.md) §6) と ChannelDoc 型を単一ソース化 |
 | YAML | yaml | |
 | GCP | @google-cloud/firestore | GCS は FUSE 経由なので SDK 不要 |
-| lint/format | Biome | 単一ツールで高速 |
+| lint/format | oxlint + oxfmt | Biome から移行。Rust 実装で高速、2 スペースインデント |
 | パッケージ管理 | pnpm | 単一パッケージ。モノレポ化が必要になっても workspace 移行が容易 |
 
 ## Step 0: リポジトリ scaffold
