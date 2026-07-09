@@ -50,13 +50,14 @@ Chat (e.g. Slack)
 | `src/session/` | Spawning pi, RPC, orchestration |
 | `src/store/` | Persistence: `state/` (DB) and `workdir.ts` (workdir archival) |
 | `src/egress/` | thread_key resolution, mrkdwn formatting, message chunking, reactions |
-| `extensions/` | Extensions injected into pi |
+| `extensions/` | Extensions injected into pi: `reply.ts`, `permission-gate.ts`, `export.ts` (HTML session export) |
 | `home/` | Baked into the base image as `/home/agent` (default `settings.json`, etc.) |
 | `skills/` | Baked into the base image as `/app/skills` (sample skills for pi; empty by default) |
 | `examples/config/` | Sample channel configuration and prompts |
 | `examples/service.yaml` | Cloud Run deployment template (copy and edit) |
 | `examples/slack-app-manifest.socket.yaml` | Slack App manifest template, Socket Mode |
 | `examples/slack-app-manifest.http.yaml` | Slack App manifest template, Events API |
+| `examples/gc-logging-agent/` | Sample extension image (`FROM` the base image) adding gcloud/duckdb/uv and a logging-investigation skill |
 | `develop/` | This repo's own local dev tooling: `compose.yaml`, `drive-pi.ts` |
 
 A real deployment (your own Slack App, your own Cloud Run service) lives in a separate repo that extends the base image with `FROM` and fills in the `examples/` templates with real values — see [docs/design/session-runtime.md](docs/design/session-runtime.md) §5.
@@ -69,17 +70,25 @@ pnpm run dev:socket   # local dev, Socket Mode
 pnpm run dev          # Events API
 ```
 
-Set Slack credentials in `.env.socket` or `.env`. Channel behavior is configured under `examples/config/channels/*.yaml`:
+Set Slack credentials in `.env.socket` or `.env`. Bridge-wide behavior (connector/store/pi/agent) is configured in `examples/config/agent.yaml`; per-channel behavior is configured in `examples/config/channels.yaml`, a single file listing all channels:
 
 ```yaml
-channel: "C0000000001"
-systemPrompt: ./prompts/ask-ai.md
-trigger:
-  # when is a boolean tree of gates: a bare array is OR, {and}/{or} compose explicitly.
-  when:
-    - kind: mention
-    - kind: reaction   # an emoji reaction on an existing message kicks a session on that message
-      emoji: [eyes, robot_face]
+channels:
+  - channel: "default"       # fallback for channels with no matching entry
+    model: gemini-3.5-flash
+    systemPrompt: ./prompts/ask-ai.md
+    trigger:
+      when:
+        - kind: mention
+
+  - channel: "C0000000001"
+    systemPrompt: ./prompts/ask-ai.md
+    trigger:
+      # when is a boolean tree of gates: a bare array is OR, {and}/{or} compose explicitly.
+      when:
+        - kind: mention
+        - kind: reaction   # an emoji reaction on an existing message kicks a session on that message
+          emoji: [eyes, robot_face]
 ```
 
 DB defaults to InMemory (`./store/sqlite` / `./store/firestore` for persistence). Workdir archival defaults to no-op unless `archiveDir` is set. See [docs/design/persistence.md](docs/design/persistence.md).
@@ -92,4 +101,4 @@ pnpm run lint
 
 ## Status
 
-Under active development. Currently Slack and Google Cloud (Cloud Run + Firestore + GCS) only — other chat platforms and cloud providers are not supported yet. Steps 0-5 of [docs/build-plan.md](docs/build-plan.md) are done; Step 6 is nearly complete. The CLI (`apply`/`status`/`init`) is deferred — configuration is read directly from YAML via `FileConfigSource`, so `apply` (and a `FirestoreConfigSource`) are not needed for now.
+Under active development. Currently Slack and Google Cloud (Cloud Run + Firestore + GCS) only — other chat platforms and cloud providers are not supported yet. Steps 0-6 of [docs/build-plan.md](docs/build-plan.md) are done (initial-version goal reached). The CLI (`apply`/`status`/`init`) is deferred — configuration is read directly from YAML via `FileConfigSource`, so `apply` (and a `FirestoreConfigSource`) are not needed for now.
