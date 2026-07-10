@@ -55,12 +55,6 @@ import {
 const FAKE_PI = fileURLToPath(
   new URL("../fixtures/fake-pi.mjs", import.meta.url),
 );
-const EXTENSION = fileURLToPath(
-  new URL("../../extensions/reply.ts", import.meta.url),
-);
-const PERMISSION_GATE_EXTENSION = fileURLToPath(
-  new URL("../../extensions/permission-gate.ts", import.meta.url),
-);
 
 class FakePoster implements ChatPoster {
   calls: {
@@ -224,7 +218,6 @@ async function harness(
         return {};
       },
     }),
-    extensionPaths: [EXTENSION, PERMISSION_GATE_EXTENSION],
     workdirRoot,
     piBinary: options.piBinary ?? FAKE_PI,
     lingerMs: options.lingerMs ?? 30,

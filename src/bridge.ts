@@ -4,13 +4,11 @@
 // (docs/design/config.md §6) の両方から呼ばれる共通の起動シーケンス。env パース・
 // composition の分離については server.ts のコメントを参照。
 //
-// extensionPaths は options に出さない: reply tool と permission-gate の常時注入は
-// 外せない安全方針 (docs/design/config.md §5「reply tool の注入・RPC 結線 | コード」)。
-// export は安全上必須ではないが、標準機能として同様に常時注入する。
-// これらの extension は常にここで import.meta.url 相対に解決する。
+// 組み込み extension (reply/permission-gate/export) の解決と常時注入は SessionRunner
+// 自身が行う (src/session/runner.ts)。プラットフォーム非依存の Runner ⇔ pi 結線で
+// あり、bridge (Slack 専用の composition root) の関心事ではない。
 
 import { basename } from "node:path";
-import { fileURLToPath } from "node:url";
 
 import type { WebClient } from "@slack/web-api";
 
@@ -165,17 +163,6 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
     store,
     router: new EgressRouter({ poster, formatter: toMrkdwn }),
     reactions,
-    // tsx 実行時は <repo>/src/../extensions、build 後は <repo>/dist/../extensions を指す。
-    // pi が --extension で TS ソースを直接ロードするためビルド対象外。
-    // permission-gate は事故防止層 (docs/research/pi-tools-and-sandbox.md) として
-    // reply と同様に常時注入する
-    extensionPaths: [
-      fileURLToPath(new URL("../extensions/reply.ts", import.meta.url)),
-      fileURLToPath(
-        new URL("../extensions/permission-gate.ts", import.meta.url),
-      ),
-      fileURLToPath(new URL("../extensions/export.ts", import.meta.url)),
-    ],
     // mentionFormat は必須 (SessionRunner はプラットフォーム中立で既定値を
     // 持たない)。bridge.ts は Slack 専用モジュールなので、Slack の mrkdwn
     // mention 記法をここで注入する

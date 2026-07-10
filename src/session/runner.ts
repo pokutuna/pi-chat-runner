@@ -10,6 +10,7 @@
 // Step 3 相当のローカル置きっぱなし)。turn timeout (Step 6) もここで実装する
 // (session-runtime.md §6「ターンにタイムアウトを設け、超過したら pi を kill」)。
 
+import { existsSync } from "node:fs";
 import {
   chmod,
   chown,
@@ -22,6 +23,7 @@ import {
 } from "node:fs/promises";
 import { hostname } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import type { ClassifierClient } from "../classifier/client.js";
 import type { ChannelDoc } from "../config/channel-doc.js";
@@ -97,6 +99,33 @@ function mentionInstruction(mentionFormat: MentionFormat): string {
   );
 }
 
+/** 組み込み extension のファイル名 (リポジトリ/パッケージ直下の extensions/)。
+ * reply は唯一の返信経路、permission-gate は事故防止層 (config.md §5) で、どの
+ * プラットフォームで使う場合も常時注入する — プラットフォーム非依存なので呼び出し側に
+ * 渡させず SessionRunner 自身が解決する。export は標準機能として同様に扱う。
+ * pi が --extension で TS ソースを直接ロードするためビルド対象外。 */
+const BUILTIN_EXTENSION_NAMES = [
+  "reply.ts",
+  "permission-gate.ts",
+  "export.ts",
+] as const;
+
+/** 組み込み extension の絶対パスを解決する。extensions/ はソースツリーでもパッケージ
+ * 配布物 (package.json files) でもルート直下にあるが、このモジュール自身の位置が
+ * tsx 実行時 (src/session/) とバンドル後 (dist/ 直下) で深さが変わるため、候補を
+ * 実在チェックで選ぶ。見つからなければ配置が壊れているので fail-loud。 */
+function resolveBuiltinExtensionPaths(): string[] {
+  for (const rel of ["../extensions/", "../../extensions/"]) {
+    const dir = fileURLToPath(new URL(rel, import.meta.url));
+    if (existsSync(join(dir, BUILTIN_EXTENSION_NAMES[0]))) {
+      return BUILTIN_EXTENSION_NAMES.map((name) => join(dir, name));
+    }
+  }
+  throw new Error(
+    `built-in extensions not found relative to ${import.meta.url} (expected an "extensions/" directory at the package root)`,
+  );
+}
+
 /** Node Permission Model 有効化の静的パラメタ (session-runtime.md §6)。
  * workdir / home はセッションごとに決まるため kick 時に buildPiPermissionOptions
  * へ都度渡す — ここに載るのはイメージ内で固定のパスだけ */
@@ -126,9 +155,6 @@ export interface SessionRunnerOptions {
   reactions: Reactions;
   /** workdir の境界退避。 */
   workdirStorage: WorkdirStorage;
-  /** pi の `--extension` に渡す extension の絶対パス群 (reply + permission-gate 等)。
-   * すべて常時注入する (permission-gate は事故防止層なので無効化オプションは持たない) */
-  extensionPaths: string[];
   /** workdir のルート。既定 /tmp/pi-chat-runner/sessions */
   workdirRoot?: string;
   /** pi バイナリ。省略時は PiProcess の既定 (env PI_BIN → "pi") */
@@ -482,7 +508,10 @@ export class SessionRunner {
     this.router = options.router;
     this.reactions = options.reactions;
     this.workdirStorage = options.workdirStorage;
-    this.extensionPaths = options.extensionPaths;
+    // 組み込み extension (reply/permission-gate/export) は常時注入で外せない
+    // (permission-gate は事故防止層なので無効化オプションを持たない)。利用者の
+    // 追加 extension は $AGENT_HOME/.pi/agent/extensions/ 規約で拾う (kick() 参照)
+    this.extensionPaths = resolveBuiltinExtensionPaths();
     this.workdirRoot = options.workdirRoot ?? "/tmp/pi-chat-runner/sessions";
     this.piBinary = options.piBinary;
     this.provider = options.provider;
