@@ -472,10 +472,10 @@ const BUILTIN_TOOL_PRIMARY_ARG_KEY: Record<string, string> = {
   find: "pattern",
 };
 
-/** dir 配下 (dir 自身含む) を再帰的に chown する。UID 分離時、restore で
- * root 所有のままコピーされたファイルを agent 所有に揃えるための最小実装
- * (エントリ数が少ない workdir 前提。fs.cp に uid/gid オプションは無いため
- * コピー後にここで chown する)。
+/** dir 配下 (dir 自身含む) を再帰的に chown する。workdir 専用 — UID 分離時、
+ * restore で root 所有のままコピーされたファイルを agent 所有に揃えるための
+ * 最小実装 (エントリ数が少ない workdir 前提。fs.cp に uid/gid オプションは
+ * 無いためコピー後にここで chown する)。
  * シンボリックリンクは辿らずスキップする: pi が workdir 内に /data 等への
  * リンクを仕込み、次の restore 後に root の Runner がリンク先を chown して
  * 所有権を奪われる経路を防ぐ (リンク自体の所有者は挙動に影響しない) */
@@ -1077,12 +1077,20 @@ export class SessionRunner {
       await chmod(workdir, 0o700);
     }
     // agentHome は常に pi の HOME になるため、存在しなければここで作る
-    // (Dockerfile の useradd --create-home で作成済みならほぼ no-op だが、
-    // PI_AGENT_HOME で既定と異なるパスを指定した場合に備える)。UID 分離が
-    // 有効なら workdir と同様に agent 所有 0700 に揃える
-    await mkdir(this.agentHome, { recursive: true });
-    if (this.agentUid !== undefined && this.agentGid !== undefined) {
-      await chownRecursive(this.agentHome, this.agentUid, this.agentGid);
+    // (Dockerfile の useradd --create-home + COPY --chown で作成済みならほぼ
+    // no-op だが、PI_AGENT_HOME で既定と異なるパスを指定した場合に備える)。
+    // 所有権の規則は「Runner (root) が作ったものだけ chown する」— 既存の
+    // home には一切触れない。mkdir(recursive) は新規作成時だけ作成した
+    // パスを返すため、それを使って新規作成時のみ chown/chmod する
+    // (home 全体を毎回再帰的に stat/chown する必要はない。既存 home 配下に
+    // 読み取り専用マウントがあっても衝突しない)
+    const createdHome = await mkdir(this.agentHome, { recursive: true });
+    if (
+      createdHome !== undefined &&
+      this.agentUid !== undefined &&
+      this.agentGid !== undefined
+    ) {
+      await chown(this.agentHome, this.agentUid, this.agentGid);
       await chmod(this.agentHome, 0o700);
     }
     // pi は cwd を canonicalize してから trust probe / migration の existsSync を
