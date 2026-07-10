@@ -148,7 +148,7 @@ export class SlackIngressAdapter {
       targetMessageId: event.item.ts,
       targetIsOwnMessage: false, // 判定には対象メッセージの発言者情報が必要 (Step 1 では未解決)
       conversation: { channelId: event.item.channel },
-      sender: { id: event.user, isBot: false },
+      sender: { id: event.user, isBot: event.user === this.botUserId },
       added: event.type === "reaction_added",
       timestamp: new Date(),
       raw: event,

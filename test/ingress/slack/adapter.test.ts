@@ -83,6 +83,20 @@ describe("SlackIngressAdapter.normalize", () => {
     expect(reaction.targetMessageId).toBe("1720000000.000100");
     expect(reaction.added).toBe(true);
     expect(reaction.conversation).toEqual({ channelId: "C123" });
+    expect(reaction.sender).toEqual({ id: "U123", isBot: false });
+  });
+
+  it("marks sender.isBot=true for the bot's own reaction_added echo", () => {
+    const result = adapter.normalize({
+      type: "reaction_added",
+      user: BOT_USER_ID,
+      reaction: "eyes",
+      item: { type: "message", channel: "C123", ts: "1720000000.000100" },
+    });
+
+    expect(result).not.toBeNull();
+    const reaction = result as ReactionEvent;
+    expect(reaction.sender).toEqual({ id: BOT_USER_ID, isBot: true });
   });
 
   it("keeps the raw reaction_added payload on ReactionEvent.raw", () => {
