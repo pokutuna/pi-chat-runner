@@ -1,20 +1,17 @@
 // StoreConfig スキーマ + ローダー — 永続化ストア (State Store) の設定ブロック。
 //
-// agent.yaml に同居する (config.md §6 の agent.yaml と同じファイルを読む。ファイルを
-// 増やさない)。agent.yaml 全体は 1 つの zod スキーマに統合せず、この store ブロック
-// だけを取り出して独立に読む (agent スキーマ本体は別モジュールが並行して定義するため)。
+// 設定ファイル (単一 YAML, root-config.ts) に同居する store ブロックだけを
+// 取り出して独立に読む (他ブロックは別モジュールが並行して定義するため、全体を
+// 1 つの zod スキーマに統合しない)。
 //
 // 値は `${env.X}` / `${env.X:-default}` 参照を書ける (env-ref.ts)。読み込み順は
 // yaml.parse → resolveEnvRefs(parsed, env) → zod。zod strict + fail-loud は
 // connector-config.ts / agent-config.ts / channel-doc.ts と同じ流儀。
 
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-
-import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
 import { resolveEnvRefs } from "./env-ref.js";
+import { readRootConfig } from "./root-config.js";
 
 export const StoreConfigSchema = z
   .object({
@@ -32,48 +29,22 @@ export type StoreConfig = z.infer<typeof StoreConfigSchema>;
  * をそのまま公開名として使う。 */
 export type ResolvedStoreConfig = StoreConfig;
 
-const AGENT_CONFIG_FILENAME = "agent.yaml";
-
-/** CONFIG_DIR/agent.yaml から `store` ブロックだけを読む。ファイル自体が無い・
+/** 設定ファイル (単一 YAML) から `store` ブロックだけを読む。ファイル自体が無い・
  * store ブロックが省略されている場合も StoreConfigSchema.parse({}) を通した
  * default 済みの値 (backend: memory) を返す (connector-config.ts の loadConnectorConfig
  * が {} を返すのとは異なり、store は常に default を効かせる)。env 参照解決は
  * yaml.parse の直後・zod 検証の前に行う。 */
 export async function loadStoreConfig(
-  configDir: string,
+  configPath: string,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<ResolvedStoreConfig> {
-  const filePath = join(configDir, AGENT_CONFIG_FILENAME);
-
-  let raw: string;
-  try {
-    raw = await readFile(filePath, "utf-8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return StoreConfigSchema.parse({});
-    }
-    throw new Error(`failed to read agent config file: ${filePath}`, {
-      cause: err,
-    });
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = parseYaml(raw);
-  } catch (err) {
-    throw new Error(`invalid YAML in agent config file: ${filePath}`, {
-      cause: err,
-    });
-  }
-
-  if (parsed === null || parsed === undefined) {
+  const filePath = configPath;
+  const parsed = await readRootConfig(filePath);
+  if (parsed === undefined) {
     return StoreConfigSchema.parse({});
   }
-  if (typeof parsed !== "object") {
-    throw new Error(`invalid agent config file: ${filePath} (not an object)`);
-  }
 
-  const storeRaw = (parsed as Record<string, unknown>).store;
+  const storeRaw = parsed.store;
   if (storeRaw === undefined) {
     return StoreConfigSchema.parse({});
   }

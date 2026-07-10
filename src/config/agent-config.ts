@@ -1,8 +1,8 @@
-// AgentConfig スキーマ + ローダー — docs/design/config.md §6「agent.yaml — bridge 本体の設定ファイル」
+// AgentConfig スキーマ + ローダー — docs/design/config.md §6「agent.yaml — 設定ファイル」
 //
-// channels/*.yaml (channel-doc.ts) とは別のファイルとして合流させない (config.md §6 の表:
-// 「対象」「読むタイミング」「Firestore」が異なるため)。zod strict + fail-loud は
-// channel-doc.ts / config-source.ts と同じ流儀。
+// 設定は単一の YAML (慣例名 agent.yaml, パスは自由) に全ブロックが同居し、この
+// モジュールは pi / agent ブロックだけを担当する (root-config.ts のコメント参照)。
+// zod strict + fail-loud は channel-doc.ts / config-source.ts と同じ流儀。
 //
 // 優先順位は env > agent.yaml > コード既定 (config.md §6)。コード既定 (turnTimeoutMs
 // 600_000 等) はこのモジュールでは埋めない — 既定値の二重管理をしない
@@ -13,13 +13,10 @@
 // モデル) は廃止した。値には ${env.X} / ${env.X:-default} 参照を書ける
 // (resolveEnvRefs で yaml.parse 後・zod 前に解決する)。
 
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-
-import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
 import { resolveEnvRefs } from "./env-ref.js";
+import { readRootConfig } from "./root-config.js";
 
 const AgentConfigPiSchema = z
   .object({
@@ -74,50 +71,25 @@ export const AgentConfigSchema = z
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
-const AGENT_CONFIG_FILENAME = "agent.yaml";
-
-/** CONFIG_DIR/agent.yaml を読む。ファイル自体が無ければ全項目省略として `{}` を返す
- * (config.md §6: 「ファイル自体が無ければ全項目コード既定」)。コメントだけの YAML
- * (parse 結果が null) も同様に `{}` 扱い。YAML parse 後・zod 検証前に resolveEnvRefs
- * で ${env.X} 参照を解決する (env-ref.ts の「A2: parse 後走査」方式)。スキーマ違反・
- * YAML 破損・未解決の env 参照は fail-loud で throw する (config-source.ts の
- * loadChannelDocFile と同じ形式)。 */
-export async function loadAgentConfig(configDir: string): Promise<AgentConfig> {
-  const filePath = join(configDir, AGENT_CONFIG_FILENAME);
-
-  let raw: string;
-  try {
-    raw = await readFile(filePath, "utf-8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return {};
-    }
-    throw new Error(`failed to read agent config file: ${filePath}`, {
-      cause: err,
-    });
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = parseYaml(raw);
-  } catch (err) {
-    throw new Error(`invalid YAML in agent config file: ${filePath}`, {
-      cause: err,
-    });
-  }
-
-  if (parsed === null || parsed === undefined) {
+/** 設定ファイル (単一 YAML) から pi / agent ブロックを読む。ファイル自体が無ければ
+ * 全項目省略として `{}` を返す (config.md §6: 「ファイル自体が無ければ全項目コード既定」)。
+ * YAML parse 後・zod 検証前に resolveEnvRefs で ${env.X} 参照を解決する (env-ref.ts の
+ * 「A2: parse 後走査」方式)。スキーマ違反・YAML 破損・未解決の env 参照は fail-loud で
+ * throw する (config-source.ts と同じ形式)。 */
+export async function loadAgentConfig(
+  configPath: string,
+): Promise<AgentConfig> {
+  const parsed = await readRootConfig(configPath);
+  if (parsed === undefined) {
     return {};
   }
-  if (typeof parsed !== "object") {
-    throw new Error(`invalid agent config file: ${filePath} (not an object)`);
-  }
+  const filePath = configPath;
 
-  // agent.yaml には connector / store ブロックも同居する (connector-config.ts /
-  // store-config.ts が並行してそれぞれ読む)。AgentConfigSchema は pi/agent しか
-  // 知らない .strict() スキーマなので、ここで pi/agent キーだけを取り出してから
-  // 検証する (parsed をそのまま渡すと connector/store が unrecognized keys で弾かれる)。
-  const { pi: piRaw, agent: agentRaw } = parsed as Record<string, unknown>;
+  // 設定ファイルには connector / store / channels ブロックも同居する (それぞれ
+  // 別モジュールが並行して読む)。AgentConfigSchema は pi/agent しか知らない
+  // .strict() スキーマなので、ここで pi/agent キーだけを取り出してから検証する
+  // (parsed をそのまま渡すと他ブロックが unrecognized keys で弾かれる)。
+  const { pi: piRaw, agent: agentRaw } = parsed;
   const extracted: Record<string, unknown> = {};
   if (piRaw !== undefined) extracted.pi = piRaw;
   if (agentRaw !== undefined) extracted.agent = agentRaw;

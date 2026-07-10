@@ -28,7 +28,9 @@ type MinimalWebClient = Pick<WebClient, "chat" | "reactions">;
 const FAKE_PI = fileURLToPath(
   new URL("./fixtures/fake-pi.mjs", import.meta.url),
 );
-const CONFIG_DIR = fileURLToPath(new URL("./fixtures/config", import.meta.url));
+const CONFIG_PATH = fileURLToPath(
+  new URL("./fixtures/config/channels.yaml", import.meta.url),
+);
 
 /** eventSource.start() が呼ばれたら onEvent に渡された events を順に流すだけの
  * スタブ Ingress。ack は呼ばれたことだけ記録する。 */
@@ -129,7 +131,7 @@ describe("startBridge", () => {
         eventSource,
         web: web.client,
         store: new InMemoryStateStore(),
-        configSource: new FileConfigSource(CONFIG_DIR),
+        configSource: new FileConfigSource(CONFIG_PATH),
         agentHome,
         logger,
       });
@@ -199,7 +201,7 @@ describe("startBridge", () => {
         eventSource,
         web: web.client,
         store: new InMemoryStateStore(),
-        configSource: new FileConfigSource(CONFIG_DIR),
+        configSource: new FileConfigSource(CONFIG_PATH),
         agentHome,
         logger,
         poster: injectedPoster,

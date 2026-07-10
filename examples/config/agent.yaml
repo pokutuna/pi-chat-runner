@@ -1,13 +1,13 @@
-# agent.yaml — bridge-wide settings, read once at boot.
-# Separate from channels.yaml, which controls per-channel behavior.
-# Layout follows entry -> exit: connector (chat I/O) -> store (persistence) -> pi/agent (agent process).
+# agent.yaml — the single config file (the filename is up to you; point CONFIG_PATH at it).
+# connector/store/pi/agent are read once at boot; channels is re-read on every
+# message, so channel behavior changes take effect without a restart.
+# Layout follows entry -> exit: connector (chat I/O) -> store (persistence)
+# -> pi/agent (agent process) -> channels (per-channel behavior).
 #
-# Values may reference env vars: ${env.X} (fails if unset) or ${env.X:-default}.
-# Don't inline secrets — reference them via ${env.X} instead (see service.yaml).
+# In the boot-time sections, values may reference env vars: ${env.X} (fails if
+# unset) or ${env.X:-default}. Don't inline secrets — reference them via ${env.X}
+# instead (see service.yaml). The channels section does not resolve env refs.
 # "SET:" comments mark env vars you must export; the rest have defaults.
-#
-# Models aren't set here: pi's model goes in channels.yaml (default.model /
-# a channel's model), and a classifier gate's model goes on that gate's node.
 
 # --- connector: chat I/O (ingress + egress) ---
 connector:
@@ -16,7 +16,7 @@ connector:
     mode: ${env.SLACK_MODE:-socket}
 
     # appToken is an App-Level Token with the connections:write scope.
-    appToken: ${env.SLACK_APP_TOKEN} # SET: required for mode: socket
+    appToken: ${env.SLACK_APP_TOKEN:-} # SET: required for mode: socket; leave unset for events
     signingSecret: ${env.SLACK_SIGNING_SECRET:-} # SET: required for mode: events; leave unset for socket
     port: ${env.PORT:-8080} # listen port, mode: events only
 
@@ -53,3 +53,65 @@ agent:
     # permissionMode toggles Node Permission Model sandboxing.
     permissionMode: ${env.PI_PERMISSION_MODE:-true} # SET: false for local dev against a fake pi binary
     home: ${env.PI_AGENT_HOME:-/home/agent} # HOME passed to the pi child process
+
+# --- channels: per-channel behavior, re-read on every message ---
+# One array of channel configs. "default" is required as the fallback base;
+# every other entry replaces default's fields wholesale (no deep-merge).
+# pi's model goes here (default.model / a channel's model); a classifier gate's
+# model goes on that gate's node. systemPrompt/context values starting with
+# ./ or ../ are read as files relative to this file's directory.
+channels:
+  - channel: "default"
+    # Fallback for any channel below with no matching entry. Doesn't apply to
+    # DMs (see the "dm" entry). Keep this mention-only — passthrough here
+    # would react to every message in every channel the bot is in.
+    model: gemini-3.5-flash
+    systemPrompt: ./prompts/ask-ai.md
+    trigger:
+      when:
+        - kind: mention
+
+  - channel: "dm"
+    # Fallback for DMs. Without this entry, DMs default to passthrough (every
+    # DM triggers a session); `when: []` disables them entirely (also works
+    # on "default").
+    trigger:
+      when: []
+
+  - channel: "C0000000001" # REPLACE: your channel ID
+    # General-purpose assistant, mention-triggered.
+    systemPrompt: ./prompts/ask-ai.md
+    trigger:
+      when:
+        - kind: mention
+
+  - channel: "C0000000003" # REPLACE: your channel ID
+    # Classifier demo: judges every message, no mention needed. Only
+    # cooking-related messages trigger a session.
+    systemPrompt: ./prompts/ask-ai.md
+    trigger:
+      when:
+        - kind: classifier
+          criteria: "Is this about cooking — recipes, ingredients, or techniques? Exclude messages only about eating out or restaurants."
+
+  - channel: "C0000000002" # REPLACE: your channel ID
+    # Keyword-or-mention demo: triggers on "help"/"エラー", or any bot mention.
+    trigger:
+      when:
+        - kind: keyword
+          pattern: "([Hh]elp|エラー)"
+        - kind: mention
+    # Optional tool limits — reply is always allowed. UNCOMMENT to enable:
+    # tools: [read, grep, bash] # investigation-only allowlist
+    # excludeTools: [write, edit] # or just drop the write-capable tools
+
+  - channel: "C0000000004" # REPLACE: your channel ID
+    # Reaction-or-mention demo: reacting :eyes:/:robot_face: on an existing
+    # message starts a session on that message (resumes its thread if it's a
+    # thread reply).
+    systemPrompt: ./prompts/ask-ai.md
+    trigger:
+      when:
+        - kind: reaction
+          emoji: [eyes, robot_face] # Slack's normalized names, no leading ":"
+        - kind: mention

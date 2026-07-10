@@ -19,8 +19,8 @@ services:
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT}
       GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS}
-      # config/ を examples/config に mount するため、既定の develop/config から上書きする
-      CONFIG_DIR: examples/config
+      # config/ を examples/config に mount して既定 (examples/config/agent.yaml) で読ませる
+      CONFIG_PATH: examples/config/agent.yaml
     volumes:
       - ./config:/app/examples/config:ro
       - ${GOOGLE_APPLICATION_CREDENTIALS}:${GOOGLE_APPLICATION_CREDENTIALS}:ro

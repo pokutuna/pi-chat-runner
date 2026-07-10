@@ -42,8 +42,8 @@ spec:
               value: PROJECT_ID # REPLACE: your GCP project ID
             # - name: PI_PROVIDER      # optional: override agent.yaml's pi.provider
             #   value: google-vertex
-            # - name: CONFIG_DIR       # optional: defaults to examples/config, already in the base image
-            #   value: examples/config
+            # - name: CONFIG_PATH      # optional: defaults to examples/config/agent.yaml, already in the base image
+            #   value: examples/config/agent.yaml
             - name: SLACK_BOT_TOKEN
               valueFrom:
                 secretKeyRef:

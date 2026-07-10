@@ -47,7 +47,7 @@ describe("loadStoreConfig", () => {
   });
 
   it("returns default (memory) when agent.yaml does not exist", async () => {
-    expect(await loadStoreConfig(dir)).toEqual({
+    expect(await loadStoreConfig(join(dir, "agent.yaml"))).toEqual({
       backend: "memory",
       sqlitePath: "/tmp/pi-chat-runner/state.db",
     });
@@ -58,7 +58,7 @@ describe("loadStoreConfig", () => {
       join(dir, "agent.yaml"),
       "pi:\n  provider: google-vertex\n",
     );
-    expect(await loadStoreConfig(dir)).toEqual({
+    expect(await loadStoreConfig(join(dir, "agent.yaml"))).toEqual({
       backend: "memory",
       sqlitePath: "/tmp/pi-chat-runner/state.db",
     });
@@ -66,7 +66,7 @@ describe("loadStoreConfig", () => {
 
   it("returns default (memory) when agent.yaml contains only comments", async () => {
     await writeFile(join(dir, "agent.yaml"), "# just a comment\n");
-    expect(await loadStoreConfig(dir)).toEqual({
+    expect(await loadStoreConfig(join(dir, "agent.yaml"))).toEqual({
       backend: "memory",
       sqlitePath: "/tmp/pi-chat-runner/state.db",
     });
@@ -79,7 +79,7 @@ describe("loadStoreConfig", () => {
         "\n",
       ),
     );
-    expect(await loadStoreConfig(dir)).toEqual({
+    expect(await loadStoreConfig(join(dir, "agent.yaml"))).toEqual({
       backend: "sqlite",
       sqlitePath: "/data/state.db",
     });
@@ -94,7 +94,7 @@ describe("loadStoreConfig", () => {
         "  sqlitePath: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db}",
       ].join("\n"),
     );
-    const result = await loadStoreConfig(dir, {
+    const result = await loadStoreConfig(join(dir, "agent.yaml"), {
       STORE_BACKEND: "sqlite",
       SQLITE_PATH: "/var/data/state.db",
     });
@@ -106,11 +106,15 @@ describe("loadStoreConfig", () => {
 
   it("throws with the file path for malformed YAML", async () => {
     await writeFile(join(dir, "agent.yaml"), "store:\n  - broken: [\n");
-    await expect(loadStoreConfig(dir)).rejects.toThrow(/agent\.yaml/);
+    await expect(loadStoreConfig(join(dir, "agent.yaml"))).rejects.toThrow(
+      /agent\.yaml/,
+    );
   });
 
   it("throws with the file path and zod issue for an invalid backend value", async () => {
     await writeFile(join(dir, "agent.yaml"), "store:\n  backend: redis\n");
-    await expect(loadStoreConfig(dir)).rejects.toThrow(/agent\.yaml/);
+    await expect(loadStoreConfig(join(dir, "agent.yaml"))).rejects.toThrow(
+      /agent\.yaml/,
+    );
   });
 });

@@ -81,7 +81,7 @@ describe("loadConnectorConfig", () => {
   });
 
   it("returns {} when agent.yaml does not exist", async () => {
-    expect(await loadConnectorConfig(dir)).toEqual({});
+    expect(await loadConnectorConfig(join(dir, "agent.yaml"))).toEqual({});
   });
 
   it("returns {} when agent.yaml has no connector block", async () => {
@@ -89,12 +89,12 @@ describe("loadConnectorConfig", () => {
       join(dir, "agent.yaml"),
       "pi:\n  provider: google-vertex\n",
     );
-    expect(await loadConnectorConfig(dir)).toEqual({});
+    expect(await loadConnectorConfig(join(dir, "agent.yaml"))).toEqual({});
   });
 
   it("returns {} when agent.yaml contains only comments", async () => {
     await writeFile(join(dir, "agent.yaml"), "# just a comment\n");
-    expect(await loadConnectorConfig(dir)).toEqual({});
+    expect(await loadConnectorConfig(join(dir, "agent.yaml"))).toEqual({});
   });
 
   it("parses a valid connector block with literal values", async () => {
@@ -109,7 +109,7 @@ describe("loadConnectorConfig", () => {
         "    botUserId: U123",
       ].join("\n"),
     );
-    expect(await loadConnectorConfig(dir)).toEqual({
+    expect(await loadConnectorConfig(join(dir, "agent.yaml"))).toEqual({
       slack: {
         mode: "socket",
         appToken: "xapp-literal",
@@ -133,7 +133,7 @@ describe("loadConnectorConfig", () => {
         "    port: ${env.PORT:-8080}",
       ].join("\n"),
     );
-    const result = await loadConnectorConfig(dir, {
+    const result = await loadConnectorConfig(join(dir, "agent.yaml"), {
       SLACK_APP_TOKEN: "xapp-from-env",
       SLACK_BOT_TOKEN: "xoxb-from-env",
       SLACK_BOT_USER_ID: "U999",
@@ -161,12 +161,16 @@ describe("loadConnectorConfig", () => {
     );
     // agent-config.ts の loadAgentConfig と同じ流儀: 外側メッセージはファイルパスまで、
     // 参照先の env 変数名 (SLACK_BOT_TOKEN) は cause チェーン (env-ref.ts 側) に載る。
-    await expect(loadConnectorConfig(dir, {})).rejects.toThrow(/agent\.yaml/);
+    await expect(
+      loadConnectorConfig(join(dir, "agent.yaml"), {}),
+    ).rejects.toThrow(/agent\.yaml/);
   });
 
   it("throws with the file path for malformed YAML", async () => {
     await writeFile(join(dir, "agent.yaml"), "connector:\n  - broken: [\n");
-    await expect(loadConnectorConfig(dir)).rejects.toThrow(/agent\.yaml/);
+    await expect(loadConnectorConfig(join(dir, "agent.yaml"))).rejects.toThrow(
+      /agent\.yaml/,
+    );
   });
 
   it("throws with the file path and zod issue for schema violations", async () => {
@@ -174,11 +178,15 @@ describe("loadConnectorConfig", () => {
       join(dir, "agent.yaml"),
       "connector:\n  slack:\n    mode: webhook\n    botToken: x\n    botUserId: U1\n",
     );
-    await expect(loadConnectorConfig(dir)).rejects.toThrow(/agent\.yaml/);
+    await expect(loadConnectorConfig(join(dir, "agent.yaml"))).rejects.toThrow(
+      /agent\.yaml/,
+    );
   });
 
   it("throws when required fields (botToken/botUserId) are missing", async () => {
     await writeFile(join(dir, "agent.yaml"), "connector:\n  slack: {}\n");
-    await expect(loadConnectorConfig(dir)).rejects.toThrow(/agent\.yaml/);
+    await expect(loadConnectorConfig(join(dir, "agent.yaml"))).rejects.toThrow(
+      /agent\.yaml/,
+    );
   });
 });

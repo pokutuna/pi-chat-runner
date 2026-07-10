@@ -1,20 +1,17 @@
 // ConnectorConfig スキーマ + ローダー — チャット接続層 (Ingress/Egress) の設定ブロック。
 //
-// agent.yaml に同居する (config.md §6 の agent.yaml と同じファイルを読む。ファイルを
-// 増やさない)。agent.yaml 全体は 1 つの zod スキーマに統合せず、この connector ブロック
-// だけを取り出して独立に読む (agent スキーマ本体は別モジュールが並行して定義するため)。
+// 設定ファイル (単一 YAML, root-config.ts) に同居する connector ブロックだけを
+// 取り出して独立に読む (他ブロックは別モジュールが並行して定義するため、全体を
+// 1 つの zod スキーマに統合しない)。
 //
 // 値は `${env.X}` / `${env.X:-default}` 参照を書ける (env-ref.ts)。読み込み順は
 // yaml.parse → resolveEnvRefs(parsed, env) → zod。zod strict + fail-loud は
 // agent-config.ts / channel-doc.ts と同じ流儀。
 
-import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-
-import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
 import { resolveEnvRefs } from "./env-ref.js";
+import { readRootConfig } from "./root-config.js";
 
 const SlackConnectorSchema = z
   .object({
@@ -48,46 +45,20 @@ export type SlackConnectorConfig = z.infer<typeof SlackConnectorSchema>;
  * 意味 (キー省略 vs undefined 値) がズレるため。 */
 export type ResolvedConnectorConfig = ConnectorConfig;
 
-const AGENT_CONFIG_FILENAME = "agent.yaml";
-
-/** CONFIG_DIR/agent.yaml から `connector` ブロックだけを読む。ファイル自体が無ければ
- * 全項目省略として `{}` を返す (agent-config.ts の loadAgentConfig と同じ扱い)。
+/** 設定ファイル (単一 YAML) から `connector` ブロックだけを読む。ファイル自体が
+ * 無ければ全項目省略として `{}` を返す (agent-config.ts の loadAgentConfig と同じ扱い)。
  * env 参照解決は yaml.parse の直後・zod 検証の前に行う。 */
 export async function loadConnectorConfig(
-  configDir: string,
+  configPath: string,
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<ResolvedConnectorConfig> {
-  const filePath = join(configDir, AGENT_CONFIG_FILENAME);
-
-  let raw: string;
-  try {
-    raw = await readFile(filePath, "utf-8");
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return {};
-    }
-    throw new Error(`failed to read agent config file: ${filePath}`, {
-      cause: err,
-    });
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = parseYaml(raw);
-  } catch (err) {
-    throw new Error(`invalid YAML in agent config file: ${filePath}`, {
-      cause: err,
-    });
-  }
-
-  if (parsed === null || parsed === undefined) {
+  const filePath = configPath;
+  const parsed = await readRootConfig(filePath);
+  if (parsed === undefined) {
     return {};
   }
-  if (typeof parsed !== "object") {
-    throw new Error(`invalid agent config file: ${filePath} (not an object)`);
-  }
 
-  const connectorRaw = (parsed as Record<string, unknown>).connector;
+  const connectorRaw = parsed.connector;
   if (connectorRaw === undefined) {
     return {};
   }

@@ -68,7 +68,7 @@ There are three ways to use this project, from least to most integration effort.
 
 ### 1. Run the published container image as-is
 
-Deploy the base image directly — published to `ghcr.io/pokutuna/pi-chat-runner` on each tagged release (see `.github/workflows/docker-publish.yaml`) — e.g. to Cloud Run (see `examples/service.yaml`), and only supply config: `agent.yaml` (bridge-wide) and `channels.yaml` (per-channel triggers/prompts/models), plus a Slack App from one of the `examples/slack-app-manifest.*.yaml` templates. No image build required.
+Deploy the base image directly — published to `ghcr.io/pokutuna/pi-chat-runner` on each tagged release (see `.github/workflows/docker-publish.yaml`) — e.g. to Cloud Run (see `examples/service.yaml`), and only supply config: a single `agent.yaml` (connection/store/agent runtime + per-channel triggers/prompts/models), plus a Slack App from one of the `examples/slack-app-manifest.*.yaml` templates. No image build required.
 
 This gets you mention/keyword/classifier/reaction triggers, threaded replies, and persistence — but only the CLI tools baked into the base image (`git`/`curl`/`jq`/`ripgrep`/`fd`) and whatever skills/extensions ship in `skills/`/`extensions/` (empty by default).
 
@@ -123,12 +123,11 @@ import {
 } from "pi-chat-runner";
 
 const runner = new SessionRunner({
-  configSource: new FileConfigSource("./config"),
+  configSource: new FileConfigSource("./config/agent.yaml"),
   store: new InMemoryStateStore(), // or a SQLite/Firestore-backed StateStore
   router: new EgressRouter({ poster: myPoster, formatter: toMrkdwn }),
   reactions: new Reactions(myReactionClient),
   workdirStorage: myWorkdirStorage,
-  extensionPaths: [/* absolute paths to reply.ts / permission-gate.ts / export.ts */],
   mentionFormat: (userId) => `<@${userId}>`, // your platform's mention syntax
 });
 
@@ -136,18 +135,18 @@ const runner = new SessionRunner({
 await runner.handle(inboundMessage);
 ```
 
-`SessionRunner` owns gating, inbox/lease/dedupe, spawning pi, and steering — everything below the event source. You only need to normalize your incoming event into an `InboundMessage` (or reuse `SlackIngressAdapter` if the source is Slack) and supply a `ChatPoster` for replies. See `src/index.ts` for the full list of exported building blocks.
+`SessionRunner` owns gating, inbox/lease/dedupe, spawning pi, and steering — everything below the event source. The built-in extensions (`reply`/`permission-gate`/`export`) are resolved and injected by `SessionRunner` itself. You only need to normalize your incoming event into an `InboundMessage` (or reuse `SlackIngressAdapter` if the source is Slack) and supply a `ChatPoster` for replies. See `src/index.ts` for the full list of exported building blocks.
 
 Not published to npm yet (planned). Until then, clone this repo, run `pnpm install && pnpm build`, and reference it as a `file:` / workspace dependency — a bare git dependency won't work because `dist/` is built, not committed.
 
 ## Configuration
 
-Two YAML files, read from `CONFIG_DIR` (default `examples/config`):
+One YAML file, pointed at by `CONFIG_PATH` (default `examples/config/agent.yaml`; the filename is up to you):
 
-- **`agent.yaml`** — bridge-wide, read once at boot: Slack connector (mode/tokens), store backend, pi provider/timeout, agent runtime (UID separation, env passthrough to the pi child process). See [`examples/config/agent.yaml`](examples/config/agent.yaml) for an annotated template.
-- **`channels.yaml`** — per-channel behavior, re-read on every message (no restart needed): trigger gates, `systemPrompt`, `model`, `tools`/`excludeTools`, session mode. A single file listing all channels as an array, with a required `default` entry as the fallback. See [`examples/config/channels.yaml`](examples/config/channels.yaml) and the excerpt below.
+- **`connector` / `store` / `pi` / `agent` sections** — bridge-wide, read once at boot: Slack connector (mode/tokens), store backend, pi provider/timeout, agent runtime (UID separation, env passthrough to the pi child process). These sections support `${env.X}` / `${env.X:-default}` references to pull values from the process environment (secrets included).
+- **`channels` section** — per-channel behavior, re-read on every message (no restart needed): trigger gates, `systemPrompt`, `model`, `tools`/`excludeTools`, session mode. An array listing all channels, with a required `default` entry as the fallback. `systemPrompt`/`context` values starting with `./` are read as files relative to the config file's directory.
 
-Both support `${env.X}` / `${env.X:-default}` references to pull values from the process environment (secrets included). Full schema and semantics: [docs/design/config.md](docs/design/config.md).
+See [`examples/config/agent.yaml`](examples/config/agent.yaml) for an annotated template. Full schema and semantics: [docs/design/config.md](docs/design/config.md).
 
 ## Local Development
 
@@ -157,7 +156,7 @@ pnpm run dev:socket   # local dev, Socket Mode
 pnpm run dev          # Events API
 ```
 
-Set Slack credentials in `.env.socket` or `.env`. See [Configuration](#configuration) above for `agent.yaml`/`channels.yaml`; a `channels.yaml` excerpt:
+Set Slack credentials in `.env.socket` or `.env`. See [Configuration](#configuration) above for `agent.yaml`; a `channels` section excerpt:
 
 ```yaml
 channels:

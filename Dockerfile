@@ -80,7 +80,7 @@ COPY extensions ./extensions
 # COPY --chown=1001:1001 skills/ /home/agent/.pi/agent/skills/ と上書きできる
 COPY --chown=1001:1001 skills/ /home/agent/.pi/agent/skills/
 
-# CONFIG_DIR の既定 (server.ts) は相対パス "examples/config"。
+# CONFIG_PATH の既定 (server.ts) は相対パス "examples/config/agent.yaml"。
 # WORKDIR /app からの相対で解決できるようにここへ同梱する
 COPY examples/config ./examples/config
 

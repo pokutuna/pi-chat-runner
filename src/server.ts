@@ -153,11 +153,11 @@ function buildPiPermissionConfig(
   };
 }
 
-function missingConnectorConfig(configDir: string): never {
+function missingConnectorConfig(configPath: string): never {
   console.error("Missing or incomplete connector.slack config");
   console.error("");
   console.error(
-    `起動には ${configDir}/agent.yaml の connector.slack ブロックが必要です:`,
+    `起動には ${configPath} の connector.slack ブロックが必要です:`,
   );
   console.error("");
   console.error("connector:");
@@ -197,7 +197,7 @@ function missingConnectorConfig(configDir: string): never {
     "  PROGRESS_NOTICE_INTERVAL_MS  長時間ターンの進捗通知の間隔 ms (既定 30000。0 で無効化)",
   );
   console.error(
-    "  上記 PI_PROVIDER/TURN_TIMEOUT_MS/PROGRESS_NOTICE_INTERVAL_MS は CONFIG_DIR/agent.yaml の pi ブロックでも設定可 (env が優先)。pi へ渡す追加 env は agent.yaml の agent.env で明示列挙する",
+    "  上記 PI_PROVIDER/TURN_TIMEOUT_MS/PROGRESS_NOTICE_INTERVAL_MS は設定ファイル (CONFIG_PATH) の pi ブロックでも設定可 (env が優先)。pi へ渡す追加 env は agent.env で明示列挙する",
   );
   console.error("");
   console.error("例 (.env ファイル推奨):");
@@ -214,16 +214,16 @@ function missingConnectorConfig(configDir: string): never {
  * 無い、またはモード別必須項目が欠けている場合は fail-loud で使い方を表示して exit する。 */
 function buildConnector(
   slack: SlackConnectorConfig | undefined,
-  configDir: string,
+  configPath: string,
 ): { ingress: Ingress; botToken: string } {
   if (slack === undefined) {
-    missingConnectorConfig(configDir);
+    missingConnectorConfig(configPath);
   }
   const { mode, botToken, botUserId, port } = slack;
   switch (mode) {
     case "socket": {
       if (slack.appToken === undefined || slack.appToken === "") {
-        missingConnectorConfig(configDir);
+        missingConnectorConfig(configPath);
       }
       const ingress = new SocketIngress({
         appToken: slack.appToken,
@@ -233,7 +233,7 @@ function buildConnector(
     }
     case "events": {
       if (slack.signingSecret === undefined || slack.signingSecret === "") {
-        missingConnectorConfig(configDir);
+        missingConnectorConfig(configPath);
       }
       const ingress = new HttpIngress({
         signingSecret: slack.signingSecret,
@@ -253,7 +253,9 @@ function buildConnector(
 /** `dump <channel> [--json]` (config.md §6): bot を起動せず、あるチャンネルの
  * merge 済み実効設定を provenance 付きで表示して exit(0) する。resolveChannelConfig
  * (ランタイムと共有) をそのまま呼ぶ formatEffectiveConfig に委譲するだけで、
- * dump 専用の設定解決ロジックは持たない。例外時は stderr に出して exit(1)。 */
+ * dump 専用の設定解決ロジックは持たない。channels ブロックしか読まないため
+ * connector 等の secrets は解決されない (config.md §6)。例外時は stderr に出して
+ * exit(1)。 */
 async function runDump(argv: string[]): Promise<void> {
   const channelId = argv[3];
   if (channelId === undefined) {
@@ -261,10 +263,10 @@ async function runDump(argv: string[]): Promise<void> {
     process.exit(1);
   }
   const json = argv.includes("--json");
-  const configDir = process.env.CONFIG_DIR ?? "examples/config";
+  const configPath = process.env.CONFIG_PATH ?? DEFAULT_CONFIG_PATH;
 
   try {
-    const file = await loadChannelsFile(join(configDir, "channels.yaml"));
+    const file = await loadChannelsFile(configPath);
     console.log(formatEffectiveConfig(file, channelId, { json }));
     process.exit(0);
   } catch (err) {
@@ -273,28 +275,32 @@ async function runDump(argv: string[]): Promise<void> {
   }
 }
 
+/** 設定ファイル (単一 YAML) の既定パス。イメージには examples/config を同梱する
+ * (Dockerfile) ため、CONFIG_PATH 未設定でもサンプル設定で起動できる。 */
+const DEFAULT_CONFIG_PATH = "examples/config/agent.yaml";
+
 async function main() {
   if (process.argv[2] === "dump") {
     await runDump(process.argv);
     return;
   }
 
-  const configDir = process.env.CONFIG_DIR ?? "examples/config";
+  const configPath = process.env.CONFIG_PATH ?? DEFAULT_CONFIG_PATH;
 
-  // connector.slack (agent.yaml 内, ${env.X} 参照解決済み) を読む。SLACK_MODE 等の
+  // connector.slack (設定ファイル内, ${env.X} 参照解決済み) を読む。SLACK_MODE 等の
   // env 直読みはやめ、connector 経由に一本化する (connector-config.ts)
-  const connectorConfig = await loadConnectorConfig(configDir);
+  const connectorConfig = await loadConnectorConfig(configPath);
   const { ingress, botToken } = buildConnector(
     connectorConfig.slack,
-    configDir,
+    configPath,
   );
 
-  // store.backend/sqlitePath (agent.yaml 内, ${env.X} 参照解決済み) を読む。
+  // store.backend/sqlitePath (設定ファイル内, ${env.X} 参照解決済み) を読む。
   // STORE_BACKEND/SQLITE_PATH env 直読みはやめ、store 経由に一本化する (store-config.ts)
-  const storeConfig = await loadStoreConfig(configDir);
+  const storeConfig = await loadStoreConfig(configPath);
 
-  // agent.yaml (config.md §6) + env を解決する。優先順位は env > agent.yaml > コード既定
-  const agentConfigFile = await loadAgentConfig(configDir);
+  // pi/agent ブロック (config.md §6) + env を解決する。優先順位は env > 設定ファイル > コード既定
+  const agentConfigFile = await loadAgentConfig(configPath);
   const agentConfig = resolveAgentConfig(agentConfigFile, process.env);
   const { provider, turnTimeoutMs, progressNoticeIntervalMs, runtime } =
     agentConfig;
@@ -322,7 +328,7 @@ async function main() {
     {
       storeBackend: storeConfig.backend,
       workdirArchiveDir: archiveDir,
-      configDir,
+      configPath,
       slackMode: connectorConfig.slack?.mode,
     },
     "state store configured",
@@ -332,7 +338,7 @@ async function main() {
     eventSource: ingress,
     web,
     store,
-    configSource: new FileConfigSource(configDir),
+    configSource: new FileConfigSource(configPath),
     ...(provider !== undefined ? { provider } : {}),
     ...(Object.keys(extraEnv).length > 0 ? { extraEnv } : {}),
     // WORKDIR_ARCHIVE_DIR 未設定なら境界退避なし (Step 3 相当の挙動)

@@ -143,12 +143,12 @@ describe("loadAgentConfig", () => {
   });
 
   it("returns {} when agent.yaml does not exist", async () => {
-    expect(await loadAgentConfig(dir)).toEqual({});
+    expect(await loadAgentConfig(join(dir, "agent.yaml"))).toEqual({});
   });
 
   it("returns {} when agent.yaml contains only comments", async () => {
     await writeFile(join(dir, "agent.yaml"), "# just a comment\n");
-    expect(await loadAgentConfig(dir)).toEqual({});
+    expect(await loadAgentConfig(join(dir, "agent.yaml"))).toEqual({});
   });
 
   it("parses a valid agent.yaml", async () => {
@@ -156,19 +156,23 @@ describe("loadAgentConfig", () => {
       join(dir, "agent.yaml"),
       "pi:\n  provider: google-vertex\n",
     );
-    expect(await loadAgentConfig(dir)).toEqual({
+    expect(await loadAgentConfig(join(dir, "agent.yaml"))).toEqual({
       pi: { provider: "google-vertex" },
     });
   });
 
   it("throws with the file path for malformed YAML", async () => {
     await writeFile(join(dir, "agent.yaml"), "pi:\n  - broken: [\n");
-    await expect(loadAgentConfig(dir)).rejects.toThrow(/agent\.yaml/);
+    await expect(loadAgentConfig(join(dir, "agent.yaml"))).rejects.toThrow(
+      /agent\.yaml/,
+    );
   });
 
   it("throws with the file path and zod issue for schema violations", async () => {
     await writeFile(join(dir, "agent.yaml"), "pi:\n  unknownKey: 1\n");
-    await expect(loadAgentConfig(dir)).rejects.toThrow(/agent\.yaml/);
+    await expect(loadAgentConfig(join(dir, "agent.yaml"))).rejects.toThrow(
+      /agent\.yaml/,
+    );
   });
 
   it("resolves ${env.X} references in agent.env before schema validation", async () => {
@@ -179,7 +183,7 @@ describe("loadAgentConfig", () => {
     const original = process.env.TEST_GH_TOKEN;
     process.env.TEST_GH_TOKEN = "resolved-secret";
     try {
-      const config = await loadAgentConfig(dir);
+      const config = await loadAgentConfig(join(dir, "agent.yaml"));
       expect(config.agent?.env).toEqual({ GH_TOKEN: "resolved-secret" });
     } finally {
       if (original === undefined) delete process.env.TEST_GH_TOKEN;
@@ -193,7 +197,9 @@ describe("loadAgentConfig", () => {
       'agent:\n  env:\n    GH_TOKEN: "${env.TEST_UNSET_TOKEN_XYZ}"\n',
     );
     delete process.env.TEST_UNSET_TOKEN_XYZ;
-    await expect(loadAgentConfig(dir)).rejects.toThrow(/agent\.yaml/);
+    await expect(loadAgentConfig(join(dir, "agent.yaml"))).rejects.toThrow(
+      /agent\.yaml/,
+    );
   });
 });
 

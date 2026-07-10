@@ -4,8 +4,8 @@
 // 手書きの interface は並置せず、型は z.infer で導出する。
 // ただし trigger.when は再帰ブール木のため、循環を切るための型注釈のみ手書きする (§7)。
 //
-// YAML の gate は kind: で指定する (config.md §7)。channels.yaml はトップレベルで
-// { channels: [...] } の配列を持ち、先頭に default エントリを必須で置く (config.md §2)。
+// YAML の gate は kind: で指定する (config.md §7)。設定ファイルの channels ブロックは
+// { channels: [...] } の配列を持ち、default エントリを必須で置く (config.md §2)。
 
 import { z } from "zod";
 
@@ -117,7 +117,7 @@ export type ChannelDoc = z.infer<typeof ChannelDocSchema>;
 
 export type Trigger = z.infer<typeof TriggerSchema>;
 
-/** channels.yaml の 1 エントリ。ChannelDoc に「どのチャンネル向けか」を示す
+/** channels ブロックの 1 エントリ。ChannelDoc に「どのチャンネル向けか」を示す
  * `channel` フィールドを加えたもの (config.md §2)。channel は "#name" /
  * チャンネル ID、または予約名 "default" / "dm"。 */
 export const ChannelEntrySchema = ChannelDocSchema.extend({
@@ -126,8 +126,8 @@ export const ChannelEntrySchema = ChannelDocSchema.extend({
 
 export type ChannelEntry = z.infer<typeof ChannelEntrySchema>;
 
-/** channels.yaml 全体。配列で全チャンネルを 1 ファイルにまとめ、先頭に置くとは
- * 限らないが "default" エントリの存在を必須にする (config.md §2, §2.1)。 */
+/** channels ブロック全体。配列で全チャンネルをまとめ、先頭に置くとは限らないが
+ * "default" エントリの存在を必須にする (config.md §2, §2.1)。 */
 export const ChannelsFileSchema = z
   .object({ channels: z.array(ChannelEntrySchema).min(1) })
   .strict()
@@ -135,7 +135,7 @@ export const ChannelsFileSchema = z
     if (!file.channels.some((c) => c.channel === "default")) {
       ctx.addIssue({
         code: "custom",
-        message: 'channels.yaml must contain a "default" entry',
+        message: 'channels must contain a "default" entry',
         path: ["channels"],
       });
     }

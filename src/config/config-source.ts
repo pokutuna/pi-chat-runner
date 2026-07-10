@@ -5,18 +5,20 @@
 // 書き込む apply CLI は見送り中。本番設定を Firestore を実行時の正とする方式へ
 // 移す判断をしたら FirestoreConfigSource を追加する。
 //
-// channels.yaml は単一ファイルに全チャンネルを配列で並べる (config.md §2)。実行時は
-// 常に default (または DM は dm) + そのチャンネル固有エントリをマージした 1 つの
-// ChannelDoc で動く (§2.2 マージ)。マージはフィールド単位の丸ごと置換のみで、深いマージは
-// しない。
+// チャンネル設定は設定ファイル (単一 YAML, root-config.ts) の channels ブロックに
+// 全チャンネルを配列で並べる (config.md §2)。実行時は常に default (または DM は dm) +
+// そのチャンネル固有エントリをマージした 1 つの ChannelDoc で動く (§2.2 マージ)。
+// マージはフィールド単位の丸ごと置換のみで、深いマージはしない。
+//
+// channels ブロックは env 参照 (${env.X}) の解決を通らない — connector 等の secrets を
+// 含む他ブロックにも触れないため、dump (config.md §6) が secrets を解決せずに済む
+// 性質がこの経路で成立する。
 //
 // FileConfigSource は毎回読み直す (キャッシュしない)。ローカル用途なのでコストは無視できる。
 // これにより「YAML 編集 → 再起動なしで挙動が変わる」が file watch なしで成立する。
 
 import { readFile } from "node:fs/promises";
-import { isAbsolute, join } from "node:path";
-
-import { parse as parseYaml } from "yaml";
+import { dirname, isAbsolute, join } from "node:path";
 
 import {
   type ChannelDoc,
@@ -25,13 +27,12 @@ import {
   type ChannelsFile,
   ChannelsFileSchema,
 } from "./channel-doc.js";
+import { readRootConfig } from "./root-config.js";
 
-/** channels.yaml を id で解決し、実行時 ChannelDoc を返す抽象 (config.md §6)。 */
+/** channels ブロックを id で解決し、実行時 ChannelDoc を返す抽象 (config.md §6)。 */
 export interface ConfigSource {
   channel(id: string): Promise<ChannelDoc | null>;
 }
-
-const CHANNELS_FILE = "channels.yaml";
 
 /** channel フィールドの予約値。どの ID にも一致しなかったときの土台 (default) を指す。
  * Slack のチャンネル ID がこの文字列になることはないため衝突しない。
@@ -125,7 +126,7 @@ export function resolveChannelConfig(
       return null;
     }
     throw new Error(
-      `channels.yaml is missing the required "${DEFAULT_CHANNEL}" entry`,
+      `channels is missing the required "${DEFAULT_CHANNEL}" entry`,
     );
   }
 
@@ -138,62 +139,58 @@ export function resolveChannelConfig(
   return mergeWithProvenance(base, baseSource, own);
 }
 
-/** ローカル/お試し用の ConfigSource。config ディレクトリ (channels.yaml と prompts/ を
- * 含む親) を受け取り、apply を経ずに直接 YAML を読む (config.md §6)。 */
+/** ローカル/お試し用の ConfigSource。設定ファイル (単一 YAML) のパスを受け取り、
+ * apply を経ずに直接 channels ブロックを読む (config.md §6)。systemPrompt / context の
+ * ファイル参照 (./...) はこの YAML があるディレクトリからの相対で解決する。 */
 export class FileConfigSource implements ConfigSource {
-  constructor(private readonly configDir: string) {}
+  constructor(private readonly configPath: string) {}
 
   async channel(id: string): Promise<ChannelDoc | null> {
-    const filePath = join(this.configDir, CHANNELS_FILE);
-    const file = await loadChannelsFile(filePath);
+    const file = await loadChannelsFile(this.configPath);
 
     const resolved = resolveChannelConfig(file, id);
     if (resolved === null) {
       return null;
     }
-    return await resolveFileReferences(resolved.doc, filePath, this.configDir);
+    return await resolveFileReferences(
+      resolved.doc,
+      this.configPath,
+      dirname(this.configPath),
+    );
   }
 }
 
-/** channels.yaml を読み、YAML パース + strict 検証する。単一ファイルなので不在
- * (ENOENT) は設定ミスとして fail-loud で throw する。YAML 破損・schema 違反も
- * ファイルパス + zod issue 付きで throw する。server の通常経路 (FileConfigSource)
- * と dump (config.md §6) が同じローダを共有する — dump 専用の読み込みを持たない。 */
+/** 設定ファイルから channels ブロックを取り出し、strict 検証する。ファイル不在
+ * (ENOENT)・channels ブロック不在は設定ミスとして fail-loud で throw する。YAML 破損・
+ * schema 違反もファイルパス + zod issue 付きで throw する。server の通常経路
+ * (FileConfigSource) と dump (config.md §6) が同じローダを共有する — dump 専用の
+ * 読み込みを持たない。channels ブロックには env 参照 (${env.X}) の解決を適用しない
+ * (ファイル冒頭コメント参照)。 */
 export async function loadChannelsFile(
   filePath: string,
 ): Promise<ChannelsFile> {
-  let raw: string;
-  try {
-    raw = await readFile(filePath, "utf-8");
-  } catch (err) {
-    throw new Error(`failed to read channels file: ${filePath}`, {
-      cause: err,
-    });
+  const parsed = await readRootConfig(filePath);
+  if (parsed === undefined) {
+    throw new Error(`failed to read config file: ${filePath} (not found)`);
+  }
+  if (parsed.channels === undefined) {
+    throw new Error(`config file has no "channels" section: ${filePath}`);
   }
 
-  let parsed: unknown;
-  try {
-    parsed = parseYaml(raw);
-  } catch (err) {
-    throw new Error(`invalid YAML in channels file: ${filePath}`, {
-      cause: err,
-    });
-  }
-
-  const result = ChannelsFileSchema.safeParse(parsed);
+  const result = ChannelsFileSchema.safeParse({ channels: parsed.channels });
   if (!result.success) {
     const issues = result.error.issues
       .map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`)
       .join("\n");
-    throw new Error(`invalid channels file schema in ${filePath}:\n${issues}`);
+    throw new Error(`invalid channels schema in ${filePath}:\n${issues}`);
   }
   return result.data;
 }
 
-/** systemPrompt / context の値が "./" か "../" で始まる場合、config ディレクトリ
- * (channels.yaml と prompts/ を含む親) からの相対パスでファイルを読んでインライン化する
- * (config.md §6 の apply 時インライン化と同じ規則)。マージ後の doc に対して一括で適用する
- * — どのエントリ由来でも相対パスの起点は configDir で共通なため。 */
+/** systemPrompt / context の値が "./" か "../" で始まる場合、設定ファイルがある
+ * ディレクトリからの相対パスでファイルを読んでインライン化する (config.md §6)。
+ * マージ後の doc に対して一括で適用する — どのエントリ由来でも相対パスの起点は
+ * 設定ファイルの場所で共通なため。 */
 async function resolveFileReferences(
   doc: ChannelDoc,
   yamlFilePath: string,

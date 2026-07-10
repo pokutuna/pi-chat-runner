@@ -18,7 +18,9 @@ const FIXTURES_DIR = join(__dirname, "..", "fixtures");
 
 describe("FileConfigSource", () => {
   it("returns the matching channel doc by channel ID and inlines file references", async () => {
-    const source = new FileConfigSource(join(FIXTURES_DIR, "config"));
+    const source = new FileConfigSource(
+      join(FIXTURES_DIR, "config/channels.yaml"),
+    );
     const doc = await source.channel("C0000000001");
 
     expect(doc).not.toBeNull();
@@ -36,7 +38,9 @@ describe("FileConfigSource", () => {
   });
 
   it("matches by '#name' form as a plain string", async () => {
-    const source = new FileConfigSource(join(FIXTURES_DIR, "config"));
+    const source = new FileConfigSource(
+      join(FIXTURES_DIR, "config/channels.yaml"),
+    );
     const doc = await source.channel("#keyword-demo");
 
     expect(doc).not.toBeNull();
@@ -47,7 +51,9 @@ describe("FileConfigSource", () => {
   });
 
   it("merges into the 'default' doc when no channel entry matches", async () => {
-    const source = new FileConfigSource(join(FIXTURES_DIR, "config-default"));
+    const source = new FileConfigSource(
+      join(FIXTURES_DIR, "config-default/channels.yaml"),
+    );
     const doc = await source.channel("C_NOT_FOUND");
     expect(doc).not.toBeNull();
     expect(doc?.systemPrompt).toBe("default fallback prompt");
@@ -55,7 +61,9 @@ describe("FileConfigSource", () => {
   });
 
   it("merges the matching entry over 'default' (own keys win, unset inherit)", async () => {
-    const source = new FileConfigSource(join(FIXTURES_DIR, "config-default"));
+    const source = new FileConfigSource(
+      join(FIXTURES_DIR, "config-default/channels.yaml"),
+    );
     const doc = await source.channel("C0000000001");
     expect(doc?.systemPrompt).toBe("specific channel prompt");
     expect(doc?.model).toBe("gemini-default");
@@ -64,19 +72,25 @@ describe("FileConfigSource", () => {
   it("does not fall back to the 'default' doc for the reserved DM name", async () => {
     // default doc は通常チャンネル向けの土台。dm エントリが無ければ DM は passthrough に
     // 落ちる必要があり、default を継承してはいけない (config.md §2.2)
-    const source = new FileConfigSource(join(FIXTURES_DIR, "config-default"));
+    const source = new FileConfigSource(
+      join(FIXTURES_DIR, "config-default/channels.yaml"),
+    );
     const doc = await source.channel("dm");
     expect(doc).toBeNull();
   });
 
   it("returns the 'dm' doc by exact match when present", async () => {
-    const source = new FileConfigSource(join(FIXTURES_DIR, "config-dm"));
+    const source = new FileConfigSource(
+      join(FIXTURES_DIR, "config-dm/channels.yaml"),
+    );
     const doc = await source.channel("dm");
     expect(doc?.systemPrompt).toBe("dm prompt");
   });
 
   it("passes tools/excludeTools through from the channel doc", async () => {
-    const source = new FileConfigSource(join(FIXTURES_DIR, "config-tools"));
+    const source = new FileConfigSource(
+      join(FIXTURES_DIR, "config-tools/channels.yaml"),
+    );
     const doc = await source.channel("C0000000TOOLS");
 
     expect(doc?.tools).toEqual(["read", "grep"]);
@@ -84,7 +98,9 @@ describe("FileConfigSource", () => {
   });
 
   it("passes session/reply through from the channel doc", async () => {
-    const source = new FileConfigSource(join(FIXTURES_DIR, "config-tools"));
+    const source = new FileConfigSource(
+      join(FIXTURES_DIR, "config-tools/channels.yaml"),
+    );
     const doc = await source.channel("C0000000TOOLS");
 
     expect(doc?.session).toEqual({ mode: "channel", idleResetMinutes: 30 });
@@ -92,21 +108,35 @@ describe("FileConfigSource", () => {
   });
 
   it("merges into 'default' when no entry matches (non-null)", async () => {
-    const source = new FileConfigSource(join(FIXTURES_DIR, "config"));
+    const source = new FileConfigSource(
+      join(FIXTURES_DIR, "config/channels.yaml"),
+    );
     const doc = await source.channel("C_NOT_FOUND");
     expect(doc).not.toBeNull();
     expect(doc?.trigger?.when).toEqual([{ kind: "mention" }]);
   });
 
-  it("throws when channels.yaml does not exist", async () => {
-    const source = new FileConfigSource(join(FIXTURES_DIR, "does-not-exist"));
-    await expect(source.channel("C0000000001")).rejects.toThrow(
-      /channels\.yaml/,
+  it("throws when the config file does not exist", async () => {
+    const source = new FileConfigSource(
+      join(FIXTURES_DIR, "does-not-exist/agent.yaml"),
     );
+    await expect(source.channel("C0000000001")).rejects.toThrow(/not found/);
+  });
+
+  it("ignores sibling sections (connector/store/pi) and their env refs", async () => {
+    // 単一ファイル config では connector 等の secrets を含むブロックが同居するが、
+    // channels の読み込みはそれらに触れない (${env.X} が未設定でも throw しない)
+    const source = new FileConfigSource(
+      join(FIXTURES_DIR, "config-single-file/agent.yaml"),
+    );
+    const doc = await source.channel("C_NOT_FOUND");
+    expect(doc?.systemPrompt).toBe("single-file default prompt");
   });
 
   it("throws with file name and zod issue for schema violations", async () => {
-    const source = new FileConfigSource(join(FIXTURES_DIR, "config-invalid"));
+    const source = new FileConfigSource(
+      join(FIXTURES_DIR, "config-invalid/channels.yaml"),
+    );
     await expect(source.channel("C0000000009")).rejects.toThrow(
       /channels\.yaml/,
     );
@@ -114,14 +144,14 @@ describe("FileConfigSource", () => {
 
   it("throws for malformed YAML", async () => {
     const source = new FileConfigSource(
-      join(FIXTURES_DIR, "config-malformed-yaml"),
+      join(FIXTURES_DIR, "config-malformed-yaml/channels.yaml"),
     );
     await expect(source.channel("C1")).rejects.toThrow(/channels\.yaml/);
   });
 
   it("throws when a referenced file is missing", async () => {
     const source = new FileConfigSource(
-      join(FIXTURES_DIR, "config-missing-ref"),
+      join(FIXTURES_DIR, "config-missing-ref/channels.yaml"),
     );
     await expect(source.channel("C0000000002")).rejects.toThrow(
       /does-not-exist\.md/,
@@ -129,7 +159,9 @@ describe("FileConfigSource", () => {
   });
 
   it("re-reads from disk on every call (no caching)", async () => {
-    const source = new FileConfigSource(join(FIXTURES_DIR, "config"));
+    const source = new FileConfigSource(
+      join(FIXTURES_DIR, "config/channels.yaml"),
+    );
     const first = await source.channel("C0000000001");
     const second = await source.channel("C0000000001");
     expect(first).toEqual(second);

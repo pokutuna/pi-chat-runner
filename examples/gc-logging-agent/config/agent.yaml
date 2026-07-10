@@ -24,3 +24,17 @@ agent:
   runtime:
     permissionMode: ${env.PI_PERMISSION_MODE:-true}
     home: ${env.PI_AGENT_HOME:-/home/agent}
+
+channels:
+  - channel: "default"
+    model: gemini-3.5-flash
+    systemPrompt: ./prompts/gc-logging.md
+    trigger:
+      when:
+        - kind: mention
+
+  - channel: "C0000000001" # replace with your channel ID
+    systemPrompt: ./prompts/gc-logging.md
+    trigger:
+      when:
+        - kind: mention

@@ -1,0 +1,25 @@
+# Single-file config fixture: channels loading must not touch sibling sections
+# (their ${env.X} refs would throw if resolved).
+connector:
+  slack:
+    mode: socket
+    appToken: ${env.UNSET_FIXTURE_APP_TOKEN}
+    botToken: ${env.UNSET_FIXTURE_BOT_TOKEN}
+    botUserId: ${env.UNSET_FIXTURE_BOT_USER_ID}
+
+store:
+  backend: ${env.UNSET_FIXTURE_STORE_BACKEND:-memory}
+
+pi:
+  provider: ${env.UNSET_FIXTURE_PROVIDER}
+
+agent:
+  env:
+    SECRET: ${env.UNSET_FIXTURE_SECRET}
+
+channels:
+  - channel: "default"
+    systemPrompt: "single-file default prompt"
+    trigger:
+      when:
+        - kind: mention
