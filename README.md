@@ -138,6 +138,8 @@ await runner.handle(inboundMessage);
 
 `SessionRunner` owns gating, inbox/lease/dedupe, spawning pi, and steering — everything below the event source. You only need to normalize your incoming event into an `InboundMessage` (or reuse `SlackIngressAdapter` if the source is Slack) and supply a `ChatPoster` for replies. See `src/index.ts` for the full list of exported building blocks.
 
+Not published to npm yet (planned). Until then, clone this repo, run `pnpm install && pnpm build`, and reference it as a `file:` / workspace dependency — a bare git dependency won't work because `dist/` is built, not committed.
+
 ## Configuration
 
 Two YAML files, read from `CONFIG_DIR` (default `examples/config`):
