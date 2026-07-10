@@ -60,6 +60,8 @@ const CHANNEL_DOC_KEYS = [
   "model",
   "tools",
   "excludeTools",
+  "skills",
+  "extensions",
   "session",
   "reply",
 ] as const satisfies readonly (keyof ChannelDoc)[];
@@ -189,6 +191,8 @@ export async function loadChannelsFile(
 
 /** systemPrompt / context の値が "./" か "../" で始まる場合、設定ファイルがある
  * ディレクトリからの相対パスでファイルを読んでインライン化する (config.md §6)。
+ * skills / extensions の相対パスは内容を読まず、同じ基準で絶対パス化だけする —
+ * pi の cwd は workdir なので相対のまま渡すと基準がズレる (runner.ts kick)。
  * マージ後の doc に対して一括で適用する — どのエントリ由来でも相対パスの起点は
  * 設定ファイルの場所で共通なため。 */
 async function resolveFileReferences(
@@ -210,10 +214,17 @@ async function resolveFileReferences(
         )
       : undefined;
 
+  const skills = doc.skills?.map((path) => absolutizePathRef(path, baseDir));
+  const extensions = doc.extensions?.map((path) =>
+    absolutizePathRef(path, baseDir),
+  );
+
   const resolved: ChannelDoc = {
     ...doc,
     ...(systemPrompt !== undefined ? { systemPrompt } : {}),
     ...(context !== undefined ? { context } : {}),
+    ...(skills !== undefined ? { skills } : {}),
+    ...(extensions !== undefined ? { extensions } : {}),
   };
 
   // インライン化後の doc が実行時スキーマの形を守っていることの保証として再度 strict 検証する。
@@ -228,6 +239,12 @@ async function resolveFileReferences(
 
 function isFileRef(value: string): boolean {
   return value.startsWith("./") || value.startsWith("../");
+}
+
+/** skills / extensions のパス参照を絶対パス化する。相対 (./ ../) は設定ファイルの
+ * ディレクトリ基準。裸の相対パスは PathRefSchema (channel-doc.ts) が弾いている。 */
+function absolutizePathRef(value: string, baseDir: string): string {
+  return isAbsolute(value) ? value : join(baseDir, value);
 }
 
 async function inlineIfFileRef(

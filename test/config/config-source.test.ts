@@ -116,6 +116,34 @@ describe("FileConfigSource", () => {
     expect(doc?.trigger?.when).toEqual([{ kind: "mention" }]);
   });
 
+  it("absolutizes skills/extensions relative refs from the config file's directory", async () => {
+    const source = new FileConfigSource(
+      join(FIXTURES_DIR, "config-paths/channels.yaml"),
+    );
+    const doc = await source.channel("C0000000PATHS");
+
+    // ./ は設定ファイルの dir 基準で絶対化、絶対パスはそのまま (内容は読まない)
+    expect(doc?.skills).toEqual([
+      join(FIXTURES_DIR, "config-paths/skills/local-skill"),
+      "/app/skills/baked-skill",
+    ]);
+    expect(doc?.extensions).toEqual([
+      join(FIXTURES_DIR, "config-paths/extensions/local-ext.ts"),
+      "/app/extensions/baked-ext.ts",
+    ]);
+  });
+
+  it("rejects bare relative paths (no ./ prefix) in skills/extensions", () => {
+    // 裸の相対パスは基準が曖昧 (config dir か workdir か) なので schema で弾く
+    const result = ChannelsFileSchema.safeParse({
+      channels: [
+        { channel: "default" },
+        { channel: "C1", skills: ["skills/foo"] },
+      ],
+    });
+    expect(result.success).toBe(false);
+  });
+
   it("throws when the config file does not exist", async () => {
     const source = new FileConfigSource(
       join(FIXTURES_DIR, "does-not-exist/agent.yaml"),

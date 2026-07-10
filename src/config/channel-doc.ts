@@ -7,7 +7,24 @@
 // YAML の gate は kind: で指定する (config.md §7)。設定ファイルの channels ブロックは
 // { channels: [...] } の配列を持ち、default エントリを必須で置く (config.md §2)。
 
+import { isAbsolute } from "node:path";
+
 import { z } from "zod";
+
+/** skills / extensions に書けるパス。絶対パス、または設定ファイルの場所からの
+ * 相対 (./ か ../ 始まり) のみ (config.md §2)。裸の相対パス ("foo/bar") は
+ * 基準ディレクトリが曖昧になるため schema で弾く。相対パスの絶対化は
+ * ConfigSource (config-source.ts resolveFileReferences) が行う。 */
+const PathRefSchema = z
+  .string()
+  .refine(
+    (value) =>
+      isAbsolute(value) || value.startsWith("./") || value.startsWith("../"),
+    {
+      message:
+        'path must be absolute or start with "./" (relative to the config file)',
+    },
+  );
 
 /** Gate の種別ごとに要るパラメータだけを refinement で強制する (config.md §7)。
  * keyword は pattern 必須、classifier は criteria 必須、reaction は emoji 必須
@@ -94,6 +111,17 @@ export const ChannelDocSchema = z
     tools: z.array(z.string()).optional(),
     /** pi の --exclude-tools に渡す denylist */
     excludeTools: z.array(z.string()).optional(),
+    /** チャンネル別に追加ロードする skill。pi の --skill にそのまま渡す
+     * (SKILL.md を直接含む単体 skill dir でも、複数 skill を束ねた親 dir でも
+     * よい — pi が再帰発見する)。$AGENT_HOME/.pi/agent/skills/ の自動発見分
+     * (全チャンネル共通) への追加 (additive) であり、共通分を外す手段ではない
+     * (config.md §2) */
+    skills: z.array(PathRefSchema).optional(),
+    /** チャンネル別に追加ロードする extension (.ts/.js のファイルパス。pi の
+     * --extension はディレクトリを受けない)。常時注入の組み込み
+     * (reply/permission-gate/export) と $AGENT_HOME/.pi/agent/extensions/ の
+     * 自動列挙分への追加 (additive) (config.md §2) */
+    extensions: z.array(PathRefSchema).optional(),
     /** セッション (文脈) の単位。session-model.md §3 */
     session: z
       .object({

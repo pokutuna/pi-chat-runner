@@ -65,7 +65,7 @@ describe("buildPiArgs", () => {
       provider: "google-vertex",
       model: "gemini-2.5-flash-lite",
       appendSystemPrompt: "thread_key is t1",
-      skillPath: "/app/skills",
+      skillPaths: ["/app/skills/gc-logging", "/app/skills/reporting"],
     });
     expect(args).toContain("--provider");
     expect(args[args.indexOf("--provider") + 1]).toBe("google-vertex");
@@ -73,7 +73,14 @@ describe("buildPiArgs", () => {
     expect(args[args.indexOf("--append-system-prompt") + 1]).toBe(
       "thread_key is t1",
     );
-    expect(args[args.indexOf("--skill") + 1]).toBe("/app/skills");
+    // --skill は複数回展開される (pi 側で additive)
+    const skillIndices = args
+      .map((arg, i) => (arg === "--skill" ? i : -1))
+      .filter((i) => i >= 0);
+    expect(skillIndices.map((i) => args[i + 1])).toEqual([
+      "/app/skills/gc-logging",
+      "/app/skills/reporting",
+    ]);
   });
 
   it("passes the ADC marker as --api-key only for google-vertex", () => {

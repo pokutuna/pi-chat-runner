@@ -154,6 +154,20 @@ function buildFields(
       source: sourceLabel(provenance.excludeTools ?? "default"),
     });
   }
+  if (doc.skills !== undefined) {
+    fields.push({
+      label: "skills",
+      value: `[${doc.skills.join(", ")}]`,
+      source: sourceLabel(provenance.skills ?? "default"),
+    });
+  }
+  if (doc.extensions !== undefined) {
+    fields.push({
+      label: "extensions",
+      value: `[${doc.extensions.join(", ")}]`,
+      source: sourceLabel(provenance.extensions ?? "default"),
+    });
+  }
 
   const policy = resolveSessionPolicy(doc, isDm);
   fields.push({

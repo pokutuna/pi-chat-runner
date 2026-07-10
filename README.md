@@ -103,6 +103,12 @@ COPY --chown=1001:1001 skills/ /home/agent/.pi/agent/skills/
 # is passed to pi's --extension automatically (in addition to the runner's
 # own reply/permission-gate/export extensions, which are always injected)
 COPY --chown=1001:1001 extensions/ /home/agent/.pi/agent/extensions/
+
+# Per-channel skills/extensions: bake them OUTSIDE the auto-discovery paths
+# and reference them from agent.yaml (channels[].skills / .extensions):
+#   - channel: "C0000000001"
+#     skills: [/app/skills/gc-logging]
+COPY --chown=1001:1001 channel-skills/ /app/skills/
 ```
 
 Runtime user is uid/gid `1001` (`agent`) when UID separation is enabled (`PI_AGENT_UID`/`PI_AGENT_GID`), so `--chown=1001:1001` keeps files writable/readable by the process that actually runs pi.
@@ -144,7 +150,7 @@ Not published to npm yet (planned). Until then, clone this repo, run `pnpm insta
 One YAML file, pointed at by `CONFIG_PATH` (default `examples/config/agent.yaml`; the filename is up to you):
 
 - **`connector` / `store` / `pi` / `agent` sections** — bridge-wide, read once at boot: Slack connector (mode/tokens), store backend, pi provider/timeout, agent runtime (UID separation, env passthrough to the pi child process). These sections support `${env.X}` / `${env.X:-default}` references to pull values from the process environment (secrets included).
-- **`channels` section** — per-channel behavior, re-read on every message (no restart needed): trigger gates, `systemPrompt`, `model`, `tools`/`excludeTools`, session mode. An array listing all channels, with a required `default` entry as the fallback. `systemPrompt`/`context` values starting with `./` are read as files relative to the config file's directory.
+- **`channels` section** — per-channel behavior, re-read on every message (no restart needed): trigger gates, `systemPrompt`, `model`, `tools`/`excludeTools`, session mode, and per-channel `skills`/`extensions` (paths to image-baked skills/extensions, loaded in addition to the common ones under `$AGENT_HOME/.pi/agent/`). An array listing all channels, with a required `default` entry as the fallback. `systemPrompt`/`context` values starting with `./` are read as files relative to the config file's directory; relative `skills`/`extensions` paths resolve from there too.
 
 See [`examples/config/agent.yaml`](examples/config/agent.yaml) for an annotated template. Full schema and semantics: [docs/design/config.md](docs/design/config.md).
 

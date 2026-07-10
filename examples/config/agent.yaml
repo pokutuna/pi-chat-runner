@@ -84,6 +84,16 @@ channels:
     trigger:
       when:
         - kind: mention
+    # Per-channel skills/extensions — loaded IN ADDITION to the common ones
+    # under $AGENT_HOME/.pi/agent/ (which pi auto-discovers for every channel).
+    # Paths must be absolute or start with ./ (relative to this file); they
+    # should point at files baked into the image. A skills entry may be a
+    # single skill dir (containing SKILL.md) or a parent dir of many skills.
+    # UNCOMMENT to enable:
+    # skills:
+    #   - /app/skills/gc-logging
+    # extensions:
+    #   - /app/extensions/bq-runner.ts
 
   - channel: "C0000000003" # REPLACE: your channel ID
     # Classifier demo: judges every message, no mention needed. Only

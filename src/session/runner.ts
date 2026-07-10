@@ -126,6 +126,37 @@ function resolveBuiltinExtensionPaths(): string[] {
   );
 }
 
+/** チャンネル別の追加 skill / extension パス (ChannelDoc.skills / .extensions,
+ * config.md §2) を検証し realpath で正規化する。イメージに焼き込んだパスを指す
+ * 想定なので、実在しないパスは設定ミスとして fail-loud で throw する。
+ * extension は pi の --extension がディレクトリを受けないため .ts/.js に限る。 */
+async function resolveChannelResourcePaths(
+  paths: string[] | undefined,
+  kind: "skills" | "extensions",
+): Promise<string[]> {
+  if (paths === undefined || paths.length === 0) return [];
+  return await Promise.all(
+    paths.map(async (path) => {
+      if (
+        kind === "extensions" &&
+        !path.endsWith(".ts") &&
+        !path.endsWith(".js")
+      ) {
+        throw new Error(
+          `channel extensions entry must be a .ts/.js file: ${path}`,
+        );
+      }
+      try {
+        return await realpath(path);
+      } catch (err) {
+        throw new Error(`channel ${kind} path not found: ${path}`, {
+          cause: err,
+        });
+      }
+    }),
+  );
+}
+
 /** Node Permission Model 有効化の静的パラメタ (session-runtime.md §6)。
  * workdir / home はセッションごとに決まるため kick 時に buildPiPermissionOptions
  * へ都度渡す — ここに載るのはイメージ内で固定のパスだけ */
@@ -1076,7 +1107,23 @@ export class SessionRunner {
           .map((name) => join(agentExtensionsDir, name)),
       )
       .catch(() => []);
-    const extensionPaths = [...this.extensionPaths, ...agentExtensionFiles];
+    // チャンネル別の追加 skill / extension (config.md §2)。相対パスは ConfigSource が
+    // 設定ファイル基準で絶対化済み。イメージに焼いたパスを指す想定なので、存在しなければ
+    // 設定ミスとして fail-loud で落とす (黙って無効のまま動くと「skill が効かない」の
+    // 調査が辛い)。realpath は workdir/HOME と同じ理由 (macOS /tmp symlink) の正規化
+    const channelSkillPaths = await resolveChannelResourcePaths(
+      doc?.skills,
+      "skills",
+    );
+    const channelExtensionFiles = await resolveChannelResourcePaths(
+      doc?.extensions,
+      "extensions",
+    );
+    const extensionPaths = [
+      ...this.extensionPaths,
+      ...agentExtensionFiles,
+      ...channelExtensionFiles,
+    ];
 
     const model = doc?.model;
     // 常に HOME を agentHome に上書きする (Runner 自身の HOME は継承しない)。
@@ -1108,6 +1155,9 @@ export class SessionRunner {
               : {}),
             extraRead: [
               ...extensionReadDirs.map((dir) => `${dir}/*`),
+              // skill は pi がディレクトリごと再帰で読む (SKILL.md 探索 + 参照
+              // ファイル)。readdir にディレクトリ自体の read も要るため両方許可する
+              ...channelSkillPaths.flatMap((dir) => [dir, `${dir}/*`]),
               ...(this.piPermission.extraRead ?? []),
             ],
           })
@@ -1127,6 +1177,9 @@ export class SessionRunner {
       ...(doc?.tools !== undefined ? { tools: doc.tools } : {}),
       ...(doc?.excludeTools !== undefined
         ? { excludeTools: doc.excludeTools }
+        : {}),
+      ...(channelSkillPaths.length > 0
+        ? { skillPaths: channelSkillPaths }
         : {}),
       ...(extraEnv !== undefined ? { extraEnv } : {}),
       ...(this.agentUid !== undefined ? { uid: this.agentUid } : {}),

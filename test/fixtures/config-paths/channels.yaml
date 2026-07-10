@@ -1,0 +1,15 @@
+# skills / extensions path resolution fixture: relative refs resolve from this
+# file's directory; absolute paths pass through untouched.
+channels:
+  - channel: "default"
+    trigger:
+      when:
+        - kind: mention
+
+  - channel: "C0000000PATHS"
+    skills:
+      - ./skills/local-skill
+      - /app/skills/baked-skill
+    extensions:
+      - ./extensions/local-ext.ts
+      - /app/extensions/baked-ext.ts

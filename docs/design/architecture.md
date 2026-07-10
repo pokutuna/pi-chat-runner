@@ -138,10 +138,11 @@ interface ChannelDoc {
   model?: string;                  // 省略時はコード既定
   tools?: string[];                // pi --tools の allowlist
   excludeTools?: string[];         // pi --exclude-tools の denylist
+  skills?: string[];               // チャンネル別に追加する skill のパス (pi --skill、additive。[config.md](config.md) §2)
+  extensions?: string[];           // チャンネル別に追加する extension (.ts/.js) のパス (pi --extension、additive)
   session?: { mode?: "thread" | "channel"; idleResetMinutes?: number; maxTranscriptKb?: number };
   reply?: { mode?: "thread" | "flat" };
-  // 将来拡張: image (チャンネル特化イメージ = 別サービス化とセット) /
-  //          skills, mcpServers (イメージ manifest + 有効化選択とセット) — [config.md](config.md) §2
+  // 将来拡張: image (チャンネル特化イメージ = 別サービス化とセット) / mcpServers — [config.md](config.md) §2
 }
 
 // channels/{channelId}/sessions/{threadTs}

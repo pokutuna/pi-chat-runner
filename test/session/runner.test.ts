@@ -338,6 +338,53 @@ describe("SessionRunner (fake-pi integration)", () => {
     await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
   });
 
+  it("channel skills/extensions are passed to pi as --skill / --extension (additive)", async () => {
+    // チャンネル別の追加 skill / extension (config.md §2)。実在するパスを用意し、
+    // fake-pi の argv に反映されることを確認する
+    const resourceRoot = await mkdtemp(
+      join(tmpdir(), "pi-chat-runner-test-resources-"),
+    );
+    const skillDir = join(resourceRoot, "skills", "gc-logging");
+    await mkdir(skillDir, { recursive: true });
+    await writeFile(join(skillDir, "SKILL.md"), "# gc-logging\n");
+    const extensionFile = join(resourceRoot, "extensions", "extra.ts");
+    await mkdir(join(resourceRoot, "extensions"), { recursive: true });
+    await writeFile(extensionFile, "export default () => {};\n");
+
+    const h = await harness({
+      C01: { skills: [skillDir], extensions: [extensionFile] },
+    });
+    const trigger = message({ mentionsBot: true, text: "hello" });
+    await h.runner.handle(trigger);
+    await waitFor(() => h.poster.calls.length === 1, "reply posted");
+
+    const argv = await h.argvSeen("C01", trigger.id);
+    const skillDirReal = await realpath(skillDir);
+    const extensionFileReal = await realpath(extensionFile);
+    expect(argv[argv.indexOf("--skill") + 1]).toBe(skillDirReal);
+    // 組み込み extension (reply 等) に加えてチャンネル別 extension も渡る
+    const extensionArgs = argv
+      .map((arg, i) => (arg === "--extension" ? argv[i + 1] : null))
+      .filter((v): v is string => v !== null);
+    expect(extensionArgs).toContain(extensionFileReal);
+    expect(extensionArgs.some((path) => path.endsWith("/reply.ts"))).toBe(true);
+  });
+
+  it("a nonexistent channel skills path fails the kick loudly", async () => {
+    const h = await harness({
+      C01: { skills: ["/does/not/exist/skill"] },
+    });
+    const trigger = message({ mentionsBot: true, text: "hello" });
+    await h.runner.handle(trigger);
+
+    // 黙って skill 抜きで動かず、kick 自体が失敗としてログに残る
+    await waitFor(
+      () => h.logLines().some((l) => l.msg === "session kick failed"),
+      "kick failure logged",
+    );
+    expect(h.poster.calls).toEqual([]);
+  });
+
   it("when every reply file escapes the workdir, files is omitted (raw relative paths are not leaked)", async () => {
     const h = await harness();
     const trigger = message({ mentionsBot: true, text: "ALL_ESCAPE_FILES" });

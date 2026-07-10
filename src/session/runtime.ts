@@ -62,8 +62,9 @@ export interface PiProcessOptions {
   model?: string;
   /** `--append-system-prompt` */
   appendSystemPrompt?: string;
-  /** 追加の `--skill` パス */
-  skillPath?: string;
+  /** 追加の `--skill` パス群 (ChannelDoc.skills、絶対パス)。pi の --skill は
+   * 複数回受け付け、$AGENT_HOME/.pi/agent/skills/ の自動発見に対して additive */
+  skillPaths?: string[];
   /** `--tools` allowlist (channel ごとの ChannelDoc.tools)。extension ツール
    * (reply 含む) にも適用されるため、buildPiArgs が reply を自動補完する。
    * 未指定または空配列ならフラグを渡さない (全ツール有効の現状動作) */
@@ -94,7 +95,7 @@ export function buildPiArgs(
     | "provider"
     | "model"
     | "appendSystemPrompt"
-    | "skillPath"
+    | "skillPaths"
     | "tools"
     | "excludeTools"
   >,
@@ -120,7 +121,8 @@ export function buildPiArgs(
   if (options.model) args.push("--model", options.model);
   if (options.appendSystemPrompt)
     args.push("--append-system-prompt", options.appendSystemPrompt);
-  if (options.skillPath) args.push("--skill", options.skillPath);
+  for (const skillPath of options.skillPaths ?? [])
+    args.push("--skill", skillPath);
   // --tools は extension ツールにも効くため、reply が落ちると返信経路
   // (config.md §5 の常時注入方針) が壊れる。allowlist を指定するチャンネルでも
   // reply だけは黙って補ってしまい、excludeTools に reply を書いても無視する

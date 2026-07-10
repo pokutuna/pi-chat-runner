@@ -275,14 +275,18 @@ FROM ghcr.io/<org>/<base-image>:latest
 # 1. 追加パッケージ (このチャンネル群に要る CLI)
 RUN apt-get update && apt-get install -y kubectl google-cloud-cli \
   && rm -rf /var/lib/apt/lists/*
-# 2. skill (pi 既定パス規約: $AGENT_HOME/.pi/agent/skills/)
+# 2. 共通 skill (pi 既定パス規約: $AGENT_HOME/.pi/agent/skills/。全チャンネルで有効)
 COPY --chown=1001:1001 skills/ /home/agent/.pi/agent/skills/
-# 3. (将来) 追加 extension: /app/extensions/
+# 3. 共通 extension ($AGENT_HOME/.pi/agent/extensions/ 直下の .ts/.js を Runner が注入)
+COPY --chown=1001:1001 extensions/ /home/agent/.pi/agent/extensions/
+# 4. チャンネル別 skill / extension: 自動発見されないパス (例 /app/skills/) に焼き、
+#    agent.yaml の channels (skills / extensions) からパスで参照する (config.md §2)
+COPY --chown=1001:1001 channel-skills/ /app/skills/
 ```
 
-規約は「`$AGENT_HOME/.pi/agent/skills/` に置けば pi が自動で読む (Runner の `--skill`
-配線は無い。config.md §6)」「`/app/extensions/` は将来 extension
-追加用」の 2 つだけ。ONBUILD や独自のビルドステージ機構は導入しない —
+規約は「`$AGENT_HOME/.pi/agent/skills|extensions/` に置けば全チャンネル共通で有効
+(config.md §3)」「チャンネル別はそれ以外の場所に焼いて channels の `skills` /
+`extensions` でパス参照 (config.md §2)」の 2 つだけ。ONBUILD や独自のビルドステージ機構は導入しない —
 暗黙の動作は Dockerfile を読んでも分からず、デバッグを難しくする。
 `npx <cli> init` が上記テンプレート Dockerfile と channels/ の雛形を生成する
 (scaffold) ことで「書き方が分からない」問題の方を解決する。
