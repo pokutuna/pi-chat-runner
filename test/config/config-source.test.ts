@@ -1,4 +1,4 @@
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { describe, expect, it } from "vitest";
@@ -131,6 +131,22 @@ describe("FileConfigSource", () => {
       join(FIXTURES_DIR, "config-paths/extensions/local-ext.ts"),
       "/app/extensions/baked-ext.ts",
     ]);
+  });
+
+  it("absolutizes skills refs even when the config path itself is relative", async () => {
+    // CONFIG_PATH が相対パス (例 develop/config/agent.yaml) のとき baseDir も
+    // 相対になる。join では相対のまま残り再検証で落ちるため、cwd 基準まで
+    // resolve で絶対化する (実運用で踏んだ回帰)
+    const relativePath = relative(
+      process.cwd(),
+      join(FIXTURES_DIR, "config-paths/channels.yaml"),
+    );
+    const source = new FileConfigSource(relativePath);
+    const doc = await source.channel("C0000000PATHS");
+    expect(doc?.skills?.[0]).toBe(
+      join(FIXTURES_DIR, "config-paths/skills/local-skill"),
+    );
+    expect(isAbsolute(doc?.skills?.[0] ?? "")).toBe(true);
   });
 
   it("rejects bare relative paths (no ./ prefix) in skills/extensions", () => {

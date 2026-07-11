@@ -18,7 +18,7 @@
 // これにより「YAML 編集 → 再起動なしで挙動が変わる」が file watch なしで成立する。
 
 import { readFile } from "node:fs/promises";
-import { dirname, isAbsolute, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import {
   type ChannelDoc,
@@ -242,9 +242,11 @@ function isFileRef(value: string): boolean {
 }
 
 /** skills / extensions のパス参照を絶対パス化する。相対 (./ ../) は設定ファイルの
- * ディレクトリ基準。裸の相対パスは PathRefSchema (channel-doc.ts) が弾いている。 */
+ * ディレクトリ基準。裸の相対パスは PathRefSchema (channel-doc.ts) が弾いている。
+ * CONFIG_PATH 自体が相対パスのとき baseDir も相対になるため、join ではなく
+ * resolve で cwd 基準まで絶対化する (join だと相対のままになり再検証で落ちる)。 */
 function absolutizePathRef(value: string, baseDir: string): string {
-  return isAbsolute(value) ? value : join(baseDir, value);
+  return isAbsolute(value) ? value : resolve(baseDir, value);
 }
 
 async function inlineIfFileRef(
