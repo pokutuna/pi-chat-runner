@@ -24,11 +24,20 @@ describe("ChannelDocSchema", () => {
           { kind: "passthrough" },
         ],
         debounceSec: 30,
-        cooldownSec: 60,
       },
       model: "gemini-3-pro",
     });
     expect(result.success).toBe(true);
+  });
+
+  it("rejects cooldownSec inside trigger (implementation deferred)", () => {
+    const result = ChannelDocSchema.safeParse({
+      trigger: {
+        when: [{ kind: "mention" }],
+        cooldownSec: 60,
+      },
+    });
+    expect(result.success).toBe(false);
   });
 
   it("rejects unknown top-level keys (strict)", () => {

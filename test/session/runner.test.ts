@@ -1664,32 +1664,6 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     );
     expect(commands.map((c) => c.type)).toEqual(["prompt"]);
   });
-
-  it("trigger.cooldownSec が設定されていたら未実装として warn する", async () => {
-    const h = await harness({
-      C01: {
-        trigger: {
-          when: [{ kind: "mention" }],
-          cooldownSec: 30,
-        },
-      },
-    });
-    const trigger = message({ mentionsBot: true, text: "cooldown configured" });
-
-    await h.runner.handle(trigger);
-    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
-
-    expect(
-      h
-        .logLines()
-        .some(
-          (line) =>
-            typeof line.msg === "string" &&
-            line.msg.includes("cooldownSec") &&
-            line.msg.includes("not implemented"),
-        ),
-    ).toBe(true);
-  });
 });
 
 describe("resolveSessionPolicy", () => {

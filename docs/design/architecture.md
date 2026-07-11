@@ -133,7 +133,7 @@ interface ChannelDoc {
   trigger?: {
     when: WhenNode[];
     debounceSec?: number;          // 連投バーストを 1 kick にまとめる (実装済み)
-    cooldownSec?: number;          // スキーマ上のみ存在、未実装 (warnCooldownIfUnsupported で警告のみ)
+    // cooldownSec?: number;       // 実装保留中。スキーマからも外してある (session-model.md 「実装案」参照)
   };
   model?: string;                  // 省略時はコード既定
   tools?: string[];                // pi --tools の allowlist

@@ -125,13 +125,6 @@ function buildFields(
         source: sourceLabel(provenance.trigger ?? "default"),
       });
     }
-    if (doc.trigger.cooldownSec !== undefined) {
-      fields.push({
-        label: "trigger.cooldownSec",
-        value: `${doc.trigger.cooldownSec} (unimplemented; ignored)`,
-        source: sourceLabel(provenance.trigger ?? "default"),
-      });
-    }
   } else {
     fields.push({
       label: "trigger.when",
@@ -306,13 +299,6 @@ function formatJson(
       value: doc.trigger?.debounceSec ?? null,
       source:
         doc.trigger?.debounceSec !== undefined
-          ? sourceLabel(provenance.trigger ?? "default")
-          : "code default",
-    },
-    "trigger.cooldownSec": {
-      value: doc.trigger?.cooldownSec ?? null,
-      source:
-        doc.trigger?.cooldownSec !== undefined
           ? sourceLabel(provenance.trigger ?? "default")
           : "code default",
     },

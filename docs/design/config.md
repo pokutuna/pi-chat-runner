@@ -596,9 +596,9 @@ YAML に置く。これで「実行環境以外のカスタマイズは YAML で
   葉に現れる (「gate」「gates」という語をキーには出さない — 語より木の構造で表す)。
 - **trigger** = そのチャンネルで「いつ起動するか」全体。中身は 2 つ:
   - `when` — gate をどう合成して**起動可否**を決めるか (ブール木、下記)。
-  - `debounceSec` / `cooldownSec` — 合成結果が真でも実際に**発火させるかの抑制**
-    (連投のまとめ・連続起動の抑止)。判定そのものではないので `when` の木の外、
-    `trigger` 直下に置く。
+  - `debounceSec` (/ 実装保留中の `cooldownSec`) — 合成結果が真でも実際に
+    **発火させるかの抑制** (連投のまとめ・連続起動の抑止)。判定そのものではないので
+    `when` の木の外、`trigger` 直下に置く。
 
 つまり trigger ⊃ when(gate の合成) + 発火制御。gate は trigger の構成部品で、
 trigger = gate ではない。
@@ -624,7 +624,7 @@ Node = Gate | { and: Node[] } | { or: Node[] }
 ```yaml
 # 「#alert に一致(RegEx) OR (料理の話題である AND 店の話ではない)」
 trigger:
-  cooldownSec: 60
+  debounceSec: 60
   when:
     - kind: keyword                        # ─┐ 配列 = OR
       pattern: "#alert"                     #  │
@@ -637,8 +637,8 @@ trigger:
 ```
 
 `when` の各葉 (Gate) が [session-model.md](session-model.md) §5 の 1 判定に対応し、
-`and` / `or` / 配列がその合成にあたる。`debounceSec` / `cooldownSec` は木の外
-(trigger 直下) に置く — これは判定の合成ではなく起動の抑制 (発火制御) なので
+`and` / `or` / 配列がその合成にあたる。`debounceSec` (/ 実装保留中の `cooldownSec`) は
+木の外 (trigger 直下) に置く — これは判定の合成ではなく起動の抑制 (発火制御) なので
 (上記「trigger と gate の役割分担」)。
 
 この方式で「**YAML = データ、コード搬入 = イメージのみ**」という安全特性が

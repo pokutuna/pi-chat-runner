@@ -598,7 +598,6 @@ export class SessionRunner {
       { channelId, sessionKey, reason: decision.reason },
       "gate triggered",
     );
-    this.warnCooldownIfUnsupported(doc, sessionKey);
 
     await this.kickTriggered(sessionKey, channelId, policy, event, doc, item);
   }
@@ -1735,19 +1734,6 @@ export class SessionRunner {
       return buildWhen(defaultWhen(isDm), deps);
     }
     return buildWhen(doc.trigger.when, deps);
-  }
-
-  /** trigger.cooldownSec は未実装。設定されていたら無視する旨を warn する
-   * (kick ごとに出て構わない) */
-  private warnCooldownIfUnsupported(
-    doc: ChannelDoc | null,
-    sessionKey: string,
-  ): void {
-    if (doc?.trigger?.cooldownSec === undefined) return;
-    this.logger.warn(
-      { sessionKey, cooldownSec: doc.trigger.cooldownSec },
-      "trigger.cooldownSec is not implemented; ignored",
-    );
   }
 
   /** リアクションは装飾なので、失敗してもセッションを止めない */

@@ -89,13 +89,15 @@ const WhenNodeSchema: z.ZodType<WhenNode> = z.lazy(() =>
   ]),
 );
 
-/** trigger = when (gate 合成木) + debounceSec/cooldownSec (発火制御)。
- * when は trigger を書くなら必須 (config.md §7 「trigger と gate の役割分担」)。 */
+/** trigger = when (gate 合成木) + debounceSec (発火制御)。
+ * when は trigger を書くなら必須 (config.md §7 「trigger と gate の役割分担」)。
+ * cooldownSec は実装保留中 (session-model.md 「cooldownSec の実装案」参照)。
+ * 実装再開まではスキーマ自体を無効化し、設定しても strict エラーになるようにする。 */
 const TriggerSchema = z
   .object({
     when: z.array(WhenNodeSchema),
     debounceSec: z.number().optional(),
-    cooldownSec: z.number().optional(),
+    // cooldownSec: z.number().optional(),
   })
   .strict();
 
