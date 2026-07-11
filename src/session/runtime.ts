@@ -42,6 +42,11 @@ export interface PiPermissionOptions {
   allowFsRead: string[];
   /** `--allow-fs-write` に渡すパス群 (グロブ可) */
   allowFsWrite: string[];
+  /** true なら `--allow-addons` を付ける (既定 false)。native addon (.node) を含む
+   * extension (例: pi-smart-fetch の wreq-js) は Permission Model 下でロード自体が
+   * 拒否されるため opt-in で緩める。native code は fs チェックを素通りできるので、
+   * 有効化するとこのレイヤの隔離は実質 uid 分離だけになる (session-runtime.md §6) */
+  allowAddons?: boolean;
 }
 
 export interface PiProcessOptions {
@@ -188,6 +193,8 @@ export function buildSpawnCommand(
   // (fetch が getaddrinfo ERR_ACCESS_DENIED で失敗し LLM 呼び出しが不可能になる)。
   // このレイヤの目的は fs アクセス制限なので net は全面許可する
   flags.push("--allow-net");
+  // native addon は既定でロード拒否 (Node 側仕様)。opt-in のときだけ許可する
+  if (permission.allowAddons) flags.push("--allow-addons");
   return {
     command: process.execPath,
     args: [...flags, permission.entrypoint, ...piArgs],
@@ -267,9 +274,14 @@ export function buildPiPermissionOptions(options: {
    * `appDir` (旧 /app 包括許可) は廃止したため、extension を読ませるには呼び出し側
    * (runner.ts) が extensionPaths の dirname をここへ積む必要がある。既定なし */
   extraRead?: string[];
+  /** `--allow-addons` の付与 (PiPermissionOptions.allowAddons へ素通し)。既定 false */
+  allowAddons?: boolean;
 }): PiPermissionOptions {
   return {
     entrypoint: options.entrypoint,
+    ...(options.allowAddons !== undefined
+      ? { allowAddons: options.allowAddons }
+      : {}),
     allowFsRead: [
       `${options.nodeModulesDir}/*`,
       `${options.workdir}/*`,

@@ -1,0 +1,33 @@
+# Local run (same as the `docker run` in README.md).
+#
+# Start: docker compose up -d
+# Stop:  docker compose down
+#
+# Prepare examples/smart-fetch-agent/.env first (fill in the variables below).
+# GOOGLE_APPLICATION_CREDENTIALS is an absolute path on the host (mounted at
+# the same path inside the container, so the host-side value works as-is).
+# After `gcloud auth application-default login`, the default ADC path
+# (${HOME}/.config/gcloud/application_default_credentials.json) works.
+
+services:
+  smart-fetch-agent:
+    image: smart-fetch-agent:local
+    environment:
+      SLACK_MODE: socket
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_BOT_USER_ID: ${SLACK_BOT_USER_ID}
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT}
+      GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION}
+      GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS}
+      PI_ALLOW_ADDONS: ${PI_ALLOW_ADDONS:-1}
+      # config/ is mounted to examples/config so the default CONFIG_PATH
+      # (examples/config/agent.yaml) picks it up
+      CONFIG_PATH: examples/config/agent.yaml
+    volumes:
+      - ./config:/app/examples/config:ro
+      - ${GOOGLE_APPLICATION_CREDENTIALS}:${GOOGLE_APPLICATION_CREDENTIALS}:ro
+      - workdir:/tmp/pi-chat-runner
+
+volumes:
+  workdir:

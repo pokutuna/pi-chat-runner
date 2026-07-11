@@ -303,6 +303,25 @@ describe("buildSpawnCommand (Node Permission Model, session-runtime.md §6)", ()
       "rpc",
     ]);
   });
+
+  it("adds --allow-addons only when permission.allowAddons is true", () => {
+    const permission = {
+      entrypoint: "/usr/local/lib/node_modules/pi/dist/cli.js",
+      allowFsRead: ["/app/*"],
+      allowFsWrite: ["/tmp/workdir/*"],
+    };
+    const without = buildSpawnCommand(["--mode", "rpc"], { permission });
+    expect(without.args).not.toContain("--allow-addons");
+
+    const withAddons = buildSpawnCommand(["--mode", "rpc"], {
+      permission: { ...permission, allowAddons: true },
+    });
+    // entrypoint より前 (node 自身のフラグ位置) に入ること
+    const entryIdx = withAddons.args.indexOf(permission.entrypoint);
+    const flagIdx = withAddons.args.indexOf("--allow-addons");
+    expect(flagIdx).toBeGreaterThan(-1);
+    expect(flagIdx).toBeLessThan(entryIdx);
+  });
 });
 
 describe("ancestorDirs", () => {

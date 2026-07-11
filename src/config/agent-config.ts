@@ -40,6 +40,10 @@ const AgentRuntimeSchema = z
     uid: z.coerce.number().int().optional(),
     gid: z.coerce.number().int().optional(),
     permissionMode: PermissionModeSchema,
+    /** native addon (.node) を含む extension 用の `--allow-addons` opt-in
+     * (session-runtime.md §6)。boolean 解釈は permissionMode と同じ罠があるため
+     * PermissionModeSchema を共用する。 */
+    allowAddons: PermissionModeSchema,
     home: z.string().optional(),
   })
   .strict();
@@ -127,6 +131,11 @@ export interface ResolvedAgentRuntime {
    * 隔離が効く。env PI_PERMISSION_MODE=0 または agent.yaml の
    * agent.runtime.permissionMode: false で切れる。 */
   permissionMode: boolean;
+  /** Permission Model 下で native addon (.node) のロードを許可するか
+   * (`--allow-addons`)。native code は fs チェックを素通りできるため既定は OFF
+   * (false) — env PI_ALLOW_ADDONS=1 または agent.yaml の
+   * agent.runtime.allowAddons: true で opt-in する。 */
+  allowAddons: boolean;
   /** pi 子プロセスへ常に HOME として渡すディレクトリ。既定 "/home/agent"。 */
   home: string;
 }
@@ -191,6 +200,14 @@ function parsePermissionModeEnv(raw: string | undefined): boolean | undefined {
   return raw !== "0";
 }
 
+/** env PI_ALLOW_ADDONS をパースする (parsePermissionModeEnv と同じ規則)。
+ * 未設定/空文字なら undefined (file/コード既定に委ねる)。"0" は明示的に無効化、
+ * それ以外の値は有効化として扱う。 */
+function parseAllowAddonsEnv(raw: string | undefined): boolean | undefined {
+  if (raw === undefined || raw === "") return undefined;
+  return raw !== "0";
+}
+
 /** agent.yaml の内容と env を合わせて解決する。優先順位は env > agent.yaml
  * (config.md §6)。コード既定はここでは埋めない (turnTimeoutMs 等は undefined のまま
  * 返し、SessionRunner の既定に委ねる) が、env / runtime はこのモジュールが
@@ -215,6 +232,10 @@ export function resolveAgentConfig(
     parsePermissionModeEnv(env.PI_PERMISSION_MODE) ??
     file.agent?.runtime?.permissionMode ??
     true;
+  const allowAddons =
+    parseAllowAddonsEnv(env.PI_ALLOW_ADDONS) ??
+    file.agent?.runtime?.allowAddons ??
+    false;
   const home = env.PI_AGENT_HOME ?? file.agent?.runtime?.home ?? "/home/agent";
 
   return {
@@ -227,6 +248,7 @@ export function resolveAgentConfig(
       ...(uid !== undefined ? { uid } : {}),
       ...(gid !== undefined ? { gid } : {}),
       permissionMode,
+      allowAddons,
       home,
     },
   };

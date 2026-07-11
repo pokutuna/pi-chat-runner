@@ -1,0 +1,97 @@
+# smart-fetch-agent
+
+Extends the pi-chat-runner base image with a single `FROM` step, adding the
+[`pi-smart-fetch`](https://www.npmjs.com/package/pi-smart-fetch) extension
+(URL fetch + summarize) for one channel only.
+
+- pi extension: `pi-smart-fetch` (installed as an npm dependency into
+  `/app/node_modules`, not a local file under `extensions/`)
+- Config: a mention-triggered `default` channel with no extensions, plus one
+  test channel where `pi-smart-fetch` is enabled
+
+## Why per-channel `extensions:`, not `.pi/agent/extensions/` auto-discovery
+
+pi auto-discovers anything placed under `$AGENT_HOME/.pi/agent/extensions/`
+and applies it to **every** channel (see
+[docs/design/session-runtime.md §5](../../docs/design/session-runtime.md)
+and `gc-logging-agent`'s `extensions/init-gcloud.ts` for that pattern).
+
+This example deliberately does the opposite: `pi-smart-fetch` is listed in
+`config/agent.yaml`'s `channels[].extensions` for one specific channel
+(`C0000000001`), and the `default` channel has no `extensions:` entry at all.
+The extension's file lives at `/app/node_modules/pi-smart-fetch/dist/index.js`
+— outside `$AGENT_HOME/.pi/agent/extensions/` — precisely so it is *not*
+auto-discovered, and only channels that explicitly reference its path get it.
+This is the right shape when a capability (and its cost — see below) should
+only apply to a channel that actually needs it, rather than to every channel
+the bot is in.
+
+The runner (`src/session/runner.ts`) automatically adds each `extensions:`
+path's dirname to `--allow-fs-read` at kick time, so no extra filesystem
+permission wiring is needed here. `/app/node_modules/pi-smart-fetch/dist/`
+is also already covered by the base image's own Permission Model config
+(the whole `/app/node_modules` tree is readable), so nothing has to be added
+for this example either.
+
+## Why `agent.runtime.allowAddons` is needed
+
+`pi-smart-fetch` depends on a native addon (`wreq-js`, a Rust N-API binary).
+Node's Permission Model (`--permission`, on by default for the pi child
+process — see `docs/design/config.md` §6) rejects loading native addons
+(`.node` files) unless `--allow-addons` is passed. `pi-smart-fetch` would
+otherwise fail to load under this runner.
+
+`agent.runtime.allowAddons` (default `false` across the repo) is the opt-in
+for this: setting it `true` adds `--allow-addons` to the pi child process's
+flags (env override: `PI_ALLOW_ADDONS`). This example sets its default to
+`true` in `config/agent.yaml`, since enabling `pi-smart-fetch` is the whole
+point of this example — unlike `examples/config/agent.yaml`, where it
+defaults to `false` because no channel there needs it.
+
+**Trade-off**: enabling `--allow-addons` loosens part of the Permission Model
+isolation layer — native code can bypass this layer's own fs-access checks
+(uid separation between the runner and the spawned pi process still holds
+regardless). Only enable it for images that actually load a native-addon
+extension, and only for the channels that need it.
+
+## Build
+
+Build the base image first, then build this image on top of it.
+
+```sh
+# from the repo root: base image
+docker build -t pi-chat-runner:local .
+
+# this extension image
+docker build -t smart-fetch-agent:local examples/smart-fetch-agent
+```
+
+## Run locally
+
+Assumes Slack Socket Mode + Vertex AI (same variables as `examples/config`),
+plus `GOOGLE_CLOUD_PROJECT` and `GOOGLE_APPLICATION_CREDENTIALS` (a service
+account key, or the default ADC path after
+`gcloud auth application-default login`).
+
+```sh
+cd examples/smart-fetch-agent
+cp .env.example .env  # fill in the values
+
+docker compose up -d
+docker compose logs -f
+docker compose down
+```
+
+`compose.yaml` mounts `config/` over `/app/examples/config`, mounts the
+host's `GOOGLE_APPLICATION_CREDENTIALS` file at the same path inside the
+container, and keeps the workdir (session transcripts) in a named volume so
+it survives container restarts.
+
+## Verified
+
+(Not verified.) This example was written by inspecting `gc-logging-agent`'s
+pattern, the base `Dockerfile`, and `src/session/runner.ts`'s handling of
+`channels[].extensions`, but the `docker build` / container boot / actual
+Slack round-trip with `pi-smart-fetch` fetching a real URL have not been run
+as part of authoring this example. Building and running it end-to-end is a
+separate follow-up task.

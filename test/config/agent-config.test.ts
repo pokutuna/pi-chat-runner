@@ -127,6 +127,19 @@ describe("AgentConfigSchema", () => {
     });
     expect(data.agent?.runtime?.permissionMode).toBe(expected);
   });
+
+  it.each([
+    ["false", false],
+    ["0", false],
+    ["", false],
+    ["true", true],
+    ["1", true],
+  ])("interprets allowAddons string %j as %s", (input, expected) => {
+    const data = AgentConfigSchema.parse({
+      agent: { runtime: { allowAddons: input } },
+    });
+    expect(data.agent?.runtime?.allowAddons).toBe(expected);
+  });
 });
 
 describe("loadAgentConfig", () => {
@@ -296,6 +309,38 @@ describe("resolveAgentConfig", () => {
     it("any non-'0' env value enables permission mode", () => {
       const resolved = resolveAgentConfig({}, { PI_PERMISSION_MODE: "yes" });
       expect(resolved.runtime.permissionMode).toBe(true);
+    });
+  });
+
+  describe("runtime.allowAddons", () => {
+    it("defaults to false when neither env nor file set it", () => {
+      expect(resolveAgentConfig({}, {}).runtime.allowAddons).toBe(false);
+    });
+
+    it("can be enabled via agent.yaml agent.runtime.allowAddons: true", () => {
+      const resolved = resolveAgentConfig(
+        { agent: { runtime: { allowAddons: true } } },
+        {},
+      );
+      expect(resolved.runtime.allowAddons).toBe(true);
+    });
+
+    it("enables via env PI_ALLOW_ADDONS=1", () => {
+      const resolved = resolveAgentConfig({}, { PI_ALLOW_ADDONS: "1" });
+      expect(resolved.runtime.allowAddons).toBe(true);
+    });
+
+    it("env PI_ALLOW_ADDONS overrides file value", () => {
+      const resolved = resolveAgentConfig(
+        { agent: { runtime: { allowAddons: true } } },
+        { PI_ALLOW_ADDONS: "0" },
+      );
+      expect(resolved.runtime.allowAddons).toBe(false);
+    });
+
+    it("any non-'0' env value enables allowAddons", () => {
+      const resolved = resolveAgentConfig({}, { PI_ALLOW_ADDONS: "yes" });
+      expect(resolved.runtime.allowAddons).toBe(true);
     });
   });
 

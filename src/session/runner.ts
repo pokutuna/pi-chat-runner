@@ -176,6 +176,9 @@ export interface PiPermissionConfig {
    * extensionPaths の dirname から自動導出してここへ足すため、呼び出し側が
    * 明示する必要はない (appDir 包括許可の廃止に伴う対応) */
   extraRead?: string[];
+  /** native addon (.node) を含む extension を使う場合の `--allow-addons` 付与。
+   * agent.runtime.allowAddons 由来 (config.md §6)。既定 false */
+  allowAddons?: boolean;
 }
 
 export interface SessionRunnerOptions {
@@ -1163,6 +1166,9 @@ export class SessionRunner {
               ...channelSkillPaths.flatMap((dir) => [dir, `${dir}/*`]),
               ...(this.piPermission.extraRead ?? []),
             ],
+            ...(this.piPermission.allowAddons !== undefined
+              ? { allowAddons: this.piPermission.allowAddons }
+              : {}),
           })
         : undefined;
     const proc = new PiProcess({

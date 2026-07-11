@@ -1,0 +1,54 @@
+connector:
+  slack:
+    mode: ${env.SLACK_MODE:-socket}
+    botToken: ${env.SLACK_BOT_TOKEN}
+    botUserId: ${env.SLACK_BOT_USER_ID}
+    socket:
+      appToken: ${env.SLACK_APP_TOKEN}
+    events:
+      signingSecret: ${env.SLACK_SIGNING_SECRET:-}
+      port: ${env.PORT:-8080}
+
+store:
+  backend: ${env.STORE_BACKEND:-memory}
+  sqlite:
+    path: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db}
+
+agent:
+  turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000}
+
+  env:
+    GOOGLE_CLOUD_PROJECT: ${env.GOOGLE_CLOUD_PROJECT}
+    GOOGLE_APPLICATION_CREDENTIALS: ${env.GOOGLE_APPLICATION_CREDENTIALS:-}
+
+  runtime:
+    permissionMode: ${env.PI_PERMISSION_MODE:-true}
+    home: ${env.PI_AGENT_HOME:-/home/agent}
+
+    # pi-smart-fetch's native addon (wreq-js) gets its load rejected by the
+    # Node Permission Model unless --allow-addons is passed. This example
+    # exists to demonstrate that extension, so default it to true here
+    # (unlike examples/config/agent.yaml, which defaults it to false).
+    allowAddons: ${env.PI_ALLOW_ADDONS:-true}
+
+channels:
+  - channel: "default"
+    # Fallback for any channel below with no matching entry. No extensions
+    # here — pi-smart-fetch is enabled only for the channel below, not for
+    # every channel the bot is in (see README.md for why).
+    model: google-vertex/gemini-3.5-flash
+    systemPrompt: ./prompts/smart-fetch.md
+    trigger:
+      when:
+        - kind: mention
+
+  - channel: "C0000000001" # REPLACE: your channel ID
+    # pi-smart-fetch enabled for this channel only, via a per-channel
+    # extensions path (not $AGENT_HOME/.pi/agent/extensions/ auto-discovery).
+    model: google-vertex/gemini-3.5-flash
+    systemPrompt: ./prompts/smart-fetch.md
+    trigger:
+      when:
+        - kind: mention
+    extensions:
+      - /app/node_modules/pi-smart-fetch/dist/index.js

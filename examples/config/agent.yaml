@@ -51,6 +51,12 @@ agent:
 
     # permissionMode toggles Node Permission Model sandboxing.
     permissionMode: ${env.PI_PERMISSION_MODE:-true} # SET: false for local dev against a fake pi binary
+
+    # allowAddons opts into --allow-addons, which lets native addons (.node)
+    # load under the Permission Model. Only needed for npm extensions with
+    # native deps (e.g. pi-smart-fetch's wreq-js). Native code can bypass this
+    # layer's fs checks, so leave it off unless such an extension is enabled.
+    allowAddons: ${env.PI_ALLOW_ADDONS:-false}
     home: ${env.PI_AGENT_HOME:-/home/agent} # HOME passed to the pi child process
 
 # --- channels: per-channel behavior, re-read on every message ---

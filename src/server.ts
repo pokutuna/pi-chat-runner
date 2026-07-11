@@ -150,6 +150,7 @@ function buildPiPermissionConfig(
   return {
     ...piPaths,
     ...(credentialsPath !== undefined ? { extraRead: [credentialsPath] } : {}),
+    ...(runtime.allowAddons ? { allowAddons: true } : {}),
   };
 }
 
