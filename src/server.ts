@@ -70,8 +70,8 @@ function buildStateStore(store: ResolvedStoreConfig): StateStore {
     case "memory":
       return new InMemoryStateStore();
     case "sqlite": {
-      mkdirSync(dirname(store.sqlitePath), { recursive: true });
-      return new SqliteStateStore(store.sqlitePath);
+      mkdirSync(dirname(store.sqlite.path), { recursive: true });
+      return new SqliteStateStore(store.sqlite.path);
     }
     case "firestore":
       // projectId は GOOGLE_CLOUD_PROJECT / エミュレータは FIRESTORE_EMULATOR_HOST
@@ -166,18 +166,20 @@ function missingConnectorConfig(configPath: string): never {
     "    mode: ${env.SLACK_MODE:-socket}         # socket | events (既定 socket。architecture.md §1)",
   );
   console.error(
-    "    appToken: ${env.SLACK_APP_TOKEN}        # socket 時必須 (xapp-...)",
-  );
-  console.error(
-    "    signingSecret: ${env.SLACK_SIGNING_SECRET}  # events 時必須",
-  );
-  console.error(
-    "    port: ${env.PORT:-8080}                 # events 時の listen ポート",
-  );
-  console.error(
     "    botToken: ${env.SLACK_BOT_TOKEN}        # 必須 (xoxb-...)",
   );
   console.error("    botUserId: ${env.SLACK_BOT_USER_ID}     # 必須 (U...)");
+  console.error("    socket:");
+  console.error(
+    "      appToken: ${env.SLACK_APP_TOKEN}      # socket 時必須 (xapp-...)",
+  );
+  console.error("    events:");
+  console.error(
+    "      signingSecret: ${env.SLACK_SIGNING_SECRET}  # events 時必須",
+  );
+  console.error(
+    "      port: ${env.PORT:-8080}               # events 時の listen ポート",
+  );
   console.error("");
   console.error("任意 (agent.yaml でも設定可。詳細は config.md §6):");
   console.error("  PI_PROVIDER         pi の --provider");
@@ -197,7 +199,7 @@ function missingConnectorConfig(configPath: string): never {
     "  PROGRESS_NOTICE_INTERVAL_MS  長時間ターンの進捗通知の間隔 ms (既定 30000。0 で無効化)",
   );
   console.error(
-    "  上記 PI_PROVIDER/TURN_TIMEOUT_MS/PROGRESS_NOTICE_INTERVAL_MS は設定ファイル (CONFIG_PATH) の pi ブロックでも設定可 (env が優先)。pi へ渡す追加 env は agent.env で明示列挙する",
+    "  上記 PI_PROVIDER/TURN_TIMEOUT_MS/PROGRESS_NOTICE_INTERVAL_MS は設定ファイル (CONFIG_PATH) の agent ブロックでも設定可 (env が優先)。pi へ渡す追加 env は agent.env で明示列挙する",
   );
   console.error("");
   console.error("例 (.env ファイル推奨):");
@@ -219,26 +221,29 @@ function buildConnector(
   if (slack === undefined) {
     missingConnectorConfig(configPath);
   }
-  const { mode, botToken, botUserId, port } = slack;
+  const { mode, botToken, botUserId } = slack;
   switch (mode) {
     case "socket": {
-      if (slack.appToken === undefined || slack.appToken === "") {
+      if (slack.socket.appToken === undefined || slack.socket.appToken === "") {
         missingConnectorConfig(configPath);
       }
       const ingress = new SocketIngress({
-        appToken: slack.appToken,
+        appToken: slack.socket.appToken,
         botUserId,
       });
       return { ingress, botToken };
     }
     case "events": {
-      if (slack.signingSecret === undefined || slack.signingSecret === "") {
+      if (
+        slack.events.signingSecret === undefined ||
+        slack.events.signingSecret === ""
+      ) {
         missingConnectorConfig(configPath);
       }
       const ingress = new HttpIngress({
-        signingSecret: slack.signingSecret,
+        signingSecret: slack.events.signingSecret,
         botUserId,
-        port,
+        port: slack.events.port,
         logger: rootLogger.child({ component: "http" }),
       });
       return { ingress, botToken };
@@ -295,11 +300,11 @@ async function main() {
     configPath,
   );
 
-  // store.backend/sqlitePath (設定ファイル内, ${env.X} 参照解決済み) を読む。
+  // store.backend/sqlite.path (設定ファイル内, ${env.X} 参照解決済み) を読む。
   // STORE_BACKEND/SQLITE_PATH env 直読みはやめ、store 経由に一本化する (store-config.ts)
   const storeConfig = await loadStoreConfig(configPath);
 
-  // pi/agent ブロック (config.md §6) + env を解決する。優先順位は env > 設定ファイル > コード既定
+  // agent ブロック (config.md §6) + env を解決する。優先順位は env > 設定ファイル > コード既定
   const agentConfigFile = await loadAgentConfig(configPath);
   const agentConfig = resolveAgentConfig(agentConfigFile, process.env);
   const { provider, turnTimeoutMs, progressNoticeIntervalMs, runtime } =

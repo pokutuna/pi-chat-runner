@@ -1,7 +1,7 @@
 // AgentConfig スキーマ + ローダー — docs/design/config.md §6「agent.yaml — 設定ファイル」
 //
 // 設定は単一の YAML (慣例名 agent.yaml, パスは自由) に全ブロックが同居し、この
-// モジュールは pi / agent ブロックだけを担当する (root-config.ts のコメント参照)。
+// モジュールは agent ブロックだけを担当する (root-config.ts のコメント参照)。
 // zod strict + fail-loud は channel-doc.ts / config-source.ts と同じ流儀。
 //
 // 優先順位は env > agent.yaml > コード既定 (config.md §6)。コード既定 (turnTimeoutMs
@@ -17,16 +17,6 @@ import { z } from "zod";
 
 import { resolveEnvRefs } from "./env-ref.js";
 import { readRootConfig } from "./root-config.js";
-
-const AgentConfigPiSchema = z
-  .object({
-    provider: z.string().optional(),
-    /** ${env.X} 解決後は文字列で来る可能性があるため coerce する (uid/gid 等と同じ理由)。 */
-    turnTimeoutMs: z.coerce.number().int().positive().optional(),
-    /** 長時間ターンの進捗通知の間隔 (progress-notice.md)。0 で機能自体を無効化する。 */
-    progressNoticeIntervalMs: z.coerce.number().int().nonnegative().optional(),
-  })
-  .strict();
 
 /** ${env.X} 解決後の permissionMode を boolean に解釈する。env-ref は string しか
  * 返さないため、YAML に native boolean で書いた場合 (boolean のまま来る) と ${env.X}
@@ -56,6 +46,11 @@ const AgentRuntimeSchema = z
 
 const AgentAgentSchema = z
   .object({
+    provider: z.string().optional(),
+    /** ${env.X} 解決後は文字列で来る可能性があるため coerce する (uid/gid 等と同じ理由)。 */
+    turnTimeoutMs: z.coerce.number().int().positive().optional(),
+    /** 長時間ターンの進捗通知の間隔 (progress-notice.md)。0 で機能自体を無効化する。 */
+    progressNoticeIntervalMs: z.coerce.number().int().nonnegative().optional(),
     /** pi 子プロセスへ渡す env の名前=値マップ (足し算モデル)。値は ${env.X} 参照可。 */
     env: z.record(z.string(), z.string()).optional(),
     runtime: AgentRuntimeSchema.optional(),
@@ -64,7 +59,6 @@ const AgentAgentSchema = z
 
 export const AgentConfigSchema = z
   .object({
-    pi: AgentConfigPiSchema.optional(),
     agent: AgentAgentSchema.optional(),
   })
   .strict();
@@ -86,12 +80,11 @@ export async function loadAgentConfig(
   const filePath = configPath;
 
   // 設定ファイルには connector / store / channels ブロックも同居する (それぞれ
-  // 別モジュールが並行して読む)。AgentConfigSchema は pi/agent しか知らない
-  // .strict() スキーマなので、ここで pi/agent キーだけを取り出してから検証する
+  // 別モジュールが並行して読む)。AgentConfigSchema は agent しか知らない
+  // .strict() スキーマなので、ここで agent キーだけを取り出してから検証する
   // (parsed をそのまま渡すと他ブロックが unrecognized keys で弾かれる)。
-  const { pi: piRaw, agent: agentRaw } = parsed;
+  const { agent: agentRaw } = parsed;
   const extracted: Record<string, unknown> = {};
-  if (piRaw !== undefined) extracted.pi = piRaw;
   if (agentRaw !== undefined) extracted.agent = agentRaw;
 
   let resolved: unknown;
@@ -209,12 +202,12 @@ export function resolveAgentConfig(
   file: AgentConfig,
   env: NodeJS.ProcessEnv,
 ): ResolvedAgentConfig {
-  const provider = env.PI_PROVIDER ?? file.pi?.provider;
+  const provider = env.PI_PROVIDER ?? file.agent?.provider;
   const turnTimeoutMs =
-    parseTurnTimeoutMsEnv(env.TURN_TIMEOUT_MS) ?? file.pi?.turnTimeoutMs;
+    parseTurnTimeoutMsEnv(env.TURN_TIMEOUT_MS) ?? file.agent?.turnTimeoutMs;
   const progressNoticeIntervalMs =
     parseProgressNoticeIntervalMsEnv(env.PROGRESS_NOTICE_INTERVAL_MS) ??
-    file.pi?.progressNoticeIntervalMs;
+    file.agent?.progressNoticeIntervalMs;
 
   const agentEnv = file.agent?.env ?? {};
 

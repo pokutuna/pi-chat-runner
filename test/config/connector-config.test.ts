@@ -14,10 +14,9 @@ describe("ConnectorConfigSchema", () => {
     const result = ConnectorConfigSchema.safeParse({
       slack: {
         mode: "events",
-        signingSecret: "shhh",
-        port: 8080,
         botToken: "xoxb-...",
         botUserId: "U123",
+        events: { signingSecret: "shhh", port: 8080 },
       },
     });
     expect(result.success).toBe(true);
@@ -32,14 +31,18 @@ describe("ConnectorConfigSchema", () => {
       slack: { botToken: "xoxb-...", botUserId: "U123" },
     });
     expect(data.slack?.mode).toBe("socket");
-    expect(data.slack?.port).toBe(8080);
+    expect(data.slack?.events.port).toBe(8080);
   });
 
   it("coerces a string port to a number", () => {
     const data = ConnectorConfigSchema.parse({
-      slack: { botToken: "xoxb-...", botUserId: "U123", port: "9090" },
+      slack: {
+        botToken: "xoxb-...",
+        botUserId: "U123",
+        events: { port: "9090" },
+      },
     });
-    expect(data.slack?.port).toBe(9090);
+    expect(data.slack?.events.port).toBe(9090);
   });
 
   it("rejects unknown top-level keys", () => {
@@ -52,6 +55,42 @@ describe("ConnectorConfigSchema", () => {
     expect(
       ConnectorConfigSchema.safeParse({
         slack: { botToken: "x", botUserId: "U1", unknown: true },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects unknown keys under slack.socket", () => {
+    expect(
+      ConnectorConfigSchema.safeParse({
+        slack: {
+          botToken: "x",
+          botUserId: "U1",
+          socket: { unknown: true },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects unknown keys under slack.events", () => {
+    expect(
+      ConnectorConfigSchema.safeParse({
+        slack: {
+          botToken: "x",
+          botUserId: "U1",
+          events: { unknown: true },
+        },
+      }).success,
+    ).toBe(false);
+  });
+
+  it("rejects the old flat appToken/port/signingSecret placement", () => {
+    expect(
+      ConnectorConfigSchema.safeParse({
+        slack: {
+          botToken: "x",
+          botUserId: "U1",
+          appToken: "xapp-...",
+        },
       }).success,
     ).toBe(false);
   });
@@ -87,7 +126,7 @@ describe("loadConnectorConfig", () => {
   it("returns {} when agent.yaml has no connector block", async () => {
     await writeFile(
       join(dir, "agent.yaml"),
-      "pi:\n  provider: google-vertex\n",
+      "agent:\n  provider: google-vertex\n",
     );
     expect(await loadConnectorConfig(join(dir, "agent.yaml"))).toEqual({});
   });
@@ -104,18 +143,19 @@ describe("loadConnectorConfig", () => {
         "connector:",
         "  slack:",
         "    mode: socket",
-        "    appToken: xapp-literal",
         "    botToken: xoxb-literal",
         "    botUserId: U123",
+        "    socket:",
+        "      appToken: xapp-literal",
       ].join("\n"),
     );
     expect(await loadConnectorConfig(join(dir, "agent.yaml"))).toEqual({
       slack: {
         mode: "socket",
-        appToken: "xapp-literal",
         botToken: "xoxb-literal",
         botUserId: "U123",
-        port: 8080,
+        socket: { appToken: "xapp-literal" },
+        events: { port: 8080 },
       },
     });
   });
@@ -127,10 +167,12 @@ describe("loadConnectorConfig", () => {
         "connector:",
         "  slack:",
         "    mode: ${env.SLACK_MODE:-socket}",
-        "    appToken: ${env.SLACK_APP_TOKEN}",
         "    botToken: ${env.SLACK_BOT_TOKEN}",
         "    botUserId: ${env.SLACK_BOT_USER_ID}",
-        "    port: ${env.PORT:-8080}",
+        "    socket:",
+        "      appToken: ${env.SLACK_APP_TOKEN}",
+        "    events:",
+        "      port: ${env.PORT:-8080}",
       ].join("\n"),
     );
     const result = await loadConnectorConfig(join(dir, "agent.yaml"), {
@@ -141,10 +183,10 @@ describe("loadConnectorConfig", () => {
     expect(result).toEqual({
       slack: {
         mode: "socket",
-        appToken: "xapp-from-env",
         botToken: "xoxb-from-env",
         botUserId: "U999",
-        port: 8080,
+        socket: { appToken: "xapp-from-env" },
+        events: { port: 8080 },
       },
     });
   });

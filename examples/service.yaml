@@ -40,7 +40,7 @@ spec:
               value: "U0000000000" # REPLACE: your bot's user ID
             - name: GOOGLE_CLOUD_PROJECT
               value: PROJECT_ID # REPLACE: your GCP project ID
-            # - name: PI_PROVIDER      # optional: override agent.yaml's pi.provider
+            # - name: PI_PROVIDER      # optional: override agent.yaml's agent.provider
             #   value: google-vertex
             # - name: CONFIG_PATH      # optional: defaults to examples/config/agent.yaml, already in the base image
             #   value: examples/config/agent.yaml

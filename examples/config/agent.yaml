@@ -1,8 +1,8 @@
 # agent.yaml — the single config file (the filename is up to you; point CONFIG_PATH at it).
-# connector/store/pi/agent are read once at boot; channels is re-read on every
+# connector/store/agent are read once at boot; channels is re-read on every
 # message, so channel behavior changes take effect without a restart.
 # Layout follows entry -> exit: connector (chat I/O) -> store (persistence)
-# -> pi/agent (agent process) -> channels (per-channel behavior).
+# -> agent (agent process) -> channels (per-channel behavior).
 #
 # In the boot-time sections, values may reference env vars: ${env.X} (fails if
 # unset) or ${env.X:-default}. Don't inline secrets — reference them via ${env.X}
@@ -15,30 +15,32 @@ connector:
     # socket: local/dev (WebSocket). events: production (HTTP push).
     mode: ${env.SLACK_MODE:-socket}
 
-    # appToken is an App-Level Token with the connections:write scope.
-    appToken: ${env.SLACK_APP_TOKEN:-} # SET: required for mode: socket; leave unset for events
-    signingSecret: ${env.SLACK_SIGNING_SECRET:-} # SET: required for mode: events; leave unset for socket
-    port: ${env.PORT:-8080} # listen port, mode: events only
-
     # botUserId is the bot's own user ID (auth.test's user_id), used to
     # detect mentions and filter self-echo.
     botToken: ${env.SLACK_BOT_TOKEN} # SET: always required
     botUserId: ${env.SLACK_BOT_USER_ID} # SET: always required
 
+    socket:
+      # appToken is an App-Level Token with the connections:write scope.
+      appToken: ${env.SLACK_APP_TOKEN:-} # SET: required for mode: socket
+
+    events:
+      signingSecret: ${env.SLACK_SIGNING_SECRET:-} # SET: required for mode: events
+      port: ${env.PORT:-8080} # listen port, mode: events only
+
 # --- store: persistence backend ---
 store:
   backend: ${env.STORE_BACKEND:-memory} # memory | sqlite | firestore
-  sqlitePath: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db} # backend: sqlite only
+  sqlite:
+    path: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db} # backend: sqlite only
 
-# --- pi: pi's own behavior ---
-pi:
+# --- agent: pi's behavior, env, and execution environment ---
+agent:
   # Default provider is Vertex AI with ADC auth.
   # SET: GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION for google-vertex.
   provider: ${env.PI_PROVIDER:-google-vertex}
   turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000} # pi is killed if a turn runs past this
 
-# --- agent: the pi child process's env and execution environment ---
-agent:
   # Extra env vars passed to the pi child process, added on top of the code's
   # built-in defaults (e.g. GOOGLE_CLOUD_*).
   env:

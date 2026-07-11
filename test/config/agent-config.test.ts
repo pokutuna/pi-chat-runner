@@ -13,11 +13,9 @@ import {
 describe("AgentConfigSchema", () => {
   it("accepts a fully populated config", () => {
     const result = AgentConfigSchema.safeParse({
-      pi: {
+      agent: {
         provider: "google-vertex",
         turnTimeoutMs: 600000,
-      },
-      agent: {
         env: { GH_TOKEN: "${env.GH_TOKEN}" },
         runtime: {
           uid: 1001,
@@ -38,47 +36,41 @@ describe("AgentConfigSchema", () => {
     expect(AgentConfigSchema.safeParse({ unknown: true }).success).toBe(false);
   });
 
-  it("rejects unknown keys under pi", () => {
-    expect(AgentConfigSchema.safeParse({ pi: { unknown: true } }).success).toBe(
-      false,
-    );
-  });
-
   it("rejects a negative turnTimeoutMs", () => {
     expect(
-      AgentConfigSchema.safeParse({ pi: { turnTimeoutMs: -1 } }).success,
+      AgentConfigSchema.safeParse({ agent: { turnTimeoutMs: -1 } }).success,
     ).toBe(false);
   });
 
   it("rejects a non-integer turnTimeoutMs", () => {
     expect(
-      AgentConfigSchema.safeParse({ pi: { turnTimeoutMs: 1.5 } }).success,
+      AgentConfigSchema.safeParse({ agent: { turnTimeoutMs: 1.5 } }).success,
     ).toBe(false);
   });
 
   it("accepts a zero progressNoticeIntervalMs (disables the feature)", () => {
     expect(
-      AgentConfigSchema.safeParse({ pi: { progressNoticeIntervalMs: 0 } })
+      AgentConfigSchema.safeParse({ agent: { progressNoticeIntervalMs: 0 } })
         .success,
     ).toBe(true);
   });
 
   it("rejects a negative progressNoticeIntervalMs", () => {
     expect(
-      AgentConfigSchema.safeParse({ pi: { progressNoticeIntervalMs: -1 } })
+      AgentConfigSchema.safeParse({ agent: { progressNoticeIntervalMs: -1 } })
         .success,
     ).toBe(false);
   });
 
-  it("rejects a model field under pi (removed)", () => {
+  it("rejects a model field under agent (removed)", () => {
     expect(
-      AgentConfigSchema.safeParse({ pi: { model: "gemini-x" } }).success,
+      AgentConfigSchema.safeParse({ agent: { model: "gemini-x" } }).success,
     ).toBe(false);
   });
 
-  it("rejects envPassthrough under pi (removed in favor of agent.env)", () => {
+  it("rejects envPassthrough under agent (removed in favor of agent.env)", () => {
     expect(
-      AgentConfigSchema.safeParse({ pi: { envPassthrough: ["GH_TOKEN"] } })
+      AgentConfigSchema.safeParse({ agent: { envPassthrough: ["GH_TOKEN"] } })
         .success,
     ).toBe(false);
   });
@@ -154,22 +146,22 @@ describe("loadAgentConfig", () => {
   it("parses a valid agent.yaml", async () => {
     await writeFile(
       join(dir, "agent.yaml"),
-      "pi:\n  provider: google-vertex\n",
+      "agent:\n  provider: google-vertex\n",
     );
     expect(await loadAgentConfig(join(dir, "agent.yaml"))).toEqual({
-      pi: { provider: "google-vertex" },
+      agent: { provider: "google-vertex" },
     });
   });
 
   it("throws with the file path for malformed YAML", async () => {
-    await writeFile(join(dir, "agent.yaml"), "pi:\n  - broken: [\n");
+    await writeFile(join(dir, "agent.yaml"), "agent:\n  - broken: [\n");
     await expect(loadAgentConfig(join(dir, "agent.yaml"))).rejects.toThrow(
       /agent\.yaml/,
     );
   });
 
   it("throws with the file path and zod issue for schema violations", async () => {
-    await writeFile(join(dir, "agent.yaml"), "pi:\n  unknownKey: 1\n");
+    await writeFile(join(dir, "agent.yaml"), "agent:\n  unknownKey: 1\n");
     await expect(loadAgentConfig(join(dir, "agent.yaml"))).rejects.toThrow(
       /agent\.yaml/,
     );
@@ -206,7 +198,7 @@ describe("loadAgentConfig", () => {
 describe("resolveAgentConfig", () => {
   it("prefers env over file for provider", () => {
     const resolved = resolveAgentConfig(
-      { pi: { provider: "file-provider" } },
+      { agent: { provider: "file-provider" } },
       { PI_PROVIDER: "env-provider" },
     );
     expect(resolved.provider).toBe("env-provider");
@@ -214,7 +206,7 @@ describe("resolveAgentConfig", () => {
 
   it("falls back to file values when env is unset", () => {
     const resolved = resolveAgentConfig(
-      { pi: { provider: "file-provider" } },
+      { agent: { provider: "file-provider" } },
       {},
     );
     expect(resolved.provider).toBe("file-provider");
@@ -241,7 +233,7 @@ describe("resolveAgentConfig", () => {
 
   it("parses TURN_TIMEOUT_MS from env and prefers it over file", () => {
     const resolved = resolveAgentConfig(
-      { pi: { turnTimeoutMs: 1000 } },
+      { agent: { turnTimeoutMs: 1000 } },
       { TURN_TIMEOUT_MS: "5000" },
     );
     expect(resolved.turnTimeoutMs).toBe(5000);
@@ -263,7 +255,7 @@ describe("resolveAgentConfig", () => {
 
   it("parses PROGRESS_NOTICE_INTERVAL_MS from env and prefers it over file", () => {
     const resolved = resolveAgentConfig(
-      { pi: { progressNoticeIntervalMs: 1000 } },
+      { agent: { progressNoticeIntervalMs: 1000 } },
       { PROGRESS_NOTICE_INTERVAL_MS: "5000" },
     );
     expect(resolved.progressNoticeIntervalMs).toBe(5000);
@@ -271,7 +263,7 @@ describe("resolveAgentConfig", () => {
 
   it("allows PROGRESS_NOTICE_INTERVAL_MS=0 to disable the feature via env", () => {
     const resolved = resolveAgentConfig(
-      { pi: { progressNoticeIntervalMs: 5000 } },
+      { agent: { progressNoticeIntervalMs: 5000 } },
       { PROGRESS_NOTICE_INTERVAL_MS: "0" },
     );
     expect(resolved.progressNoticeIntervalMs).toBe(0);

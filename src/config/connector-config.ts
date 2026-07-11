@@ -13,19 +13,31 @@ import { z } from "zod";
 import { resolveEnvRefs } from "./env-ref.js";
 import { readRootConfig } from "./root-config.js";
 
+const SlackSocketSchema = z
+  .object({
+    /** Socket Mode 受信用 (mode: socket)。 */
+    appToken: z.string().optional(),
+  })
+  .strict();
+
+const SlackEventsSchema = z
+  .object({
+    /** Events API 受信用 (mode: events)。 */
+    signingSecret: z.string().optional(),
+    /** Events API 受信用 WebServer の port (mode: events)。既定 8080。 */
+    port: z.coerce.number().int().positive().default(8080),
+  })
+  .strict();
+
 const SlackConnectorSchema = z
   .object({
     mode: z.enum(["socket", "events"]).default("socket"),
-    /** Socket Mode 受信用 (mode: socket)。 */
-    appToken: z.string().optional(),
-    /** Events API 受信用 (mode: events)。 */
-    signingSecret: z.string().optional(),
-    /** Events API 受信用 (mode: events)。既定 8080。 */
-    port: z.coerce.number().int().positive().default(8080),
     /** 送信用 (chat.postMessage / reactions.add)。 */
     botToken: z.string(),
     /** 受信正規化用 (自分自身への mention 判定)。 */
     botUserId: z.string(),
+    socket: SlackSocketSchema.prefault({}),
+    events: SlackEventsSchema.prefault({}),
   })
   .strict();
 

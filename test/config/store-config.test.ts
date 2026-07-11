@@ -13,7 +13,7 @@ describe("StoreConfigSchema", () => {
   it("accepts a fully populated config", () => {
     const result = StoreConfigSchema.safeParse({
       backend: "sqlite",
-      sqlitePath: "/data/state.db",
+      sqlite: { path: "/data/state.db" },
     });
     expect(result.success).toBe(true);
   });
@@ -21,11 +21,17 @@ describe("StoreConfigSchema", () => {
   it("accepts an empty object and fills in defaults", () => {
     const data = StoreConfigSchema.parse({});
     expect(data.backend).toBe("memory");
-    expect(data.sqlitePath).toBe("/tmp/pi-chat-runner/state.db");
+    expect(data.sqlite.path).toBe("/tmp/pi-chat-runner/state.db");
   });
 
   it("rejects unknown top-level keys", () => {
     expect(StoreConfigSchema.safeParse({ unknown: true }).success).toBe(false);
+  });
+
+  it("rejects unknown keys under sqlite", () => {
+    expect(
+      StoreConfigSchema.safeParse({ sqlite: { unknown: true } }).success,
+    ).toBe(false);
   });
 
   it("rejects an invalid backend", () => {
@@ -49,18 +55,18 @@ describe("loadStoreConfig", () => {
   it("returns default (memory) when agent.yaml does not exist", async () => {
     expect(await loadStoreConfig(join(dir, "agent.yaml"))).toEqual({
       backend: "memory",
-      sqlitePath: "/tmp/pi-chat-runner/state.db",
+      sqlite: { path: "/tmp/pi-chat-runner/state.db" },
     });
   });
 
   it("returns default (memory) when agent.yaml has no store block", async () => {
     await writeFile(
       join(dir, "agent.yaml"),
-      "pi:\n  provider: google-vertex\n",
+      "agent:\n  provider: google-vertex\n",
     );
     expect(await loadStoreConfig(join(dir, "agent.yaml"))).toEqual({
       backend: "memory",
-      sqlitePath: "/tmp/pi-chat-runner/state.db",
+      sqlite: { path: "/tmp/pi-chat-runner/state.db" },
     });
   });
 
@@ -68,20 +74,23 @@ describe("loadStoreConfig", () => {
     await writeFile(join(dir, "agent.yaml"), "# just a comment\n");
     expect(await loadStoreConfig(join(dir, "agent.yaml"))).toEqual({
       backend: "memory",
-      sqlitePath: "/tmp/pi-chat-runner/state.db",
+      sqlite: { path: "/tmp/pi-chat-runner/state.db" },
     });
   });
 
   it("parses a valid store block with an explicit sqlite backend and path", async () => {
     await writeFile(
       join(dir, "agent.yaml"),
-      ["store:", "  backend: sqlite", "  sqlitePath: /data/state.db"].join(
-        "\n",
-      ),
+      [
+        "store:",
+        "  backend: sqlite",
+        "  sqlite:",
+        "    path: /data/state.db",
+      ].join("\n"),
     );
     expect(await loadStoreConfig(join(dir, "agent.yaml"))).toEqual({
       backend: "sqlite",
-      sqlitePath: "/data/state.db",
+      sqlite: { path: "/data/state.db" },
     });
   });
 
@@ -91,7 +100,8 @@ describe("loadStoreConfig", () => {
       [
         "store:",
         "  backend: ${env.STORE_BACKEND:-memory}",
-        "  sqlitePath: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db}",
+        "  sqlite:",
+        "    path: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db}",
       ].join("\n"),
     );
     const result = await loadStoreConfig(join(dir, "agent.yaml"), {
@@ -100,7 +110,7 @@ describe("loadStoreConfig", () => {
     });
     expect(result).toEqual({
       backend: "sqlite",
-      sqlitePath: "/var/data/state.db",
+      sqlite: { path: "/var/data/state.db" },
     });
   });
 

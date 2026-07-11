@@ -3,17 +3,16 @@
 connector:
   slack:
     mode: socket
-    appToken: ${env.UNSET_FIXTURE_APP_TOKEN}
     botToken: ${env.UNSET_FIXTURE_BOT_TOKEN}
     botUserId: ${env.UNSET_FIXTURE_BOT_USER_ID}
+    socket:
+      appToken: ${env.UNSET_FIXTURE_APP_TOKEN}
 
 store:
   backend: ${env.UNSET_FIXTURE_STORE_BACKEND:-memory}
 
-pi:
-  provider: ${env.UNSET_FIXTURE_PROVIDER}
-
 agent:
+  provider: ${env.UNSET_FIXTURE_PROVIDER}
   env:
     SECRET: ${env.UNSET_FIXTURE_SECRET}
 

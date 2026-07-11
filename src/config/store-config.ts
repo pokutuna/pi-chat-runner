@@ -13,11 +13,18 @@ import { z } from "zod";
 import { resolveEnvRefs } from "./env-ref.js";
 import { readRootConfig } from "./root-config.js";
 
+const SqliteStoreSchema = z
+  .object({
+    path: z.string().default("/tmp/pi-chat-runner/state.db"),
+  })
+  .strict();
+
 export const StoreConfigSchema = z
   .object({
     backend: z.enum(["memory", "sqlite", "firestore"]).default("memory"),
-    /** sqlite のときだけ使う。default があるので backend が sqlite 以外でも常に値が入る。 */
-    sqlitePath: z.string().default("/tmp/pi-chat-runner/state.db"),
+    /** backend が sqlite のときだけ使う。default があるので backend が sqlite
+     * 以外でも常に値が入る (store.sqlite.path で常にアクセス可能)。 */
+    sqlite: SqliteStoreSchema.prefault({}),
   })
   .strict();
 
@@ -25,7 +32,7 @@ export type StoreConfig = z.infer<typeof StoreConfigSchema>;
 
 /** loadStoreConfig を通した後の設定。connector と異なり store は全項目に既定値が
  * あるため、store ブロック自体が省略されていても StoreConfigSchema.parse({}) 済みの
- * (backend: "memory" ・ sqlitePath: 既定パス) が常に返る。zod の推論型 (StoreConfig)
+ * (backend: "memory" ・ sqlite.path: 既定パス) が常に返る。zod の推論型 (StoreConfig)
  * をそのまま公開名として使う。 */
 export type ResolvedStoreConfig = StoreConfig;
 
