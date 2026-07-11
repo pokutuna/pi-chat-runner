@@ -9,17 +9,17 @@ describe("formatEffectiveConfig", () => {
       channels: [
         {
           channel: "default",
-          model: "gemini-default",
+          model: "google/gemini-default",
           trigger: { when: [{ kind: "mention" }] },
         },
-        { channel: "C1", systemPrompt: "p", model: "gemini-x" },
+        { channel: "C1", systemPrompt: "p", model: "google/gemini-x" },
       ],
     });
 
     const out = formatEffectiveConfig(file, "C1", { json: false });
 
     expect(out).toContain("channel: C1");
-    expect(out).toMatch(/model:\s+gemini-x\s+← channel/);
+    expect(out).toMatch(/model:\s+google\/gemini-x\s+← channel/);
     expect(out).toMatch(/systemPrompt:.*← channel/);
     expect(out).toContain("OR[ mention ]");
     expect(out).toMatch(/trigger\.when:.*← default/);
@@ -30,7 +30,7 @@ describe("formatEffectiveConfig", () => {
       channels: [
         {
           channel: "default",
-          model: "gemini-default",
+          model: "google/gemini-default",
           trigger: { when: [{ kind: "mention" }] },
         },
       ],
@@ -39,7 +39,7 @@ describe("formatEffectiveConfig", () => {
     const out = formatEffectiveConfig(file, "C_NOT_FOUND", { json: false });
 
     expect(out).toContain("channel: C_NOT_FOUND");
-    expect(out).toMatch(/model:\s+gemini-default\s+← default/);
+    expect(out).toMatch(/model:\s+google\/gemini-default\s+← default/);
     expect(out).toMatch(/trigger\.when:.*OR\[ mention \].*← default/);
   });
 
@@ -96,10 +96,10 @@ describe("formatEffectiveConfig", () => {
       channels: [
         {
           channel: "default",
-          model: "gemini-default",
+          model: "google/gemini-default",
           trigger: { when: [{ kind: "mention" }] },
         },
-        { channel: "C1", model: "gemini-x" },
+        { channel: "C1", model: "google/gemini-x" },
       ],
     });
 
@@ -108,7 +108,7 @@ describe("formatEffectiveConfig", () => {
 
     expect(payload.channel).toBe("C1");
     expect(payload.isDm).toBe(false);
-    expect(payload.fields.model.value).toBe("gemini-x");
+    expect(payload.fields.model.value).toBe("google/gemini-x");
     expect(payload.fields.model.source).toBe("channel");
     expect(payload.when).toEqual([{ kind: "mention" }]);
   });

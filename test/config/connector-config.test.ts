@@ -126,7 +126,7 @@ describe("loadConnectorConfig", () => {
   it("returns {} when agent.yaml has no connector block", async () => {
     await writeFile(
       join(dir, "agent.yaml"),
-      "agent:\n  provider: google-vertex\n",
+      "agent:\n  turnTimeoutMs: 600000\n",
     );
     expect(await loadConnectorConfig(join(dir, "agent.yaml"))).toEqual({});
   });

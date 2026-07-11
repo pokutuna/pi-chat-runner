@@ -31,7 +31,7 @@ describe("FileConfigSource", () => {
       "Extra context note inlined from a file reference.\n",
       "inline text without file reference",
     ]);
-    expect(doc?.model).toBe("gemini-3-pro");
+    expect(doc?.model).toBe("google/gemini-3-pro");
     expect(doc?.trigger?.when).toEqual([{ kind: "mention" }]);
     // channel field must not leak into the runtime ChannelDoc
     expect(doc).not.toHaveProperty("channel");
@@ -57,7 +57,7 @@ describe("FileConfigSource", () => {
     const doc = await source.channel("C_NOT_FOUND");
     expect(doc).not.toBeNull();
     expect(doc?.systemPrompt).toBe("default fallback prompt");
-    expect(doc?.model).toBe("gemini-default");
+    expect(doc?.model).toBe("google/gemini-default");
   });
 
   it("merges the matching entry over 'default' (own keys win, unset inherit)", async () => {
@@ -66,7 +66,7 @@ describe("FileConfigSource", () => {
     );
     const doc = await source.channel("C0000000001");
     expect(doc?.systemPrompt).toBe("specific channel prompt");
-    expect(doc?.model).toBe("gemini-default");
+    expect(doc?.model).toBe("google/gemini-default");
   });
 
   it("does not fall back to the 'default' doc for the reserved DM name", async () => {
@@ -216,12 +216,12 @@ describe("FileConfigSource", () => {
 describe("mergeChannelDoc", () => {
   it("uses own's value for keys own writes, base's value for keys own omits", () => {
     const base: ChannelDoc = {
-      model: "m1",
+      model: "google/m1",
       trigger: { when: [{ kind: "mention" }] },
     };
-    const own: ChannelDoc = { model: "m2" };
+    const own: ChannelDoc = { model: "google/m2" };
     expect(mergeChannelDoc(base, own)).toEqual({
-      model: "m2",
+      model: "google/m2",
       trigger: { when: [{ kind: "mention" }] },
     });
   });
@@ -252,12 +252,12 @@ describe("resolveChannelConfig", () => {
           systemPrompt: "default prompt",
           trigger: { when: [{ kind: "mention" }] },
         },
-        { channel: "C1", model: "gemini-x" },
+        { channel: "C1", model: "google/gemini-x" },
       ],
     });
     const resolved = resolveChannelConfig(file, "C1");
     expect(resolved).not.toBeNull();
-    expect(resolved?.doc.model).toBe("gemini-x");
+    expect(resolved?.doc.model).toBe("google/gemini-x");
     expect(resolved?.doc.systemPrompt).toBe("default prompt");
     expect(resolved?.provenance.model).toBe("channel");
     expect(resolved?.provenance.systemPrompt).toBe("default");
@@ -269,7 +269,7 @@ describe("resolveChannelConfig", () => {
         {
           channel: "default",
           systemPrompt: "default prompt",
-          model: "gemini-default",
+          model: "google/gemini-default",
         },
         { channel: "dm", systemPrompt: "dm prompt" },
       ],
@@ -288,7 +288,7 @@ describe("resolveChannelConfig", () => {
         {
           channel: "default",
           systemPrompt: "default prompt",
-          model: "gemini-default",
+          model: "google/gemini-default",
         },
       ],
     });
@@ -296,7 +296,7 @@ describe("resolveChannelConfig", () => {
     expect(resolved).not.toBeNull();
     expect(resolved?.doc).toEqual({
       systemPrompt: "default prompt",
-      model: "gemini-default",
+      model: "google/gemini-default",
     });
     expect(resolved?.provenance).toEqual({
       systemPrompt: "default",

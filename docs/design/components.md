@@ -265,7 +265,7 @@ interface ChannelDoc {
   systemPrompt?: string;   // 役割・口調・運用ルール
   context?: string[];      // 初回ターンに注入する短い参照テキスト
   trigger?: { when: WhenNode[]; debounceSec?: number };  // Gate 合成木 (cooldownSec は実装保留中)
-  model?: string;
+  model?: string;          // pi の shorthand "provider/model-id[:thinking]" ([config.md](config.md) §2.3)
 }
 ```
 

@@ -3,7 +3,7 @@
  *
  * 使い方:
  *   pnpm exec tsx develop/drive-pi.ts [--session /tmp/pi-drive/s1.jsonl] \
- *     [--model gemini-2.5-flash-lite] [--provider google-vertex] [--pi-bin pi] \
+ *     [--model google-vertex/gemini-2.5-flash-lite] [--pi-bin pi] \
  *     "プロンプト本文"
  *
  * 実行中に標準入力へ行を打つと steer として送る。
@@ -23,7 +23,6 @@ const { values, positionals } = parseArgs({
   options: {
     session: { type: "string" },
     model: { type: "string" },
-    provider: { type: "string" },
     "pi-bin": { type: "string" },
     "thread-key": { type: "string", default: "local-test-thread" },
     once: { type: "boolean", default: false },
@@ -53,7 +52,6 @@ const pi = new PiProcess({
   extensionPaths,
   ...(values["pi-bin"] ? { piBinary: values["pi-bin"] } : {}),
   ...(values.model ? { model: values.model } : {}),
-  ...(values.provider ? { provider: values.provider } : {}),
   appendSystemPrompt: `You are running in a chat runner test. The current thread_key is "${threadKey}".`,
   logger: (line) => console.error(`\x1b[31m[stderr]\x1b[0m ${line}`),
 });

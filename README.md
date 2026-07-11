@@ -149,8 +149,8 @@ Not published to npm yet (planned). Until then, clone this repo, run `pnpm insta
 
 One YAML file, pointed at by `CONFIG_PATH` (default `examples/config/agent.yaml`; the filename is up to you):
 
-- **`connector` / `store` / `pi` / `agent` sections** — bridge-wide, read once at boot: Slack connector (mode/tokens), store backend, pi provider/timeout, agent runtime (UID separation, env passthrough to the pi child process). These sections support `${env.X}` / `${env.X:-default}` references to pull values from the process environment (secrets included).
-- **`channels` section** — per-channel behavior, re-read on every message (no restart needed): trigger gates, `systemPrompt`, `model`, `tools`/`excludeTools`, session mode, and per-channel `skills`/`extensions` (paths to image-baked skills/extensions, loaded in addition to the common ones under `$AGENT_HOME/.pi/agent/`). An array listing all channels, with a required `default` entry as the fallback. `systemPrompt`/`context` values starting with `./` are read as files relative to the config file's directory; relative `skills`/`extensions` paths resolve from there too.
+- **`connector` / `store` / `agent` sections** — bridge-wide, read once at boot: Slack connector (mode/tokens), store backend, agent turn timeout and runtime (UID separation, env passthrough to the pi child process). These sections support `${env.X}` / `${env.X:-default}` references to pull values from the process environment (secrets included).
+- **`channels` section** — per-channel behavior, re-read on every message (no restart needed): trigger gates, `systemPrompt`, `model` (pi's `provider/model-id[:thinking-level]` shorthand; the provider prefix is required), `tools`/`excludeTools`, session mode, and per-channel `skills`/`extensions` (paths to image-baked skills/extensions, loaded in addition to the common ones under `$AGENT_HOME/.pi/agent/`). An array listing all channels, with a required `default` entry as the fallback. `systemPrompt`/`context` values starting with `./` are read as files relative to the config file's directory; relative `skills`/`extensions` paths resolve from there too.
 
 See [`examples/config/agent.yaml`](examples/config/agent.yaml) for an annotated template. Full schema and semantics: [docs/design/config.md](docs/design/config.md).
 
@@ -167,7 +167,7 @@ Set Slack credentials in `.env.socket` or `.env`. See [Configuration](#configura
 ```yaml
 channels:
   - channel: "default"       # fallback for channels with no matching entry
-    model: gemini-3.5-flash
+    model: google-vertex/gemini-3.5-flash
     systemPrompt: ./prompts/ask-ai.md
     trigger:
       when:

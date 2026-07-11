@@ -12,7 +12,6 @@ store:
   backend: ${env.UNSET_FIXTURE_STORE_BACKEND:-memory}
 
 agent:
-  provider: ${env.UNSET_FIXTURE_PROVIDER}
   env:
     SECRET: ${env.UNSET_FIXTURE_SECRET}
 

@@ -15,7 +15,6 @@ store:
     path: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db}
 
 agent:
-  provider: ${env.PI_PROVIDER:-google-vertex}
   turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000}
 
   env:
@@ -29,7 +28,7 @@ agent:
 
 channels:
   - channel: "default"
-    model: gemini-3.5-flash
+    model: google-vertex/gemini-3.5-flash
     systemPrompt: ./prompts/gc-logging.md
     trigger:
       when:

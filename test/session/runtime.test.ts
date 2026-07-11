@@ -58,18 +58,20 @@ describe("buildPiArgs", () => {
     ]);
   });
 
-  it("appends optional provider/model/system-prompt/skill args", () => {
+  it("appends optional model/system-prompt/skill args", () => {
     const args = buildPiArgs({
       sessionPath: "/tmp/s.jsonl",
       extensionPaths: ["/e/reply.ts"],
-      provider: "google-vertex",
-      model: "gemini-2.5-flash-lite",
+      model: "google/gemini-2.5-flash-lite",
       appendSystemPrompt: "thread_key is t1",
       skillPaths: ["/app/skills/gc-logging", "/app/skills/reporting"],
     });
-    expect(args).toContain("--provider");
-    expect(args[args.indexOf("--provider") + 1]).toBe("google-vertex");
-    expect(args[args.indexOf("--model") + 1]).toBe("gemini-2.5-flash-lite");
+    // provider は --model の shorthand (provider/model-id) に含めて渡す。
+    // --provider フラグ自体を組み立てない
+    expect(args).not.toContain("--provider");
+    expect(args[args.indexOf("--model") + 1]).toBe(
+      "google/gemini-2.5-flash-lite",
+    );
     expect(args[args.indexOf("--append-system-prompt") + 1]).toBe(
       "thread_key is t1",
     );
@@ -83,22 +85,46 @@ describe("buildPiArgs", () => {
     ]);
   });
 
-  it("passes the ADC marker as --api-key only for google-vertex", () => {
+  it("passes the ADC marker as --api-key only for a google-vertex model prefix", () => {
     const vertex = buildPiArgs({
       sessionPath: "/s.jsonl",
       extensionPaths: ["/e.ts"],
-      provider: "google-vertex",
+      model: "google-vertex/gemini-3.5-flash",
     });
     expect(vertex[vertex.indexOf("--api-key") + 1]).toBe(
+      "gcp-vertex-credentials",
+    );
+
+    // thinking level suffix が付いていても provider prefix の判定は変わらない
+    const vertexThinking = buildPiArgs({
+      sessionPath: "/s.jsonl",
+      extensionPaths: ["/e.ts"],
+      model: "google-vertex/gemini-3.1-pro:high",
+    });
+    expect(vertexThinking[vertexThinking.indexOf("--api-key") + 1]).toBe(
       "gcp-vertex-credentials",
     );
 
     const other = buildPiArgs({
       sessionPath: "/s.jsonl",
       extensionPaths: ["/e.ts"],
-      provider: "anthropic",
+      model: "anthropic/claude-opus-4-8",
     });
     expect(other).not.toContain("--api-key");
+
+    // model-id 内に / を含む provider (openrouter 等) でも先頭 segment で判定する
+    const openrouter = buildPiArgs({
+      sessionPath: "/s.jsonl",
+      extensionPaths: ["/e.ts"],
+      model: "openrouter/moonshotai/kimi-k2.6",
+    });
+    expect(openrouter).not.toContain("--api-key");
+
+    const noModel = buildPiArgs({
+      sessionPath: "/s.jsonl",
+      extensionPaths: ["/e.ts"],
+    });
+    expect(noModel).not.toContain("--api-key");
   });
 
   it("omits optional args when not specified", () => {

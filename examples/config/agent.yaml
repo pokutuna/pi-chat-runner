@@ -36,9 +36,6 @@ store:
 
 # --- agent: pi's behavior, env, and execution environment ---
 agent:
-  # Default provider is Vertex AI with ADC auth.
-  # SET: GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION for google-vertex.
-  provider: ${env.PI_PROVIDER:-google-vertex}
   turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000} # pi is killed if a turn runs past this
 
   # Extra env vars passed to the pi child process, added on top of the code's
@@ -59,15 +56,20 @@ agent:
 # --- channels: per-channel behavior, re-read on every message ---
 # One array of channel configs. "default" is required as the fallback base;
 # every other entry replaces default's fields wholesale (no deep-merge).
-# pi's model goes here (default.model / a channel's model); a classifier gate's
-# model goes on that gate's node. systemPrompt/context values starting with
-# ./ or ../ are read as files relative to this file's directory.
+# pi's model goes here (default.model / a channel's model) in pi's canonical
+# "provider/model-id[:thinking-level]" form (e.g. "anthropic/claude-opus-4-8:high",
+# "openrouter/moonshotai/kimi-k2.6"). The provider prefix is required. Auth:
+# google-vertex uses ADC (SET: GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION);
+# other providers read their API key env var (e.g. OPENROUTER_API_KEY) — pass
+# it via agent.env above. A classifier gate's model goes on that gate's node.
+# systemPrompt/context values starting with ./ or ../ are read as files
+# relative to this file's directory.
 channels:
   - channel: "default"
     # Fallback for any channel below with no matching entry. Doesn't apply to
     # DMs (see the "dm" entry). Keep this mention-only — passthrough here
     # would react to every message in every channel the bot is in.
-    model: gemini-3.5-flash
+    model: google-vertex/gemini-3.5-flash
     systemPrompt: ./prompts/ask-ai.md
     trigger:
       when:

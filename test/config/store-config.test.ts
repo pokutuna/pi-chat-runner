@@ -62,7 +62,7 @@ describe("loadStoreConfig", () => {
   it("returns default (memory) when agent.yaml has no store block", async () => {
     await writeFile(
       join(dir, "agent.yaml"),
-      "agent:\n  provider: google-vertex\n",
+      "agent:\n  turnTimeoutMs: 600000\n",
     );
     expect(await loadStoreConfig(join(dir, "agent.yaml"))).toEqual({
       backend: "memory",

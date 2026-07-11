@@ -53,7 +53,8 @@ spawn の擬似コード:
 const pi = spawn("pi", [
   "--mode", "rpc",
   "--session", `${workdir}/session.jsonl`,
-  "--model", channel.model ?? env.DEFAULT_MODEL,
+  "--model", channel.model,   // "provider/model-id[:thinking]" 形式 (config.md §2.3)。未指定なら渡さない (pi 既定)
+                              // google-vertex のときだけ --api-key gcp-vertex-credentials を併せて渡す (ADC marker)
   "--append-system-prompt", buildPrompt(channel),  // app 共通 + ChannelDoc.systemPrompt
   "--extension", "/app/extensions/reply.ts",
   "--extension", "/app/extensions/export.ts",

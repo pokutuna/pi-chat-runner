@@ -46,7 +46,6 @@ const AgentRuntimeSchema = z
 
 const AgentAgentSchema = z
   .object({
-    provider: z.string().optional(),
     /** ${env.X} 解決後は文字列で来る可能性があるため coerce する (uid/gid 等と同じ理由)。 */
     turnTimeoutMs: z.coerce.number().int().positive().optional(),
     /** 長時間ターンの進捗通知の間隔 (progress-notice.md)。0 で機能自体を無効化する。 */
@@ -113,7 +112,6 @@ export async function loadAgentConfig(
  * 常に埋めて返す (env は既定 {}、runtime.permissionMode は既定 true、
  * runtime.home は既定 "/home/agent")。 */
 export interface ResolvedAgentConfig {
-  provider?: string;
   turnTimeoutMs?: number;
   progressNoticeIntervalMs?: number;
   /** pi 子プロセスへ明示的に渡す env (agent.env の解決結果)。コード既定 (gcpEnv 等)
@@ -202,7 +200,6 @@ export function resolveAgentConfig(
   file: AgentConfig,
   env: NodeJS.ProcessEnv,
 ): ResolvedAgentConfig {
-  const provider = env.PI_PROVIDER ?? file.agent?.provider;
   const turnTimeoutMs =
     parseTurnTimeoutMsEnv(env.TURN_TIMEOUT_MS) ?? file.agent?.turnTimeoutMs;
   const progressNoticeIntervalMs =
@@ -221,7 +218,6 @@ export function resolveAgentConfig(
   const home = env.PI_AGENT_HOME ?? file.agent?.runtime?.home ?? "/home/agent";
 
   return {
-    ...(provider !== undefined ? { provider } : {}),
     ...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
     ...(progressNoticeIntervalMs !== undefined
       ? { progressNoticeIntervalMs }

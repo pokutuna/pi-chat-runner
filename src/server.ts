@@ -182,7 +182,6 @@ function missingConnectorConfig(configPath: string): never {
   );
   console.error("");
   console.error("任意 (agent.yaml でも設定可。詳細は config.md §6):");
-  console.error("  PI_PROVIDER         pi の --provider");
   console.error(
     "  PI_AGENT_UID/GID    pi を落とす実行 uid/gid (session-runtime.md §6 の UID 分離。両方セットで有効。agent.yaml の agent.runtime.uid/gid でも指定可)",
   );
@@ -199,7 +198,7 @@ function missingConnectorConfig(configPath: string): never {
     "  PROGRESS_NOTICE_INTERVAL_MS  長時間ターンの進捗通知の間隔 ms (既定 30000。0 で無効化)",
   );
   console.error(
-    "  上記 PI_PROVIDER/TURN_TIMEOUT_MS/PROGRESS_NOTICE_INTERVAL_MS は設定ファイル (CONFIG_PATH) の agent ブロックでも設定可 (env が優先)。pi へ渡す追加 env は agent.env で明示列挙する",
+    "  上記 TURN_TIMEOUT_MS/PROGRESS_NOTICE_INTERVAL_MS は設定ファイル (CONFIG_PATH) の agent ブロックでも設定可 (env が優先)。pi へ渡す追加 env は agent.env で明示列挙する",
   );
   console.error("");
   console.error("例 (.env ファイル推奨):");
@@ -307,8 +306,7 @@ async function main() {
   // agent ブロック (config.md §6) + env を解決する。優先順位は env > 設定ファイル > コード既定
   const agentConfigFile = await loadAgentConfig(configPath);
   const agentConfig = resolveAgentConfig(agentConfigFile, process.env);
-  const { provider, turnTimeoutMs, progressNoticeIntervalMs, runtime } =
-    agentConfig;
+  const { turnTimeoutMs, progressNoticeIntervalMs, runtime } = agentConfig;
 
   const gcpEnv = collectGcpEnv();
   const piPaths = resolvePiPaths();
@@ -344,7 +342,6 @@ async function main() {
     web,
     store,
     configSource: new FileConfigSource(configPath),
-    ...(provider !== undefined ? { provider } : {}),
     ...(Object.keys(extraEnv).length > 0 ? { extraEnv } : {}),
     // WORKDIR_ARCHIVE_DIR 未設定なら境界退避なし (Step 3 相当の挙動)
     ...(archiveDir !== undefined && archiveDir !== "" ? { archiveDir } : {}),

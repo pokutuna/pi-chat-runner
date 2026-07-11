@@ -1,7 +1,7 @@
 channels:
   - channel: "default"
     systemPrompt: default fallback prompt
-    model: gemini-default
+    model: google/gemini-default
     trigger:
       when:
         - kind: mention

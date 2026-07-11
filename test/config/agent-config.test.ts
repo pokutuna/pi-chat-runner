@@ -14,7 +14,6 @@ describe("AgentConfigSchema", () => {
   it("accepts a fully populated config", () => {
     const result = AgentConfigSchema.safeParse({
       agent: {
-        provider: "google-vertex",
         turnTimeoutMs: 600000,
         env: { GH_TOKEN: "${env.GH_TOKEN}" },
         runtime: {
@@ -39,6 +38,13 @@ describe("AgentConfigSchema", () => {
   it("rejects a negative turnTimeoutMs", () => {
     expect(
       AgentConfigSchema.safeParse({ agent: { turnTimeoutMs: -1 } }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a provider field under agent (removed in favor of channel model shorthand)", () => {
+    expect(
+      AgentConfigSchema.safeParse({ agent: { provider: "google-vertex" } })
+        .success,
     ).toBe(false);
   });
 
@@ -146,10 +152,10 @@ describe("loadAgentConfig", () => {
   it("parses a valid agent.yaml", async () => {
     await writeFile(
       join(dir, "agent.yaml"),
-      "agent:\n  provider: google-vertex\n",
+      "agent:\n  turnTimeoutMs: 600000\n",
     );
     expect(await loadAgentConfig(join(dir, "agent.yaml"))).toEqual({
-      agent: { provider: "google-vertex" },
+      agent: { turnTimeoutMs: 600000 },
     });
   });
 
@@ -196,25 +202,8 @@ describe("loadAgentConfig", () => {
 });
 
 describe("resolveAgentConfig", () => {
-  it("prefers env over file for provider", () => {
-    const resolved = resolveAgentConfig(
-      { agent: { provider: "file-provider" } },
-      { PI_PROVIDER: "env-provider" },
-    );
-    expect(resolved.provider).toBe("env-provider");
-  });
-
-  it("falls back to file values when env is unset", () => {
-    const resolved = resolveAgentConfig(
-      { agent: { provider: "file-provider" } },
-      {},
-    );
-    expect(resolved.provider).toBe("file-provider");
-  });
-
-  it("leaves provider/turnTimeoutMs undefined when neither env nor file set them", () => {
+  it("leaves turnTimeoutMs undefined when neither env nor file set them", () => {
     const resolved = resolveAgentConfig({}, {});
-    expect(resolved.provider).toBeUndefined();
     expect(resolved.turnTimeoutMs).toBeUndefined();
   });
 

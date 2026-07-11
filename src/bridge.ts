@@ -44,7 +44,6 @@ export interface BridgeOptions {
   web: WebClient;
   store: StateStore;
   configSource: ConfigSource;
-  provider?: string;
   turnTimeoutMs?: number;
   progressNoticeIntervalMs?: number;
   /** classifier gate 用 LLM client の注入口 (主にテスト用)。省略時は
@@ -167,7 +166,6 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
     // 持たない)。bridge.ts は Slack 専用モジュールなので、Slack の mrkdwn
     // mention 記法をここで注入する
     mentionFormat: (userId) => `<@${userId}>`,
-    ...(options.provider !== undefined ? { provider: options.provider } : {}),
     ...(options.extraEnv !== undefined &&
     Object.keys(options.extraEnv).length > 0
       ? { extraEnv: options.extraEnv }

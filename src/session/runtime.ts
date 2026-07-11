@@ -56,9 +56,9 @@ export interface PiProcessOptions {
   piBinary?: string;
   /** 指定時、`node --permission` 経由で pi を起動する (opt-in)。省略時は現状動作 */
   permission?: PiPermissionOptions;
-  /** `--provider` (省略時は pi のローカル設定に従う) */
-  provider?: string;
-  /** `--model` (省略時は pi のローカル設定に従う) */
+  /** `--model` に渡す `provider/model-id[:thinking-level]` (省略時は pi のローカル
+   * 設定に従う)。provider の切り替え・thinking level はこの shorthand で表現し、
+   * パースは pi の resolveCliModel に委譲する (--provider は渡さない) */
   model?: string;
   /** `--append-system-prompt` */
   appendSystemPrompt?: string;
@@ -86,13 +86,21 @@ export interface PiProcessOptions {
   logger?: (line: string) => void;
 }
 
+/** API キー環境変数ではなく ADC (ambient credentials) で認証する provider の一覧。
+ * pi-ai の認証可否判定 (env-api-keys.js) は ADC ファイルの存在チェックを行うため、
+ * ファイルを作らない Cloud Run のメタデータサーバー ADC では通らない。値は pi-ai が
+ * 定義する迂回用 marker 文字列 (secret ではない)。ADC 対応 provider を増やすときは
+ * ここに追記する (例: amazon-bedrock)。 */
+const ADC_MARKER_PROVIDERS = new Map<string, string>([
+  ["google-vertex", "gcp-vertex-credentials"],
+]);
+
 /** spawn 引数の組み立て (純粋関数、テスト対象) */
 export function buildPiArgs(
   options: Pick<
     PiProcessOptions,
     | "sessionPath"
     | "extensionPaths"
-    | "provider"
     | "model"
     | "appendSystemPrompt"
     | "skillPaths"
@@ -111,14 +119,22 @@ export function buildPiArgs(
   // (reply + permission-gate を常時両方注入するため)
   for (const extensionPath of options.extensionPaths)
     args.push("--extension", extensionPath);
-  if (options.provider) args.push("--provider", options.provider);
-  // google-vertex の認証可否判定は「ADC ファイルの存在チェック」なので、Cloud Run の
+  // model は `provider/model-id[:thinking]` の canonical 形式 (channel-doc.ts で検証済み)。
+  // provider 推論・thinking パースは pi の resolveCliModel に委譲する (--provider は
+  // 渡さない)。ADC 系 provider だけは認証可否判定の都合で prefix を見る (下記)
+  if (options.model) args.push("--model", options.model);
+  // ADC 系 provider の認証可否判定は「ADC ファイルの存在チェック」なので、Cloud Run の
   // メタデータサーバー ADC (ファイルを作らない) では "No API key found" になる。
   // pi-ai が定義する marker 文字列を明示的に渡すとこのゲートを迂回でき、marker は
-  // provider 側 (resolveApiKey) で捨てられて ADC 経路で実認証される (secret ではない)
-  if (options.provider === "google-vertex")
-    args.push("--api-key", "gcp-vertex-credentials");
-  if (options.model) args.push("--model", options.model);
+  // provider 側 (resolveApiKey) で捨てられて ADC 経路で実認証される (secret ではない)。
+  // それ以外の provider の認証は agent.env で渡す環境変数 (OPENROUTER_API_KEY 等) を
+  // pi 自身が拾う (env-api-keys の固定テーブル)。runner は判定に関与しない
+  const providerPrefix = options.model?.split("/")[0];
+  const adcMarker =
+    providerPrefix !== undefined
+      ? ADC_MARKER_PROVIDERS.get(providerPrefix)
+      : undefined;
+  if (adcMarker !== undefined) args.push("--api-key", adcMarker);
   if (options.appendSystemPrompt)
     args.push("--append-system-prompt", options.appendSystemPrompt);
   for (const skillPath of options.skillPaths ?? [])

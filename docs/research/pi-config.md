@@ -19,7 +19,7 @@ bridge 運用に関係するものを中心に (全項目は settings.md 参照)
 
 | カテゴリ | 主な項目 | bridge との関係 |
 |---|---|---|
-| Model & Thinking | `defaultProvider` / `defaultModel` / `defaultThinkingLevel` / `thinkingBudgets` | spawn 引数 `--provider` / `--model` で上書きされるので ChannelDoc 側が勝つ |
+| Model & Thinking | `defaultProvider` / `defaultModel` / `defaultThinkingLevel` / `thinkingBudgets` | spawn 引数 `--model` (provider/model-id 形式) で上書きされるので ChannelDoc 側が勝つ |
 | **Compaction** | `compaction.enabled` (**既定 true**) / `reserveTokens` (16384) / `keepRecentTokens` (20000) | **pi は自動 compaction が既定で有効**。閾値チューニングもここ |
 | Retry | `retry.enabled` (true) / `maxRetries` (3) / `baseDelayMs` / `retry.provider.*` | 一時エラーの吸収は pi 側に既にある。bridge の再試行と二重にしない |
 | Message Delivery | `steeringMode` / `followUpMode` (共に既定 `"one-at-a-time"`) | inbox 配達 ([session-runtime.md](../design/session-runtime.md) §4) と噛み合う既定 |

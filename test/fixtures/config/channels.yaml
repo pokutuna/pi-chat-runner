@@ -8,7 +8,7 @@ channels:
     context:
       - ./prompts/context-note.md
       - inline text without file reference
-    model: gemini-3-pro
+    model: google/gemini-3-pro
     trigger:
       when:
         - kind: mention

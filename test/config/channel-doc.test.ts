@@ -25,9 +25,21 @@ describe("ChannelDocSchema", () => {
         ],
         debounceSec: 30,
       },
-      model: "gemini-3-pro",
+      model: "google-vertex/gemini-3-pro",
     });
     expect(result.success).toBe(true);
+  });
+
+  it("accepts a model with a thinking-level suffix", () => {
+    const result = ChannelDocSchema.safeParse({
+      model: "google-vertex/gemini-3.1-pro:high",
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a bare model id without a provider prefix", () => {
+    const result = ChannelDocSchema.safeParse({ model: "gemini-3.5-flash" });
+    expect(result.success).toBe(false);
   });
 
   it("rejects cooldownSec inside trigger (implementation deferred)", () => {

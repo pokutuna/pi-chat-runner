@@ -107,7 +107,18 @@ export const ChannelDocSchema = z
     systemPrompt: z.string().optional(),
     context: z.array(z.string()).optional(),
     trigger: TriggerSchema.optional(),
-    model: z.string().optional(),
+    /** pi の --model にそのまま渡す。`provider/model-id[:thinking-level]` の
+     * canonical 形式を必須とする (pi の shorthand)。provider prefix が無い bare id は
+     * pi 側の fuzzy match で解決先 provider が非決定になり、ADC marker の判定
+     * (runtime.ts buildPiArgs) もできないため fail-loud で弾く。
+     * model-id 側の解釈 (thinking suffix・fuzzy match) は pi に委譲する。 */
+    model: z
+      .string()
+      .refine((v) => v.includes("/"), {
+        message:
+          'model must be in canonical "provider/model-id" form (e.g. "google-vertex/gemini-3.5-flash")',
+      })
+      .optional(),
     /** pi の --tools に渡す allowlist。--tools は extension ツール (reply 含む) にも
      * 適用されるため、bridge が reply を自動補完する (runtime.ts buildPiArgs) */
     tools: z.array(z.string()).optional(),

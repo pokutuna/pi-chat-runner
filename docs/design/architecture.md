@@ -135,7 +135,7 @@ interface ChannelDoc {
     debounceSec?: number;          // 連投バーストを 1 kick にまとめる (実装済み)
     // cooldownSec?: number;       // 実装保留中。スキーマからも外してある (session-model.md 「実装案」参照)
   };
-  model?: string;                  // 省略時はコード既定
+  model?: string;                  // pi の shorthand "provider/model-id[:thinking]"。省略時は pi 既定
   tools?: string[];                // pi --tools の allowlist
   excludeTools?: string[];         // pi --exclude-tools の denylist
   skills?: string[];               // チャンネル別に追加する skill のパス (pi --skill、additive。[config.md](config.md) §2)
