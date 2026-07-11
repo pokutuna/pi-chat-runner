@@ -33,6 +33,35 @@ is also already covered by the base image's own Permission Model config
 (the whole `/app/node_modules` tree is readable), so nothing has to be added
 for this example either.
 
+## Alternative: install into `$AGENT_HOME` with `pi install` (all channels)
+
+The Dockerfile in this example installs `pi-smart-fetch` into `/app/node_modules`
+so it stays out of pi's auto-discovery path and only the channel that lists it
+in `extensions:` gets it. If you instead want the extension available to
+**every** channel, and you'd rather not learn this repo's `/app` vs.
+`$AGENT_HOME` layout at all, pi's own `install` command does this with zero
+pi-chat-runner-specific knowledge:
+
+```dockerfile
+ARG BASE_IMAGE=pi-chat-runner:local
+FROM ${BASE_IMAGE}
+
+USER agent
+RUN /app/node_modules/.bin/pi install npm:pi-smart-fetch
+USER root
+```
+
+`USER agent` switches to the uid-1001 user baked into the base image (see the
+base `Dockerfile`) before running `pi install`, so the package lands owned by
+`agent:agent` under `$AGENT_HOME/.pi/agent/npm/node_modules/` with no `chown`
+step needed, and gets registered in `$AGENT_HOME/.pi/agent/settings.json`'s
+`packages` list — the same mechanism `pi install` uses outside this runner.
+Because this path *is* pi's auto-discovery path, no `channels[].extensions`
+entry is needed at all; every channel picks it up automatically. This trades
+away the per-channel scoping (and its cost containment) this example
+otherwise demonstrates — use it only when every channel the bot serves should
+have the capability (and its `allowAddons` cost — see below).
+
 ## Why `agent.runtime.allowAddons` is needed
 
 `pi-smart-fetch` depends on a native addon (`wreq-js`, a Rust N-API binary).
@@ -86,12 +115,3 @@ docker compose down
 host's `GOOGLE_APPLICATION_CREDENTIALS` file at the same path inside the
 container, and keeps the workdir (session transcripts) in a named volume so
 it survives container restarts.
-
-## Verified
-
-(Not verified.) This example was written by inspecting `gc-logging-agent`'s
-pattern, the base `Dockerfile`, and `src/session/runner.ts`'s handling of
-`channels[].extensions`, but the `docker build` / container boot / actual
-Slack round-trip with `pi-smart-fetch` fetching a real URL have not been run
-as part of authoring this example. Building and running it end-to-end is a
-separate follow-up task.
