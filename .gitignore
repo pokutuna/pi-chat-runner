@@ -12,3 +12,6 @@ develop/config/
 # 個人のツールバージョン管理設定
 mise.toml
 .pnpm-store/
+
+# 個人の作業メモ
+RUNNER_TODO.md
