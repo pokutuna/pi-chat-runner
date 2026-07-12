@@ -13,14 +13,24 @@ See [docs/design/session-runtime.md §5](../../docs/design/session-runtime.md) f
 
 ## Build
 
-Build the base image first, then build this image on top of it.
+The Dockerfile's `BASE_IMAGE` defaults to the published base image
+(`ghcr.io/pokutuna/pi-chat-runner:latest`), so this example builds standalone
+— no need to clone the repo or build the base image yourself (the image is
+`linux/amd64` only; add `--platform linux/amd64` on Apple Silicon):
+
+```sh
+docker build -t gc-logging-agent:local examples/gc-logging-agent
+```
+
+To build against a locally-built base image instead (e.g. while developing
+pi-chat-runner itself), override `BASE_IMAGE`:
 
 ```sh
 # from the repo root: base image
 docker build -t pi-chat-runner:local .
 
 # this extension image
-docker build -t gc-logging-agent:local examples/gc-logging-agent
+docker build -t gc-logging-agent:local --build-arg BASE_IMAGE=pi-chat-runner:local examples/gc-logging-agent
 ```
 
 ## Run locally

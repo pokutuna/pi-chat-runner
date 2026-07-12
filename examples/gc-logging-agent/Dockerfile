@@ -1,6 +1,6 @@
 # Extends the pi-chat-runner base image with CLIs and skills for
 # investigating Google Cloud Logging.
-ARG BASE_IMAGE=pi-chat-runner:local
+ARG BASE_IMAGE=ghcr.io/pokutuna/pi-chat-runner:latest
 FROM ${BASE_IMAGE}
 
 # gcloud CLI

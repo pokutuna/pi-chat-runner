@@ -1,7 +1,7 @@
 # Extends the pi-chat-runner base image with a single `FROM` step, adding the
 # pi-smart-fetch extension (URL fetch + summarize) as a per-channel, opt-in
 # capability rather than a common one — see README.md for why.
-ARG BASE_IMAGE=pi-chat-runner:local
+ARG BASE_IMAGE=ghcr.io/pokutuna/pi-chat-runner:latest
 FROM ${BASE_IMAGE}
 
 # node:26-slim (the base image's runtime stage) doesn't ship corepack, so pin

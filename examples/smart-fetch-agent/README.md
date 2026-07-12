@@ -43,7 +43,7 @@ in `extensions:` gets it. If you instead want the extension available to
 pi-chat-runner-specific knowledge:
 
 ```dockerfile
-ARG BASE_IMAGE=pi-chat-runner:local
+ARG BASE_IMAGE=ghcr.io/pokutuna/pi-chat-runner:latest
 FROM ${BASE_IMAGE}
 
 USER agent
@@ -85,14 +85,24 @@ extension, and only for the channels that need it.
 
 ## Build
 
-Build the base image first, then build this image on top of it.
+The Dockerfile's `BASE_IMAGE` defaults to the published base image
+(`ghcr.io/pokutuna/pi-chat-runner:latest`), so this example builds standalone
+— no need to clone the repo or build the base image yourself (the image is
+`linux/amd64` only; add `--platform linux/amd64` on Apple Silicon):
+
+```sh
+docker build -t smart-fetch-agent:local examples/smart-fetch-agent
+```
+
+To build against a locally-built base image instead (e.g. while developing
+pi-chat-runner itself), override `BASE_IMAGE`:
 
 ```sh
 # from the repo root: base image
 docker build -t pi-chat-runner:local .
 
 # this extension image
-docker build -t smart-fetch-agent:local examples/smart-fetch-agent
+docker build -t smart-fetch-agent:local --build-arg BASE_IMAGE=pi-chat-runner:local examples/smart-fetch-agent
 ```
 
 ## Run locally
