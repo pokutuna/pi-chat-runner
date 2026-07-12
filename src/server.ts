@@ -230,6 +230,8 @@ function buildConnector(
       const ingress = new SocketIngress({
         appToken: slack.socket.appToken,
         botUserId,
+        web: new WebClient(botToken),
+        logger: rootLogger.child({ component: "socket" }),
       });
       return { ingress, botToken };
     }
