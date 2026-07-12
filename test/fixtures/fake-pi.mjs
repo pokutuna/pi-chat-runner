@@ -69,7 +69,7 @@ const fallbackThreadKey = fallbackMatch ? fallbackMatch[1] : "unknown";
 /** message 本文中の直近の "(thread_key: <key>):" を拾う。無ければ session の
  * fallback thread_key を使う (buildSystemPrompt の指示と同じ規則) */
 function threadKeyFromMessage(message) {
-  const matches = [...message.matchAll(/\(thread_key: (\S+)\):/g)];
+  const matches = [...message.matchAll(/^thread_key: (\S+)$/gm)];
   const last = matches.at(-1);
   return last ? last[1] : fallbackThreadKey;
 }

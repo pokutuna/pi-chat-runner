@@ -1745,7 +1745,9 @@ describe("renderEvent", () => {
       sender: { id: "U123", isBot: false, displayName: "pokutuna" },
       text: "hello",
     });
-    expect(renderEvent(event)).toBe("<pokutuna (U123)> のメッセージ:\nhello");
+    expect(renderEvent(event)).toBe(
+      "from: pokutuna (U123)\ntime: 2026-07-05T00:00:00.000Z\n---\nhello",
+    );
   });
 
   it("falls back to the bare user id when unresolved", () => {
@@ -1753,16 +1755,18 @@ describe("renderEvent", () => {
       sender: { id: "U123", isBot: false },
       text: "hello",
     });
-    expect(renderEvent(event)).toBe("<U123> のメッセージ:\nhello");
+    expect(renderEvent(event)).toBe(
+      "from: U123\ntime: 2026-07-05T00:00:00.000Z\n---\nhello",
+    );
   });
 
-  it("thread_key 指定時はヘッダに thread_key を注記する", () => {
+  it("thread_key 指定時は from/time に続けて thread_key を列挙する", () => {
     const event = message({
       sender: { id: "U123", isBot: false },
       text: "hello",
     });
     expect(renderEvent(event, "C01:1700000000.000100")).toBe(
-      "<U123> のメッセージ (thread_key: C01:1700000000.000100):\nhello",
+      "from: U123\ntime: 2026-07-05T00:00:00.000Z\nthread_key: C01:1700000000.000100\n---\nhello",
     );
   });
 });

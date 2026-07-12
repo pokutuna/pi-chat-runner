@@ -331,8 +331,9 @@ export function replyThreadKeyOf(event: InboundMessage): string {
 }
 
 /** イベント 1 件のプロンプト描画 (session-runtime.md §4 の renderEvent)。
- * threadKey 指定時はヘッダに thread_key を注記し、エージェントが reply 時に
- * どの宛先へ返すべきかを判別できるようにする (session-model.md §3) */
+ * threadKey 指定時は from/time/thread_key をラベル付きで列挙し、エージェントが
+ * reply 時にどの宛先へ返すべきか、いつのメッセージかを判別できるようにする
+ * (session-model.md §3)。time は ISO 8601 (タイムゾーン付き) で曖昧さをなくす。 */
 // 表示名だけにすると pi が mention (`<@U123>`) を組み立てられなくなるため、
 // UserID は常に併記する
 export function renderEvent(event: InboundMessage, threadKey?: string): string {
@@ -340,11 +341,10 @@ export function renderEvent(event: InboundMessage, threadKey?: string): string {
     event.sender.displayName !== undefined
       ? `${event.sender.displayName} (${event.sender.id})`
       : event.sender.id;
-  const header =
-    threadKey !== undefined
-      ? `<${sender}> のメッセージ (thread_key: ${threadKey}):`
-      : `<${sender}> のメッセージ:`;
-  return `${header}\n${event.text}`;
+  const time = event.timestamp.toISOString();
+  const lines = [`from: ${sender}`, `time: ${time}`];
+  if (threadKey !== undefined) lines.push(`thread_key: ${threadKey}`);
+  return `${lines.join("\n")}\n---\n${event.text}`;
 }
 
 function renderItems(items: InboxItem[]): string {
