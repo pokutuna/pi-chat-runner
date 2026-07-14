@@ -1230,11 +1230,14 @@ export class SessionRunner {
           // にそれをそのまま poster へ流すと境界チェックを素通りしてしまう
           this.resolveReplyFiles(sessionKey, workdirReal, payload.files)
             .then((files) =>
-              this.router.deliver({
-                thread_key: payload.thread_key,
-                text: payload.text,
-                ...(files !== undefined ? { files } : {}),
-              }),
+              this.router.deliver(
+                {
+                  thread_key: payload.thread_key,
+                  text: payload.text,
+                  ...(files !== undefined ? { files } : {}),
+                },
+                sessionKey,
+              ),
             )
             .then((result) => {
               // reply が進捗メッセージをその場で消費できたら、agent_end を待たず
@@ -1559,15 +1562,15 @@ export class SessionRunner {
     this.stopRenewTimer(record);
     this.clearTurnTimeout(record);
     this.clearProgressNotice(record);
-    await this.router.clearProgress(sessionKey);
 
     // register 済み (kick で必ず register している) なので deliver できる。
     // 通知の配達が失敗してもセッションの畳み込みは続ける
     await this.router
-      .deliver({ thread_key: sessionKey, text: options.noticeText })
+      .deliver({ thread_key: sessionKey, text: options.noticeText }, sessionKey)
       .catch((err) => {
         this.logger.warn({ sessionKey, err }, "failure notice delivery failed");
       });
+    await this.router.clearProgress(sessionKey);
     await this.safeReact(
       () => this.reactions.addX(record.channelId, record.triggerTs),
       sessionKey,

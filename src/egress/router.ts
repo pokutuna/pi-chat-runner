@@ -24,6 +24,13 @@ export interface EgressDestination {
   threadTs?: string;
 }
 
+function sameDestination(
+  left: EgressDestination,
+  right: EgressDestination,
+): boolean {
+  return left.channelId === right.channelId && left.threadTs === right.threadTs;
+}
+
 /** WebClient.chat.postMessage/chat.update の薄い IF。テストではフェイクを注入する。
  * files は添付するローカルファイルの絶対パス配列。
  * postMessage の戻り値 messageId は「後から更新できる識別子」の共通抽象
@@ -54,12 +61,12 @@ export interface EgressRouterOptions {
 
 export class EgressRouter {
   private readonly destinations = new Map<string, EgressDestination>();
-  /** 進捗通知メッセージの thread_key → messageId (progress-notice.md)。
+  /** 進捗通知メッセージの進捗キー → messageId (progress-notice.md)。
    * reply の確定出力とは別レーンなので destinations とは別に持つ */
   private readonly progressMessageIds = new Map<string, string>();
-  /** thread_key ごとの直列化キュー。進捗タイマー (notifyProgress) と reply
-   * (deliver) が同じ thread_key に非同期で競合すると、進捗メッセージの
-   * messageId 消費と再投稿の順序が入れ替わりうるため、同一 thread_key への
+  /** 進捗キーごとの直列化キュー。進捗タイマー (notifyProgress) と reply
+   * (deliver) が同じ進捗キーに非同期で競合すると、進捗メッセージの
+   * messageId 消費と再投稿の順序が入れ替わりうるため、同一進捗キーへの
    * 呼び出しは常に呼ばれた順に完了させる */
   private readonly queues = new Map<string, Promise<unknown>>();
   private readonly poster: ChatPoster;
@@ -87,18 +94,27 @@ export class EgressRouter {
   }
 
   /** 未知の thread_key は warn して捨てる (エージェントの引数間違いでホストを落とさない)。
+   * progressThreadKey は通常 payload.thread_key と同じだが、session.mode=channel の
+   * ように進捗通知をセッションキーで出し、reply はメッセージ単位のキーで返す場合に
+   * 進捗メッセージとの関連付けに使う。進捗キーを指定した場合は、そのキーのキューで
+   * reply も直列化する。
+   *
    * progressConsumed: 進捗通知メッセージを reply 本文で上書きできたら true。呼び出し元
    * (SessionRunner) はこれを見て進捗タイマーを即時停止する — agent_end まで待つと、その
    * 間にタイマーが再発火し、上書き済みの進捗メッセージの跡地に新規メッセージを
    * 投稿してしまう (thread_key に紐づく messageId が既に消えているため) */
   async deliver(
     payload: EgressPayload,
+    progressThreadKey = payload.thread_key,
   ): Promise<{ progressConsumed: boolean }> {
-    return this.enqueue(payload.thread_key, () => this.deliverNow(payload));
+    return this.enqueue(progressThreadKey, () =>
+      this.deliverNow(payload, progressThreadKey),
+    );
   }
 
   private async deliverNow(
     payload: EgressPayload,
+    progressThreadKey: string,
   ): Promise<{ progressConsumed: boolean }> {
     const destination = this.destinations.get(payload.thread_key);
     if (destination === undefined) {
@@ -121,7 +137,7 @@ export class EgressRouter {
         if (
           isFirst &&
           files === undefined &&
-          (await this.tryUpdateProgress(payload.thread_key, part))
+          (await this.tryUpdateProgress(progressThreadKey, destination, part))
         ) {
           progressConsumed = true;
           continue;
@@ -195,24 +211,37 @@ export class EgressRouter {
     }
   }
 
-  /** reply の最初のチャンクを、同じ thread_key に進捗通知メッセージが残っていれば
-   * それに上書きする (最終回答で「実行中...」が残り続けるのを避ける)。update できたら
-   * true を返し、呼び出し元は新規投稿をスキップする。進捗メッセージが無い/update に
-   * 失敗した場合は false を返し、呼び出し元が通常どおり新規投稿する */
+  /** reply の最初のチャンクを、進捗キーに対応する進捗通知メッセージが残っており、
+   * reply と同じ投稿先ならそれに上書きする (最終回答で「実行中...」が残り続けるのを
+   * 避ける)。update できたら true を返し、呼び出し元は新規投稿をスキップする。
+   * 進捗メッセージが無い/投稿先が異なる/update に失敗した場合は false を返し、呼び出し元
+   * が通常どおり新規投稿する */
   private async tryUpdateProgress(
-    threadKey: string,
+    progressThreadKey: string,
+    replyDestination: EgressDestination,
     text: string,
   ): Promise<boolean> {
-    const destination = this.destinations.get(threadKey);
-    const messageId = this.progressMessageIds.get(threadKey);
-    if (destination === undefined || messageId === undefined) return false;
+    const progressDestination = this.destinations.get(progressThreadKey);
+    const messageId = this.progressMessageIds.get(progressThreadKey);
+    // session.mode=channel では進捗キーと reply のキーが異なる。実際の投稿先が
+    // 同じ場合だけ上書きし、別スレッドの進捗を別の reply で消費しない。
+    if (
+      progressDestination === undefined ||
+      messageId === undefined ||
+      !sameDestination(progressDestination, replyDestination)
+    )
+      return false;
     try {
-      await this.poster.updateMessage(destination.channelId, messageId, text);
-      this.progressMessageIds.delete(threadKey);
+      await this.poster.updateMessage(
+        progressDestination.channelId,
+        messageId,
+        text,
+      );
+      this.progressMessageIds.delete(progressThreadKey);
       return true;
     } catch (err) {
       this.logger.warn(
-        { threadKey, err },
+        { threadKey: progressThreadKey, err },
         "progress message update for reply failed; falling back to new post",
       );
       return false;

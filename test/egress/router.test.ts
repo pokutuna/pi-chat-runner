@@ -301,6 +301,45 @@ describe("EgressRouter", () => {
       ]);
     });
 
+    it("uses the session progress key when a flat reply has a message key", async () => {
+      const poster = new FakePoster();
+      const router = new EgressRouter({ poster });
+      router.register("session", { channelId: "D01" });
+      router.register("reply", { channelId: "D01" });
+      await router.notifyProgress("session", "running");
+
+      const result = await router.deliver(
+        { thread_key: "reply", text: "final answer" },
+        "session",
+      );
+
+      expect(result.progressConsumed).toBe(true);
+      expect(poster.calls).toEqual([{ channelId: "D01", text: "running" }]);
+      expect(poster.updateCalls).toEqual([
+        { channelId: "D01", messageId: "msg-1", text: "final answer" },
+      ]);
+    });
+
+    it("does not consume a progress message from a different destination", async () => {
+      const poster = new FakePoster();
+      const router = new EgressRouter({ poster });
+      router.register("session", { channelId: "C01", threadTs: "1" });
+      router.register("reply", { channelId: "C01", threadTs: "2" });
+      await router.notifyProgress("session", "running");
+
+      const result = await router.deliver(
+        { thread_key: "reply", text: "final answer" },
+        "session",
+      );
+
+      expect(result.progressConsumed).toBe(false);
+      expect(poster.updateCalls).toEqual([]);
+      expect(poster.calls).toEqual([
+        { channelId: "C01", threadTs: "1", text: "running" },
+        { channelId: "C01", threadTs: "2", text: "final answer" },
+      ]);
+    });
+
     it("consumes the progress messageId so a later reply posts fresh", async () => {
       const poster = new FakePoster();
       const router = new EgressRouter({ poster });

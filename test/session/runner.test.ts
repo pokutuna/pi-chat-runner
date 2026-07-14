@@ -1515,6 +1515,33 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     expect(h.poster.updateCalls.length).toBe(updateCountAtEnd);
   });
 
+  it("progress notice: DM の flat reply はセッションの進捗メッセージを最終回答で上書きする", async () => {
+    const h = await harness({}, { progressNoticeIntervalMs: 30 });
+    const trigger = message({
+      conversation: { channelId: "D01", isDm: true },
+      mentionsBot: false,
+      text: "SLOW_TOOL",
+    });
+
+    await h.runner.handle(trigger);
+    await waitFor(() => h.poster.calls.length >= 1, "initial progress posted");
+
+    const followUp = message({
+      id: "1700000000.000701",
+      conversation: { channelId: "D01", isDm: true },
+      text: "finish it",
+    });
+    await h.runner.handle(followUp);
+    await waitFor(
+      () => h.poster.updateCalls.some((c) => c.text.startsWith("steered:")),
+      "final reply merged into DM progress message",
+    );
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+    expect(h.poster.calls).toHaveLength(1);
+    expect(h.poster.updateCalls.at(-1)?.messageId).toBe("msg-1");
+  });
+
   it("progress notice: progressNoticeIntervalMs: 0 で機能を無効化できる", async () => {
     const h = await harness({}, { progressNoticeIntervalMs: 0 });
     const trigger = message({ mentionsBot: true, text: "SLOW_TOOL" });
