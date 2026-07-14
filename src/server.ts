@@ -345,6 +345,7 @@ async function main() {
     web,
     store,
     configSource: new FileConfigSource(configPath),
+    piEntrypoint: piPaths.entrypoint,
     ...(Object.keys(extraEnv).length > 0 ? { extraEnv } : {}),
     // WORKDIR_ARCHIVE_DIR 未設定なら境界退避なし (Step 3 相当の挙動)
     ...(archiveDir !== undefined && archiveDir !== "" ? { archiveDir } : {}),

@@ -119,29 +119,15 @@ describe("startBridge", () => {
     );
     const logger = pino({ level: "silent" });
 
-    // BridgeOptions は piBinary/workdirRoot を出していない (SessionRunner の既定に
-    // 委ねる)。PiProcess は起動時に env PI_BIN → 既定 "pi" の順で pi バイナリを選ぶ
-    // (session/runtime.ts buildSpawnCommand) ため、ここでは process.env で差し込む
-    // (test/session/runner.test.ts の harness は piBinary オプションで直接渡せるが、
-    // BridgeOptions にはその seam が無いため env 経由になる)
-    const previousPiBin = process.env.PI_BIN;
-    process.env.PI_BIN = FAKE_PI;
-    try {
-      await startBridge({
-        eventSource,
-        web: web.client,
-        store: new InMemoryStateStore(),
-        configSource: new FileConfigSource(CONFIG_PATH),
-        agentHome,
-        logger,
-      });
-    } finally {
-      if (previousPiBin === undefined) {
-        delete process.env.PI_BIN;
-      } else {
-        process.env.PI_BIN = previousPiBin;
-      }
-    }
+    await startBridge({
+      eventSource,
+      web: web.client,
+      store: new InMemoryStateStore(),
+      configSource: new FileConfigSource(CONFIG_PATH),
+      piEntrypoint: FAKE_PI,
+      agentHome,
+      logger,
+    });
 
     expect(eventSource.acked).toBe(1);
     await waitFor(() => web.posted.length === 1, "reply posted to web client");
@@ -194,25 +180,16 @@ describe("startBridge", () => {
     );
     const logger = pino({ level: "silent" });
 
-    const previousPiBin = process.env.PI_BIN;
-    process.env.PI_BIN = FAKE_PI;
-    try {
-      await startBridge({
-        eventSource,
-        web: web.client,
-        store: new InMemoryStateStore(),
-        configSource: new FileConfigSource(CONFIG_PATH),
-        agentHome,
-        logger,
-        poster: injectedPoster,
-      });
-    } finally {
-      if (previousPiBin === undefined) {
-        delete process.env.PI_BIN;
-      } else {
-        process.env.PI_BIN = previousPiBin;
-      }
-    }
+    await startBridge({
+      eventSource,
+      web: web.client,
+      store: new InMemoryStateStore(),
+      configSource: new FileConfigSource(CONFIG_PATH),
+      piBinary: FAKE_PI,
+      agentHome,
+      logger,
+      poster: injectedPoster,
+    });
 
     expect(eventSource.acked).toBe(1);
     await waitFor(() => posted.length === 1, "reply posted to injected poster");

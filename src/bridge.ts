@@ -49,6 +49,10 @@ export interface BridgeOptions {
   /** classifier gate 用 LLM client の注入口 (主にテスト用)。省略時は
    * GOOGLE_CLOUD_PROJECT があれば GeminiClassifierClient を内部構築する。 */
   classifierClient?: ClassifierClient;
+  /** 明示的に差し替える pi バイナリ。テストや埋め込み用途向け */
+  piBinary?: string;
+  /** 解決済みの pi 本体 entrypoint JS。permission の有無に関わらず使用する */
+  piEntrypoint?: string;
   extraEnv?: Record<string, string>;
   archiveDir?: string;
   agentUid?: number;
@@ -166,6 +170,10 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
     // 持たない)。bridge.ts は Slack 専用モジュールなので、Slack の mrkdwn
     // mention 記法をここで注入する
     mentionFormat: (userId) => `<@${userId}>`,
+    ...(options.piBinary !== undefined ? { piBinary: options.piBinary } : {}),
+    ...(options.piEntrypoint !== undefined
+      ? { piEntrypoint: options.piEntrypoint }
+      : {}),
     ...(options.extraEnv !== undefined &&
     Object.keys(options.extraEnv).length > 0
       ? { extraEnv: options.extraEnv }

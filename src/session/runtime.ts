@@ -27,7 +27,7 @@ import {
 /**
  * Node Permission Model 経由での起動設定 (pi-tools-and-sandbox.md
  * 「リーズナブルな sandbox レイヤ案」、session-runtime.md §6)。指定時のみ有効になる
- * opt-in — 未指定なら `piBinary` (既定 "pi") をそのまま spawn する現状動作を維持する。
+ * opt-in。permission の有無に関わらず、解決済みの pi entrypoint を起動できる。
  * bash の子プロセスには効かない (uid 分離が担う層) が、pi 本体の JS 実装ツール
  * (read/write/edit/grep) の fs アクセスを制限する多層防御の一層。
  */
@@ -56,9 +56,11 @@ export interface PiProcessOptions {
    * 複数回受け付けるため、配列の各要素を 1 フラグずつ展開する
    * (reply + permission-gate を常時両方注入するため単一パスから複数化した) */
   extensionPaths: string[];
-  /** pi バイナリのパス。省略時は env PI_BIN、それも無ければ "pi"。
-   * permission 指定時は無視される (entrypoint を直接 node で起動するため) */
+  /** 明示的に差し替える pi バイナリ。テストや埋め込み用途向け。
+   * 指定時は piEntrypoint より優先する。 */
   piBinary?: string;
+  /** 解決済みの pi 本体 entrypoint JS。permission の有無に関わらず使用する。 */
+  piEntrypoint?: string;
   /** 指定時、`node --permission` 経由で pi を起動する (opt-in)。省略時は現状動作 */
   permission?: PiPermissionOptions;
   /** `--model` に渡す `provider/model-id[:thinking-level]` (省略時は pi のローカル
@@ -162,7 +164,9 @@ export function buildPiArgs(
 
 /**
  * 実際に spawn する command/args の組み立て (純粋関数、テスト対象)。
- * permission 未指定なら `piBinary` (pi バイナリ) をそのまま呼ぶ現状動作。
+ * piBinary が明示されていればそれを直接呼ぶ。
+ * piEntrypoint が指定されていれば permission の有無に関わらず Node.js で起動する。
+ * どちらも未指定の場合だけ `pi` を呼ぶ。
  * 指定時は `node --permission --allow-fs-read=... --allow-fs-write=...
  * --allow-child-process <entrypoint> <pi の引数...>` に切り替える
  * (pi-tools-and-sandbox.md 「リーズナブルな sandbox レイヤ案」)。
@@ -174,12 +178,21 @@ export function buildPiArgs(
  */
 export function buildSpawnCommand(
   piArgs: string[],
-  options: Pick<PiProcessOptions, "piBinary" | "permission">,
+  options: Pick<PiProcessOptions, "piBinary" | "piEntrypoint" | "permission">,
 ): { command: string; args: string[] } {
   const permission = options.permission;
   if (permission === undefined) {
+    if (options.piBinary !== undefined) {
+      return { command: options.piBinary, args: piArgs };
+    }
+    if (options.piEntrypoint !== undefined) {
+      return {
+        command: process.execPath,
+        args: [options.piEntrypoint, ...piArgs],
+      };
+    }
     return {
-      command: options.piBinary ?? process.env.PI_BIN ?? "pi",
+      command: "pi",
       args: piArgs,
     };
   }

@@ -180,6 +180,7 @@ interface HarnessOptions {
   leaseTtlMs?: number;
   owner?: string;
   piBinary?: string;
+  piEntrypoint?: string;
   agentUid?: number;
   agentGid?: number;
   agentHome?: string;
@@ -219,7 +220,14 @@ async function harness(
       },
     }),
     workdirRoot,
-    piBinary: options.piBinary ?? FAKE_PI,
+    ...(options.piBinary !== undefined
+      ? { piBinary: options.piBinary }
+      : options.piEntrypoint === undefined
+        ? { piBinary: FAKE_PI }
+        : {}),
+    ...(options.piEntrypoint !== undefined
+      ? { piEntrypoint: options.piEntrypoint }
+      : {}),
     lingerMs: options.lingerMs ?? 30,
     logger,
     ...(options.extraEnv !== undefined ? { extraEnv: options.extraEnv } : {}),
@@ -918,6 +926,37 @@ describe("SessionRunner (fake-pi integration)", () => {
     expect(homeStats.uid).toBe(uid);
     expect(homeStats.gid).toBe(gid);
     expect(homeStats.mode & 0o777).toBe(0o700);
+  });
+
+  it("permissionMode が無効でも検出済み entrypoint を node で起動する", async () => {
+    const previousPiBin = process.env.PI_BIN;
+    delete process.env.PI_BIN;
+    try {
+      const h = await harness(
+        {},
+        {
+          piEntrypoint: FAKE_PI,
+        },
+      );
+      const trigger = message({
+        mentionsBot: true,
+        text: "entrypoint without permission model",
+      });
+
+      await h.runner.handle(trigger);
+
+      await waitFor(() => h.poster.calls.length === 1, "reply posted");
+      expect(h.poster.calls[0]?.text).toBe(
+        `echo: ${renderEvent(trigger, replyThreadKeyOf(trigger))}`,
+      );
+      await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+    } finally {
+      if (previousPiBin === undefined) {
+        delete process.env.PI_BIN;
+      } else {
+        process.env.PI_BIN = previousPiBin;
+      }
+    }
   });
 
   it("Node Permission Model が有効なとき node --permission 経由で pi (fake-pi) を起動する", async () => {

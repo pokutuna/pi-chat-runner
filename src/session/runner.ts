@@ -191,8 +191,10 @@ export interface SessionRunnerOptions {
   workdirStorage: WorkdirStorage;
   /** workdir のルート。既定 /tmp/pi-chat-runner/sessions */
   workdirRoot?: string;
-  /** pi バイナリ。省略時は PiProcess の既定 (env PI_BIN → "pi") */
+  /** 明示的に差し替える pi バイナリ。テストや埋め込み用途向け */
   piBinary?: string;
+  /** 解決済みの pi 本体 entrypoint JS。permission の有無に関わらず使用する */
+  piEntrypoint?: string;
   /** allowlist (PATH/HOME) に追加で pi 子プロセスへ渡す env (session-runtime.md §2) */
   extraEnv?: Record<string, string>;
   /** pi 子プロセスの実行 uid/gid (session-runtime.md §6: UID 分離)。両方指定時のみ有効。
@@ -519,6 +521,7 @@ export class SessionRunner {
   private readonly extensionPaths: string[];
   private readonly workdirRoot: string;
   private readonly piBinary: string | undefined;
+  private readonly piEntrypoint: string | undefined;
   private readonly extraEnv: Record<string, string> | undefined;
   private readonly agentUid: number | undefined;
   private readonly agentGid: number | undefined;
@@ -545,6 +548,7 @@ export class SessionRunner {
     this.extensionPaths = resolveBuiltinExtensionPaths();
     this.workdirRoot = options.workdirRoot ?? "/tmp/pi-chat-runner/sessions";
     this.piBinary = options.piBinary;
+    this.piEntrypoint = options.piEntrypoint;
     this.extraEnv = options.extraEnv;
     this.agentUid = options.agentUid;
     this.agentGid = options.agentGid;
@@ -1181,6 +1185,9 @@ export class SessionRunner {
         this.mentionFormat,
       ),
       ...(this.piBinary !== undefined ? { piBinary: this.piBinary } : {}),
+      ...(this.piEntrypoint !== undefined
+        ? { piEntrypoint: this.piEntrypoint }
+        : {}),
       ...(model !== undefined ? { model } : {}),
       ...(doc?.tools !== undefined ? { tools: doc.tools } : {}),
       ...(doc?.excludeTools !== undefined

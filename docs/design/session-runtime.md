@@ -50,7 +50,18 @@ kick シーケンス全体:
 spawn の擬似コード:
 
 ```typescript
-const pi = spawn("pi", [
+const nodeFlags = permissionMode
+  ? [
+      "--permission",
+      "--allow-fs-read=...",
+      "--allow-fs-write=...",
+      "--allow-child-process",
+      "--allow-net",
+    ]
+  : [];
+const pi = spawn("node", [
+  ...nodeFlags,
+  resolvePiPaths().entrypoint,
   "--mode", "rpc",
   "--session", `${workdir}/session.jsonl`,
   "--model", channel.model,   // "provider/model-id[:thinking]" 形式 (config.md §2.3)。未指定なら渡さない (pi 既定)

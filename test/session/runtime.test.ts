@@ -274,9 +274,32 @@ describe("buildSpawnCommand (Node Permission Model, session-runtime.md §6)", ()
     });
   });
 
-  it('falls back to env PI_BIN then "pi" when piBinary is unset', () => {
+  it('falls back to "pi" when no explicit executable is supplied', () => {
     expect(buildSpawnCommand(["--mode", "rpc"], {})).toEqual({
-      command: process.env.PI_BIN ?? "pi",
+      command: "pi",
+      args: ["--mode", "rpc"],
+    });
+  });
+
+  it("uses the detected entrypoint through node when permission is unset", () => {
+    const entrypoint =
+      "/app/node_modules/@earendil-works/pi-coding-agent/dist/cli.js";
+    expect(
+      buildSpawnCommand(["--mode", "rpc"], { piEntrypoint: entrypoint }),
+    ).toEqual({
+      command: process.execPath,
+      args: [entrypoint, "--mode", "rpc"],
+    });
+  });
+
+  it("prefers an explicit piBinary override over the detected entrypoint", () => {
+    expect(
+      buildSpawnCommand(["--mode", "rpc"], {
+        piBinary: "/tmp/fake-pi",
+        piEntrypoint: "/app/node_modules/pi/dist/cli.js",
+      }),
+    ).toEqual({
+      command: "/tmp/fake-pi",
       args: ["--mode", "rpc"],
     });
   });
