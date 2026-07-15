@@ -1554,6 +1554,40 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     expect(h.poster.updateCalls.length).toBe(updateCountAtEnd);
   });
 
+  it("progress notice: reply 配送後・agent_end 到達前の隙間でタイマーが再発火しない", async () => {
+    // progress-notice.md: 進捗タイマーは reply の tool_execution_end 到達時点で
+    // 即止める必要がある。agent_end まで待つ実装だと、fake-pi の
+    // REPLY_THEN_DELAYED_END が空ける「reply 配送済み・agent_end 未到達」の隙間
+    // (500ms) でタイマーが tick し、reply とは別の新規メッセージを投稿してしまう。
+    // interval (250ms) は reply 配送 (ほぼ即時) より確実に後ろ、agent_end の遅延
+    // (500ms) より確実に手前になるよう選んでいる
+    const h = await harness({}, { progressNoticeIntervalMs: 250 });
+    const trigger = message({
+      mentionsBot: true,
+      text: "REPLY_THEN_DELAYED_END",
+    });
+
+    await h.runner.handle(trigger);
+    // reply は進捗メッセージが既に存在すれば update、無ければ postMessage で
+    // 届く (tryUpdateProgress) — どちらのレーンで届くかは環境依存のタイミング次第
+    // なので両方を見る
+    await waitFor(
+      () =>
+        h.poster.calls.some((c) => c.text.includes("REPLY_THEN_DELAYED")) ||
+        h.poster.updateCalls.some((c) => c.text.includes("REPLY_THEN_DELAYED")),
+      "reply posted",
+    );
+    const newMessageCountAtReply = h.poster.calls.length;
+
+    // fake-pi が agent_end を遅延させている間 (500ms) にタイマーが何度 tick しても、
+    // reply 配送後に新規投稿 (postMessage) が増えることはない — 増えるとしたら
+    // 既存メッセージへの update のみ
+    await sleep(400);
+    expect(h.poster.calls).toHaveLength(newMessageCountAtReply);
+
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+  });
+
   it("progress notice: DM の flat reply はセッションの進捗メッセージを最終回答で上書きする", async () => {
     const h = await harness({}, { progressNoticeIntervalMs: 30 });
     const trigger = message({

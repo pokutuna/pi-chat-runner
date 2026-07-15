@@ -27,6 +27,10 @@
 //     "SYMLINK_FILE"   … workdir に workdir 外 (/etc/passwd) への symlink evil.txt を
 //                        作り、reply の details.files に ["evil.txt"] を積む
 //                        (runner の symlink 経由ファイル漏洩防止を検証する)
+//     "REPLY_THEN_DELAYED_END" … reply (tool_execution_end) を即座に吐いた後、
+//                        500ms 待ってから agent_end を吐く (reply 配送後・agent_end
+//                        到達前の隙間で進捗タイマーが再発火しないことを検証する。
+//                        progress-notice.md)
 //     それ以外          … `echo: <本文>` の reply → agent_end を吐く
 // - agent_end.messages には固定の usage 付き assistant message を 1 件含める
 //   (SessionRunner の usage 集計ロジックをテストから確認するため)
@@ -188,6 +192,17 @@ function handleCommand(command) {
         ["evil.txt"],
       );
       emitAgentEnd();
+      return;
+    }
+    if (command.message.includes("REPLY_THEN_DELAYED_END")) {
+      // 実際の pi は reply も他ツールと同様 tool_execution_start → _end で包む
+      // (runner の currentTool スナップショットが "reply" になる状態を再現する)
+      emitToolExecutionStart("reply", {});
+      emitReply(
+        threadKeyFromMessage(command.message),
+        `echo: ${command.message}`,
+      );
+      setTimeout(emitAgentEnd, 500);
       return;
     }
     emitReply(

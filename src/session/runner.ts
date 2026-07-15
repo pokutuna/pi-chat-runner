@@ -1246,13 +1246,13 @@ export class SessionRunner {
                 sessionKey,
               ),
             )
-            .then((result) => {
-              // reply が進捗メッセージをその場で消費できたら、agent_end を待たず
-              // タイマーを即止める。待つとその間にタイマーが再発火し、消費済みの
-              // 進捗メッセージの跡地に (古いツール名のまま) 新規投稿してしまう
-              if (result.progressConsumed) {
-                this.clearProgressNotice(record);
-              }
+            .then(() => {
+              // reply の tool_execution_end を受けた時点で、agent_end を待たず
+              // タイマーを即止める (progressConsumed の真偽によらず)。待つとその間に
+              // タイマーが再発火し、進捗メッセージを消費済みなら (古いツール名のまま)
+              // 跡地に新規投稿し、消費対象が無かった短いターンでも reply 完了後に
+              // ノイズとなる進捗メッセージを新規投稿してしまう (progress-notice.md)
+              this.clearProgressNotice(record);
             })
             .catch((err) => {
               this.logger.warn(
