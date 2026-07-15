@@ -23,7 +23,8 @@ import { readRootConfig } from "./root-config.js";
  * 参照で書いた場合 ("true"/"false"/"0"/"1"/"" の文字列で来る) の両方を受ける。
  * z.coerce.boolean() は "false" や "0" も truthy にしてしまい sandbox を OFF に
  * できない罠があるため使わない — 文字列は "0"/"false"/"" (大小無視) を false、
- * それ以外を true と解釈する (env 直読み経路 parsePermissionModeEnv と同じ規則)。 */
+ * それ以外を true と解釈する (env 直読み経路 parseBooleanFlagEnv とは "false" の扱いが
+ * 異なる点に注意)。 */
 const PermissionModeSchema = z.preprocess((value) => {
   if (typeof value === "string") {
     const v = value.trim().toLowerCase();
@@ -193,17 +194,10 @@ function parseAgentIdsEnv(env: NodeJS.ProcessEnv): {
   return { uid, gid };
 }
 
-/** env PI_PERMISSION_MODE をパースする。未設定なら undefined (file/コード既定に
- * 委ねる)。"0" は明示的に無効化、それ以外の値は有効化として扱う。 */
-function parsePermissionModeEnv(raw: string | undefined): boolean | undefined {
-  if (raw === undefined || raw === "") return undefined;
-  return raw !== "0";
-}
-
-/** env PI_ALLOW_ADDONS をパースする (parsePermissionModeEnv と同じ規則)。
+/** env のブールフラグ (PI_PERMISSION_MODE / PI_ALLOW_ADDONS) をパースする。
  * 未設定/空文字なら undefined (file/コード既定に委ねる)。"0" は明示的に無効化、
  * それ以外の値は有効化として扱う。 */
-function parseAllowAddonsEnv(raw: string | undefined): boolean | undefined {
+function parseBooleanFlagEnv(raw: string | undefined): boolean | undefined {
   if (raw === undefined || raw === "") return undefined;
   return raw !== "0";
 }
@@ -229,11 +223,11 @@ export function resolveAgentConfig(
   const uid = agentIdsFromEnv.uid ?? file.agent?.runtime?.uid;
   const gid = agentIdsFromEnv.gid ?? file.agent?.runtime?.gid;
   const permissionMode =
-    parsePermissionModeEnv(env.PI_PERMISSION_MODE) ??
+    parseBooleanFlagEnv(env.PI_PERMISSION_MODE) ??
     file.agent?.runtime?.permissionMode ??
     true;
   const allowAddons =
-    parseAllowAddonsEnv(env.PI_ALLOW_ADDONS) ??
+    parseBooleanFlagEnv(env.PI_ALLOW_ADDONS) ??
     file.agent?.runtime?.allowAddons ??
     false;
   const home = env.PI_AGENT_HOME ?? file.agent?.runtime?.home ?? "/home/agent";

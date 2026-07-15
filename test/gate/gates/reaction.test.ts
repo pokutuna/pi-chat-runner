@@ -40,7 +40,6 @@ describe("ReactionGate", () => {
     const gate = new ReactionGate(["eyes", "+1"]);
     const decision = gate.decide({
       event: makeReaction({ emoji: "eyes" }),
-      recent: [],
     });
     expect(decision.trigger).toBe(true);
   });
@@ -49,7 +48,6 @@ describe("ReactionGate", () => {
     const gate = new ReactionGate(["eyes"]);
     const decision = gate.decide({
       event: makeReaction({ emoji: "tada" }),
-      recent: [],
     });
     expect(decision.trigger).toBe(false);
   });
@@ -58,14 +56,13 @@ describe("ReactionGate", () => {
     const gate = new ReactionGate(["eyes"]);
     const decision = gate.decide({
       event: makeReaction({ emoji: "eyes", added: false }),
-      recent: [],
     });
     expect(decision.trigger).toBe(false);
   });
 
   it("does not trigger for non-reaction events (self-guard)", () => {
     const gate = new ReactionGate(["eyes"]);
-    const decision = gate.decide({ event: makeMessage(), recent: [] });
+    const decision = gate.decide({ event: makeMessage() });
     expect(decision.trigger).toBe(false);
   });
 });

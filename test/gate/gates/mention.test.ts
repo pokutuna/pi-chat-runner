@@ -27,7 +27,6 @@ describe("MentionGate", () => {
   it("triggers when mentionsBot is true", () => {
     const decision = gate.decide({
       event: makeMessage({ mentionsBot: true }),
-      recent: [],
     });
     expect(decision.trigger).toBe(true);
   });
@@ -35,7 +34,6 @@ describe("MentionGate", () => {
   it("does not trigger when mentionsBot is false", () => {
     const decision = gate.decide({
       event: makeMessage({ mentionsBot: false }),
-      recent: [],
     });
     expect(decision.trigger).toBe(false);
   });
@@ -51,7 +49,7 @@ describe("MentionGate", () => {
       added: true,
       timestamp: new Date("2026-07-05T00:00:00Z"),
     };
-    const decision = gate.decide({ event: reaction, recent: [] });
+    const decision = gate.decide({ event: reaction });
     expect(decision.trigger).toBe(false);
   });
 });

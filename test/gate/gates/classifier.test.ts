@@ -51,7 +51,6 @@ describe("ClassifierGate", () => {
     const gate = new ClassifierGate("trigger on task requests", client);
     const decision = await gate.decide({
       event: makeMessage({ text: "please fix the build" }),
-      recent: [],
     });
     expect(decision.trigger).toBe(true);
     expect(decision.reason).toContain("classifier:");
@@ -69,7 +68,6 @@ describe("ClassifierGate", () => {
     const gate = new ClassifierGate("trigger on task requests", client);
     const decision = await gate.decide({
       event: makeMessage({ text: "hey how are you" }),
-      recent: [],
     });
     expect(decision.trigger).toBe(false);
   });
@@ -82,7 +80,6 @@ describe("ClassifierGate", () => {
     const gate = new ClassifierGate("criteria", client);
     const decision = await gate.decide({
       event: { kind: "system", subtype: "channel_joined" },
-      recent: [],
     });
     expect(decision.trigger).toBe(false);
     expect(decision.reason).toContain("not a message event");
@@ -97,7 +94,6 @@ describe("ClassifierGate", () => {
     const gate = new ClassifierGate("criteria", client);
     const decision = await gate.decide({
       event: makeMessage(),
-      recent: [],
     });
     expect(decision.trigger).toBe(false);
     expect(decision.reason).toContain("fail-closed");
@@ -112,7 +108,7 @@ describe("ClassifierGate", () => {
     const gate = new ClassifierGate("criteria", client, {
       model: "gemini-x",
     });
-    await gate.decide({ event: makeMessage(), recent: [] });
+    await gate.decide({ event: makeMessage() });
     expect(client.calls[0]?.model).toBe("gemini-x");
   });
 
@@ -128,7 +124,7 @@ describe("ClassifierGate", () => {
       warn: vi.fn<(obj: unknown, msg?: string) => void>(),
     } as unknown as Logger;
     const gate = new ClassifierGate("criteria", client, { logger });
-    await gate.decide({ event: makeMessage(), recent: [] });
+    await gate.decide({ event: makeMessage() });
     expect(info).toHaveBeenCalledWith(
       expect.objectContaining({ trigger: true, reason: "matched" }),
       "classifier decision",

@@ -589,7 +589,7 @@ export class SessionRunner {
 
     // 実行中でない: gate 評価 → trigger なら enqueue して kick (即 or debounce)
     const when = this.resolveWhen(doc, isDm);
-    const decision = await evaluateWhen(when, { event, recent: [] });
+    const decision = await evaluateWhen(when, { event });
     if (!decision.trigger) {
       this.logger.debug(
         { channelId, sessionKey, reason: decision.reason },
@@ -618,7 +618,7 @@ export class SessionRunner {
     const isDm = event.conversation.isDm === true;
     const doc = await this.loadChannelDoc(isDm ? DM_CHANNEL : channelId);
     const when = this.resolveWhen(doc, isDm);
-    const decision = await evaluateWhen(when, { event, recent: [] });
+    const decision = await evaluateWhen(when, { event });
     if (!decision.trigger) {
       this.logger.debug(
         { channelId, reason: decision.reason },

@@ -23,7 +23,6 @@ describe("KeywordGate", () => {
     const gate = new KeywordGate("deploy|release");
     const decision = gate.decide({
       event: makeMessage({ text: "let's deploy now" }),
-      recent: [],
     });
     expect(decision.trigger).toBe(true);
   });
@@ -32,7 +31,6 @@ describe("KeywordGate", () => {
     const gate = new KeywordGate("deploy|release");
     const decision = gate.decide({
       event: makeMessage({ text: "just chatting" }),
-      recent: [],
     });
     expect(decision.trigger).toBe(false);
   });
@@ -44,7 +42,6 @@ describe("KeywordGate", () => {
         kind: "system",
         subtype: "channel_joined",
       },
-      recent: [],
     });
     expect(decision.trigger).toBe(false);
   });

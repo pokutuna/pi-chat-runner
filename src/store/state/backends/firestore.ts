@@ -20,7 +20,6 @@
 import type { Firestore, Transaction } from "@google-cloud/firestore";
 import { Timestamp } from "@google-cloud/firestore";
 
-import type { InboundMessage } from "../../../ingress/chat-event.js";
 import type {
   InboxItem,
   InboxStore,
@@ -30,6 +29,7 @@ import type {
   SessionStore,
   StateStore,
 } from "../interfaces.js";
+import { parseInboundMessage } from "./serialize.js";
 
 /** Firestore の gRPC ステータスコード。ALREADY_EXISTS = 6。
  * https://cloud.google.com/apis/design/errors#error_model */
@@ -63,15 +63,6 @@ interface LeaseDocData {
   owner: string;
   token: number;
   expiresAtMs: number;
-}
-
-/** InboundMessage は JSON.stringify で timestamp (Date) が ISO 文字列に潰れるので、
- * parse 後に Date へ戻す (sqlite.ts と同じ変換)。 */
-function parseInboundMessage(payload: string): InboundMessage {
-  const parsed = JSON.parse(payload) as Omit<InboundMessage, "timestamp"> & {
-    timestamp: string;
-  };
-  return { ...parsed, timestamp: new Date(parsed.timestamp) };
 }
 
 class FirestoreInboxStore implements InboxStore {

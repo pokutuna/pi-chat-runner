@@ -67,6 +67,16 @@ function formatBytes(bytes: number): string {
   return `${(bytes / 1024).toFixed(1)}KB`;
 }
 
+/** フィールドの出所ラベルを解決する。doc にキー自体が無ければ (isSet === false)
+ * provenance を見ずに "code default"、あれば provenance (無ければ "default") を使う。
+ * pretty (buildFields) / json (formatJson) 共通の provenance 解決規則 (config.md §6)。 */
+function fieldSource(
+  provenance: FieldSource | undefined,
+  isSet: boolean,
+): string {
+  return isSet ? sourceLabel(provenance ?? "default") : "code default";
+}
+
 interface EffectiveField {
   label: string;
   value: string;
@@ -82,25 +92,21 @@ function buildFields(
 ): EffectiveField[] {
   const fields: EffectiveField[] = [];
 
-  if (doc.model !== undefined) {
-    fields.push({
-      label: "model",
-      value: doc.model,
-      source: sourceLabel(provenance.model ?? "default"),
-    });
-  } else {
-    fields.push({
-      label: "model",
-      value: "(pi default)",
-      source: "code default",
-    });
-  }
+  fields.push(
+    doc.model !== undefined
+      ? {
+          label: "model",
+          value: doc.model,
+          source: fieldSource(provenance.model, true),
+        }
+      : { label: "model", value: "(pi default)", source: "code default" },
+  );
 
   if (doc.systemPrompt !== undefined) {
     fields.push({
       label: "systemPrompt",
       value: summarizeTextRef(doc.systemPrompt),
-      source: sourceLabel(provenance.systemPrompt ?? "default"),
+      source: fieldSource(provenance.systemPrompt, true),
     });
   }
 
@@ -108,7 +114,7 @@ function buildFields(
     fields.push({
       label: "context",
       value: `[${doc.context.map(summarizeTextRef).join(", ")}]`,
-      source: sourceLabel(provenance.context ?? "default"),
+      source: fieldSource(provenance.context, true),
     });
   }
 
@@ -116,13 +122,13 @@ function buildFields(
     fields.push({
       label: "trigger.when",
       value: formatWhen(doc.trigger.when),
-      source: sourceLabel(provenance.trigger ?? "default"),
+      source: fieldSource(provenance.trigger, true),
     });
     if (doc.trigger.debounceSec !== undefined) {
       fields.push({
         label: "trigger.debounceSec",
         value: String(doc.trigger.debounceSec),
-        source: sourceLabel(provenance.trigger ?? "default"),
+        source: fieldSource(provenance.trigger, true),
       });
     }
   } else {
@@ -137,28 +143,28 @@ function buildFields(
     fields.push({
       label: "tools",
       value: `[${doc.tools.join(", ")}]`,
-      source: sourceLabel(provenance.tools ?? "default"),
+      source: fieldSource(provenance.tools, true),
     });
   }
   if (doc.excludeTools !== undefined) {
     fields.push({
       label: "excludeTools",
       value: `[${doc.excludeTools.join(", ")}]`,
-      source: sourceLabel(provenance.excludeTools ?? "default"),
+      source: fieldSource(provenance.excludeTools, true),
     });
   }
   if (doc.skills !== undefined) {
     fields.push({
       label: "skills",
       value: `[${doc.skills.join(", ")}]`,
-      source: sourceLabel(provenance.skills ?? "default"),
+      source: fieldSource(provenance.skills, true),
     });
   }
   if (doc.extensions !== undefined) {
     fields.push({
       label: "extensions",
       value: `[${doc.extensions.join(", ")}]`,
-      source: sourceLabel(provenance.extensions ?? "default"),
+      source: fieldSource(provenance.extensions, true),
     });
   }
 
@@ -166,32 +172,26 @@ function buildFields(
   fields.push({
     label: "session.mode",
     value: policy.sessionMode,
-    source:
-      provenance.session !== undefined && doc.session?.mode !== undefined
-        ? sourceLabel(provenance.session)
-        : "code default",
+    source: fieldSource(provenance.session, doc.session?.mode !== undefined),
   });
   if (doc.session?.idleResetMinutes !== undefined) {
     fields.push({
       label: "session.idleResetMinutes",
       value: String(doc.session.idleResetMinutes),
-      source: sourceLabel(provenance.session ?? "default"),
+      source: fieldSource(provenance.session, true),
     });
   }
   if (doc.session?.maxTranscriptKb !== undefined) {
     fields.push({
       label: "session.maxTranscriptKb",
       value: String(doc.session.maxTranscriptKb),
-      source: sourceLabel(provenance.session ?? "default"),
+      source: fieldSource(provenance.session, true),
     });
   }
   fields.push({
     label: "reply.mode",
     value: policy.replyMode,
-    source:
-      provenance.reply !== undefined && doc.reply?.mode !== undefined
-        ? sourceLabel(provenance.reply)
-        : "code default",
+    source: fieldSource(provenance.reply, doc.reply?.mode !== undefined),
   });
 
   return fields;
@@ -234,73 +234,58 @@ function formatJson(
   const fields: Record<string, JsonField> = {
     model: {
       value: doc.model ?? null,
-      source:
-        doc.model !== undefined
-          ? sourceLabel(provenance.model ?? "default")
-          : "code default",
+      source: fieldSource(provenance.model, doc.model !== undefined),
     },
     systemPrompt: {
       value: doc.systemPrompt ?? null,
-      source:
-        doc.systemPrompt !== undefined
-          ? sourceLabel(provenance.systemPrompt ?? "default")
-          : "code default",
+      source: fieldSource(
+        provenance.systemPrompt,
+        doc.systemPrompt !== undefined,
+      ),
     },
     context: {
       value: doc.context ?? null,
-      source:
-        doc.context !== undefined
-          ? sourceLabel(provenance.context ?? "default")
-          : "code default",
+      source: fieldSource(provenance.context, doc.context !== undefined),
     },
     tools: {
       value: doc.tools ?? null,
-      source:
-        doc.tools !== undefined
-          ? sourceLabel(provenance.tools ?? "default")
-          : "code default",
+      source: fieldSource(provenance.tools, doc.tools !== undefined),
     },
     excludeTools: {
       value: doc.excludeTools ?? null,
-      source:
-        doc.excludeTools !== undefined
-          ? sourceLabel(provenance.excludeTools ?? "default")
-          : "code default",
+      source: fieldSource(
+        provenance.excludeTools,
+        doc.excludeTools !== undefined,
+      ),
     },
     "session.mode": {
       value: policy.sessionMode,
-      source:
-        doc.session?.mode !== undefined
-          ? sourceLabel(provenance.session ?? "default")
-          : "code default",
+      source: fieldSource(provenance.session, doc.session?.mode !== undefined),
     },
     "session.idleResetMinutes": {
       value: doc.session?.idleResetMinutes ?? null,
-      source:
-        doc.session?.idleResetMinutes !== undefined
-          ? sourceLabel(provenance.session ?? "default")
-          : "code default",
+      source: fieldSource(
+        provenance.session,
+        doc.session?.idleResetMinutes !== undefined,
+      ),
     },
     "session.maxTranscriptKb": {
       value: doc.session?.maxTranscriptKb ?? null,
-      source:
-        doc.session?.maxTranscriptKb !== undefined
-          ? sourceLabel(provenance.session ?? "default")
-          : "code default",
+      source: fieldSource(
+        provenance.session,
+        doc.session?.maxTranscriptKb !== undefined,
+      ),
     },
     "reply.mode": {
       value: policy.replyMode,
-      source:
-        doc.reply?.mode !== undefined
-          ? sourceLabel(provenance.reply ?? "default")
-          : "code default",
+      source: fieldSource(provenance.reply, doc.reply?.mode !== undefined),
     },
     "trigger.debounceSec": {
       value: doc.trigger?.debounceSec ?? null,
-      source:
-        doc.trigger?.debounceSec !== undefined
-          ? sourceLabel(provenance.trigger ?? "default")
-          : "code default",
+      source: fieldSource(
+        provenance.trigger,
+        doc.trigger?.debounceSec !== undefined,
+      ),
     },
   };
 

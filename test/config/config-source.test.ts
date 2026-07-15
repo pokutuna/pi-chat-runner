@@ -1,7 +1,9 @@
+import { mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   type ChannelDoc,
@@ -202,14 +204,52 @@ describe("FileConfigSource", () => {
     );
   });
 
-  it("re-reads from disk on every call (no caching)", async () => {
-    const source = new FileConfigSource(
-      join(FIXTURES_DIR, "config/channels.yaml"),
-    );
-    const first = await source.channel("C0000000001");
-    const second = await source.channel("C0000000001");
-    expect(first).toEqual(second);
-    expect(first).not.toBe(second);
+  describe("mtime caching", () => {
+    let dir: string;
+
+    beforeEach(async () => {
+      dir = await mkdtemp(join(tmpdir(), "config-source-cache-test-"));
+    });
+
+    afterEach(async () => {
+      await rm(dir, { recursive: true, force: true });
+    });
+
+    it("reuses the parsed result when the file's mtime is unchanged", async () => {
+      const configPath = join(dir, "channels.yaml");
+      await writeFile(
+        configPath,
+        "channels:\n  - channel: default\n    model: google/gemini-a\n",
+      );
+      const source = new FileConfigSource(configPath);
+
+      const first = await source.channel("C_NOT_FOUND");
+      const second = await source.channel("C_NOT_FOUND");
+      expect(first).toEqual(second);
+    });
+
+    it("re-reads when the file's mtime changes (edit without restart)", async () => {
+      const configPath = join(dir, "channels.yaml");
+      await writeFile(
+        configPath,
+        "channels:\n  - channel: default\n    model: google/gemini-a\n",
+      );
+      const source = new FileConfigSource(configPath);
+      const first = await source.channel("C_NOT_FOUND");
+      expect(first?.model).toBe("google/gemini-a");
+
+      await writeFile(
+        configPath,
+        "channels:\n  - channel: default\n    model: google/gemini-b\n",
+      );
+      // mtime の解像度がファイルシステムによっては粗いため、変化を確実に検知
+      // させるために明示的に mtime を進める
+      const future = new Date(Date.now() + 60_000);
+      await utimes(configPath, future, future);
+
+      const second = await source.channel("C_NOT_FOUND");
+      expect(second?.model).toBe("google/gemini-b");
+    });
   });
 });
 

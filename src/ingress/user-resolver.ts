@@ -35,11 +35,14 @@ export async function enrichEvent(
         matches.map((m) => m[1]).filter((id): id is string => id !== undefined),
       ),
     ];
-    const resolvedNames = new Map<string, string>();
-    for (const userId of uniqueIds) {
-      const name = await resolver.resolve(userId);
-      if (name !== null) resolvedNames.set(userId, name);
-    }
+    const resolved = await Promise.all(
+      uniqueIds.map(
+        async (userId) => [userId, await resolver.resolve(userId)] as const,
+      ),
+    );
+    const resolvedNames = new Map<string, string>(
+      resolved.filter((entry): entry is [string, string] => entry[1] !== null),
+    );
     // 名前だけに置き換えると pi が mention (`<@U123>`) を組み立てられなくなる
     // ため、UserID を併記する
     text = event.text.replace(

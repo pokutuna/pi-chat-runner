@@ -33,7 +33,7 @@ function makeMessage(overrides: Partial<InboundMessage> = {}): InboundMessage {
 }
 
 function ctxFor(event: InboundMessage): GateContext {
-  return { event, recent: [] };
+  return { event };
 }
 
 describe("createGate (registry)", () => {

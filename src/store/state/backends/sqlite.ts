@@ -5,7 +5,6 @@
 
 import Database from "better-sqlite3";
 
-import type { InboundMessage } from "../../../ingress/chat-event.js";
 import type {
   InboxItem,
   InboxStore,
@@ -15,6 +14,7 @@ import type {
   SessionStore,
   StateStore,
 } from "../interfaces.js";
+import { parseInboundMessage } from "./serialize.js";
 
 interface InboxRow {
   item_id: string;
@@ -30,15 +30,6 @@ interface LeaseRow {
   owner: string;
   token: number;
   expires_at: number;
-}
-
-/** InboundMessage は JSON.stringify で timestamp (Date) が ISO 文字列に潰れるので、
- * parse 後に Date へ戻す。他のフィールドに Date は無い (chat-event.ts)。 */
-function parseInboundMessage(payload: string): InboundMessage {
-  const parsed = JSON.parse(payload) as Omit<InboundMessage, "timestamp"> & {
-    timestamp: string;
-  };
-  return { ...parsed, timestamp: new Date(parsed.timestamp) };
 }
 
 class SqliteInboxStore implements InboxStore {

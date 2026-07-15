@@ -14,10 +14,11 @@
 // 含む他ブロックにも触れないため、dump (config.md §6) が secrets を解決せずに済む
 // 性質がこの経路で成立する。
 //
-// FileConfigSource は毎回読み直す (キャッシュしない)。ローカル用途なのでコストは無視できる。
-// これにより「YAML 編集 → 再起動なしで挙動が変わる」が file watch なしで成立する。
+// FileConfigSource は mtime ベースでキャッシュする (stat して変化が無ければ前回の
+// parse 結果を再利用)。ファイル未変更时の再 parse を避けつつ、「YAML 編集 →
+// 再起動なしで挙動が変わる」は mtime の変化で検知して成立させる (file watch 不要)。
 
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import {
@@ -143,12 +144,18 @@ export function resolveChannelConfig(
 
 /** ローカル/お試し用の ConfigSource。設定ファイル (単一 YAML) のパスを受け取り、
  * apply を経ずに直接 channels ブロックを読む (config.md §6)。systemPrompt / context の
- * ファイル参照 (./...) はこの YAML があるディレクトリからの相対で解決する。 */
+ * ファイル参照 (./...) はこの YAML があるディレクトリからの相対で解決する。
+ *
+ * mtime が前回と変わっていなければ parse 済みの ChannelsFile を再利用する
+ * (キャッシュ)。mtime が変わっていれば読み直す — 「YAML 編集 → 再起動なしで
+ * 挙動が変わる」はこの再読み込みで成立し続ける。 */
 export class FileConfigSource implements ConfigSource {
+  private cache: { mtimeMs: number; file: ChannelsFile } | undefined;
+
   constructor(private readonly configPath: string) {}
 
   async channel(id: string): Promise<ChannelDoc | null> {
-    const file = await loadChannelsFile(this.configPath);
+    const file = await this.loadCached();
 
     const resolved = resolveChannelConfig(file, id);
     if (resolved === null) {
@@ -159,6 +166,23 @@ export class FileConfigSource implements ConfigSource {
       this.configPath,
       dirname(this.configPath),
     );
+  }
+
+  private async loadCached(): Promise<ChannelsFile> {
+    // stat 失敗 (ENOENT 等) はここで特別扱いせず loadChannelsFile に委譲する —
+    // readRootConfig の ENOENT 処理・エラーメッセージ (fail-loud) をそのまま使うため。
+    let mtimeMs: number;
+    try {
+      mtimeMs = (await stat(this.configPath)).mtimeMs;
+    } catch {
+      return await loadChannelsFile(this.configPath);
+    }
+    if (this.cache !== undefined && this.cache.mtimeMs === mtimeMs) {
+      return this.cache.file;
+    }
+    const file = await loadChannelsFile(this.configPath);
+    this.cache = { mtimeMs, file };
+    return file;
   }
 }
 

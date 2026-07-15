@@ -24,7 +24,6 @@ describe("PassthroughGate", () => {
   it("always triggers for non-bot messages", () => {
     const decision = gate.decide({
       event: makeMessage({ sender: { id: "U1", isBot: false } }),
-      recent: [],
     });
     expect(decision.trigger).toBe(true);
   });
@@ -32,7 +31,6 @@ describe("PassthroughGate", () => {
   it("does not trigger for bot senders (self-echo guard)", () => {
     const decision = gate.decide({
       event: makeMessage({ sender: { id: "BOT1", isBot: true } }),
-      recent: [],
     });
     expect(decision.trigger).toBe(false);
   });
@@ -49,7 +47,6 @@ describe("PassthroughGate", () => {
         added: true,
         timestamp: new Date("2026-07-05T00:00:00Z"),
       },
-      recent: [],
     });
     expect(decision.trigger).toBe(true);
   });

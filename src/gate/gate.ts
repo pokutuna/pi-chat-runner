@@ -4,7 +4,7 @@
 // 起動判定を差し替え可能な部品 (Gate) にし、config.md §7 のブール木 (配列 = OR,
 // {and:[]}/{or:[]} で明示合成、ネスト可、negate なし) で合成する。channel 設定
 // (criteria/pattern 等) は各 Gate のコンストラクタ引数で渡すため、GateContext には
-// event/recent のみを持たせる (ChannelDoc.trigger.when の葉が GateConfig で、それを
+// event のみを持たせる (ChannelDoc.trigger.when の葉が GateConfig で、それを
 // ここで Gate インスタンスへ組み立てる)。
 //
 // classifier は LLM 呼び出しを要するため ClassifierClient を deps で注入する
@@ -23,7 +23,6 @@ import { ReactionGate } from "./gates/reaction.js";
 
 export interface GateContext {
   event: ChatEvent;
-  recent: ChatEvent[];
 }
 
 export interface TriggerDecision {

@@ -294,20 +294,21 @@ async function main() {
 
   const configPath = process.env.CONFIG_PATH ?? DEFAULT_CONFIG_PATH;
 
-  // connector.slack (設定ファイル内, ${env.X} 参照解決済み) を読む。SLACK_MODE 等の
-  // env 直読みはやめ、connector 経由に一本化する (connector-config.ts)
-  const connectorConfig = await loadConnectorConfig(configPath);
+  // connector.slack / store.backend/sqlite.path / agent ブロック (いずれも設定ファイル内,
+  // ${env.X} 参照解決済み) を読む。互いに依存しないため並行に読む (起動時の cold start
+  // 短縮)。SLACK_MODE/STORE_BACKEND/SQLITE_PATH 等の env 直読みはやめ、それぞれ
+  // connector-config.ts / store-config.ts 経由に一本化する
+  const [connectorConfig, storeConfig, agentConfigFile] = await Promise.all([
+    loadConnectorConfig(configPath),
+    loadStoreConfig(configPath),
+    loadAgentConfig(configPath),
+  ]);
   const { ingress, botToken } = buildConnector(
     connectorConfig.slack,
     configPath,
   );
 
-  // store.backend/sqlite.path (設定ファイル内, ${env.X} 参照解決済み) を読む。
-  // STORE_BACKEND/SQLITE_PATH env 直読みはやめ、store 経由に一本化する (store-config.ts)
-  const storeConfig = await loadStoreConfig(configPath);
-
   // agent ブロック (config.md §6) + env を解決する。優先順位は env > 設定ファイル > コード既定
-  const agentConfigFile = await loadAgentConfig(configPath);
   const agentConfig = resolveAgentConfig(agentConfigFile, process.env);
   const { turnTimeoutMs, progressNoticeIntervalMs, runtime } = agentConfig;
 
