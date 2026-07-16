@@ -183,9 +183,11 @@ channels:
           emoji: [eyes, robot_face]
 
   - channel: "dm"
-    # DMs are not covered by "default" (they'd otherwise default to passthrough —
-    # every DM triggers a session). Set `when: []` here to disable DMs entirely;
-    # the same pattern on "default" blocks any channel with no explicit entry.
+    # DMs are not covered by "default", and are disabled by default (no mention-like
+    # gate makes sense in a 1:1 DM). This "dm" entry is only needed to opt DMs in —
+    # e.g. `when: [{kind: passthrough}]` to accept every DM. Omitting it (or leaving
+    # `when: []` as shown) keeps DMs disabled; the same pattern on "default" blocks
+    # any channel with no explicit entry.
     trigger:
       when: []
 ```

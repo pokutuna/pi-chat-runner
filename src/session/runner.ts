@@ -46,7 +46,7 @@ import type {
   Lease,
   StateStore,
 } from "../store/state/interfaces.js";
-import type { WorkdirStorage } from "../store/workdir.js";
+import type { SharedStorage, WorkdirStorage } from "../store/workdir.js";
 import {
   extractReply,
   extractTurnErrors,
@@ -126,6 +126,22 @@ function resolveBuiltinExtensionPaths(): string[] {
   );
 }
 
+/** 組み込み memory skill (リポジトリ/パッケージ直下の skills/memory/) の絶対パスを
+ * 解決する (docs/design/memory.md)。shared 有効時のみ使われる。配置と解決規則は
+ * resolveBuiltinExtensionPaths と同じ — ソースツリーとバンドル後で深さが変わるため
+ * 候補を実在チェックで選び、見つからなければ fail-loud。 */
+function resolveBuiltinMemorySkillPath(): string {
+  for (const rel of ["../skills/memory/", "../../skills/memory/"]) {
+    const dir = join(fileURLToPath(new URL(rel, import.meta.url)));
+    if (existsSync(join(dir, "SKILL.md"))) {
+      return dir;
+    }
+  }
+  throw new Error(
+    `built-in memory skill not found relative to ${import.meta.url} (expected "skills/memory/SKILL.md" at the package root)`,
+  );
+}
+
 /** チャンネル別の追加 skill / extension パス (ChannelDoc.skills / .extensions,
  * config.md §2) を検証し realpath で正規化する。イメージに焼き込んだパスを指す
  * 想定なので、実在しないパスは設定ミスとして fail-loud で throw する。
@@ -189,6 +205,10 @@ export interface SessionRunnerOptions {
   reactions: Reactions;
   /** workdir の境界退避。 */
   workdirStorage: WorkdirStorage;
+  /** チャンネル単位の共有ディレクトリの境界退避 (docs/design/shared.md)。
+   * 未指定なら shared 機能ごと無効 — staging の作成・skill 配線・system prompt
+   * への言及をすべて行わない (createSharedStorage が設定から解決する) */
+  sharedStorage?: SharedStorage;
   /** workdir のルート。既定 /tmp/pi-chat-runner/sessions */
   workdirRoot?: string;
   /** 明示的に差し替える pi バイナリ。テストや埋め込み用途向け */
@@ -518,6 +538,9 @@ export class SessionRunner {
   private readonly router: EgressRouter;
   private readonly reactions: Reactions;
   private readonly workdirStorage: WorkdirStorage;
+  private readonly sharedStorage: SharedStorage | undefined;
+  /** 組み込み memory skill の絶対パス。shared 有効時のみ解決する (無効時 undefined) */
+  private readonly memorySkillPath: string | undefined;
   private readonly extensionPaths: string[];
   private readonly workdirRoot: string;
   private readonly piBinary: string | undefined;
@@ -542,6 +565,13 @@ export class SessionRunner {
     this.router = options.router;
     this.reactions = options.reactions;
     this.workdirStorage = options.workdirStorage;
+    this.sharedStorage = options.sharedStorage;
+    // memory skill は書き先が ../shared/ なので shared 前提。有効時は boot で解決して
+    // 配置壊れを fail-loud にする (チャンネル別の opt-out は kick 時に doc.memory で判定)
+    this.memorySkillPath =
+      options.sharedStorage !== undefined
+        ? resolveBuiltinMemorySkillPath()
+        : undefined;
     // 組み込み extension (reply/permission-gate/export) は常時注入で外せない
     // (permission-gate は事故防止層なので無効化オプションを持たない)。利用者の
     // 追加 extension は $AGENT_HOME/.pi/agent/extensions/ 規約で拾う (kick() 参照)
@@ -994,6 +1024,13 @@ export class SessionRunner {
     return resolved.length > 0 ? resolved : undefined;
   }
 
+  /** チャンネル共有ディレクトリの staging パス (docs/design/shared.md §1)。
+   * workdir の隣に置く — agent からは session.mode に関わらず cwd 相対 ../shared/
+   * (`<channelId>/<threadTs>/` と `<channelId>/channel/` のどちらとも隣接する) */
+  private sharedStagingDir(channelId: string): string {
+    return join(this.workdirRoot, channelId, "shared");
+  }
+
   /** kick シーケンス (session-runtime.md §1: restore → spawn → prompt) */
   private async kick(
     sessionKey: string,
@@ -1028,6 +1065,19 @@ export class SessionRunner {
     // 同じパスで再 spawn され、pi が JSONL を読んで文脈を継続する (再開の専用フローなし)
     await mkdir(workdir, { recursive: true });
     await this.workdirStorage.restore(sessionKey, workdir);
+    // チャンネル共有ディレクトリ (docs/design/shared.md)。sessionKey ではなく
+    // channelId 単位で復元し、スレッド (セッション) を跨いで持ち越す。skills/ は
+    // 空でも常に作る — pi の --skill は空ディレクトリを黙って無視するので配線は
+    // 無条件でよく、agent は mkdir なしで skill を置ける
+    const sharedStorage = this.sharedStorage;
+    const sharedDir =
+      sharedStorage !== undefined
+        ? this.sharedStagingDir(channelId)
+        : undefined;
+    if (sharedStorage !== undefined && sharedDir !== undefined) {
+      await mkdir(join(sharedDir, "skills"), { recursive: true });
+      await sharedStorage.restore(channelId, sharedDir);
+    }
     // channel モードの世代交代 (session-model.md §3): idle 超過 または transcript
     // サイズ超過のいずれかで transcript を世代交代する。rotate は chown より前
     // (rotate されたファイルの所有権も chown で揃うため)。判定は idle → size の順で
@@ -1077,6 +1127,12 @@ export class SessionRunner {
     if (this.agentUid !== undefined && this.agentGid !== undefined) {
       await chownRecursive(workdir, this.agentUid, this.agentGid);
       await chmod(workdir, 0o700);
+      // shared staging も同じ理由で agent 所有 0700 に揃える (restore のコピーは
+      // root 所有で置かれる)
+      if (sharedDir !== undefined) {
+        await chownRecursive(sharedDir, this.agentUid, this.agentGid);
+        await chmod(sharedDir, 0o700);
+      }
     }
     // agentHome は常に pi の HOME になるため、存在しなければここで作る
     // (Dockerfile の useradd --create-home + COPY --chown で作成済みならほぼ
@@ -1102,6 +1158,8 @@ export class SessionRunner {
     // (Linux では通常 no-op)
     const workdirReal = await realpath(workdir);
     const agentHomeReal = await realpath(this.agentHome);
+    const sharedDirReal =
+      sharedDir !== undefined ? await realpath(sharedDir) : undefined;
     const sessionPath = join(workdirReal, SESSION_FILE);
     const resumed = await transcriptExists(sessionPath);
 
@@ -1129,6 +1187,18 @@ export class SessionRunner {
       doc?.extensions,
       "extensions",
     );
+    // shared skills (存在は上の mkdir で保証済み) と組み込み memory skill
+    // (doc.memory !== false のとき。config.md §2)。どちらも shared 有効時のみ
+    const sharedSkillPaths =
+      sharedDirReal !== undefined
+        ? [
+            join(sharedDirReal, "skills"),
+            ...(doc?.memory !== false && this.memorySkillPath !== undefined
+              ? [this.memorySkillPath]
+              : []),
+          ]
+        : [];
+    const skillPaths = [...channelSkillPaths, ...sharedSkillPaths];
     const extensionPaths = [
       ...this.extensionPaths,
       ...agentExtensionFiles,
@@ -1153,6 +1223,12 @@ export class SessionRunner {
     const extensionReadDirs = [
       ...new Set(extensionPaths.map((p) => dirname(p))),
     ];
+    // shared staging は workdir/home の外にある唯一の agent 書き込み先。
+    // ディレクトリ自体の read は ls (readdir) に要る
+    const sharedPermissionWrite =
+      sharedDirReal !== undefined ? [`${sharedDirReal}/*`] : [];
+    const sharedPermissionRead =
+      sharedDirReal !== undefined ? [sharedDirReal, `${sharedDirReal}/*`] : [];
     const permission =
       this.piPermission !== undefined
         ? buildPiPermissionOptions({
@@ -1160,14 +1236,16 @@ export class SessionRunner {
             nodeModulesDir: this.piPermission.nodeModulesDir,
             workdir: workdirReal,
             home,
-            ...(this.piPermission.extraWrite !== undefined
-              ? { extraWrite: this.piPermission.extraWrite }
-              : {}),
+            extraWrite: [
+              ...(this.piPermission.extraWrite ?? []),
+              ...sharedPermissionWrite,
+            ],
             extraRead: [
               ...extensionReadDirs.map((dir) => `${dir}/*`),
               // skill は pi がディレクトリごと再帰で読む (SKILL.md 探索 + 参照
               // ファイル)。readdir にディレクトリ自体の read も要るため両方許可する
-              ...channelSkillPaths.flatMap((dir) => [dir, `${dir}/*`]),
+              ...skillPaths.flatMap((dir) => [dir, `${dir}/*`]),
+              ...sharedPermissionRead,
               ...(this.piPermission.extraRead ?? []),
             ],
             ...(this.piPermission.allowAddons !== undefined
@@ -1183,6 +1261,7 @@ export class SessionRunner {
         sessionKey,
         doc,
         this.mentionFormat,
+        sharedDirReal !== undefined,
       ),
       ...(this.piBinary !== undefined ? { piBinary: this.piBinary } : {}),
       ...(this.piEntrypoint !== undefined
@@ -1193,9 +1272,7 @@ export class SessionRunner {
       ...(doc?.excludeTools !== undefined
         ? { excludeTools: doc.excludeTools }
         : {}),
-      ...(channelSkillPaths.length > 0
-        ? { skillPaths: channelSkillPaths }
-        : {}),
+      ...(skillPaths.length > 0 ? { skillPaths } : {}),
       ...(extraEnv !== undefined ? { extraEnv } : {}),
       ...(this.agentUid !== undefined ? { uid: this.agentUid } : {}),
       ...(this.agentGid !== undefined ? { gid: this.agentGid } : {}),
@@ -1439,6 +1516,14 @@ export class SessionRunner {
     // promptedIds へ追加した item を「そのターンの flush 前」に ack しない
     const toAck = [...record.promptedIds];
     await this.workdirStorage.flush(sessionKey, record.workdir);
+    // shared も同じ境界で棚へ書き戻す (docs/design/shared.md §2)。異常終了パス
+    // (exit / abnormalShutdown / renew 失敗) で書き戻さないのは workdir と同じ理由
+    if (this.sharedStorage !== undefined) {
+      await this.sharedStorage.flush(
+        record.channelId,
+        this.sharedStagingDir(record.channelId),
+      );
+    }
     if (toAck.length > 0) {
       await this.store.inbox.ack(sessionKey, toAck);
       for (const id of toAck) record.promptedIds.delete(id);
@@ -1725,7 +1810,7 @@ export class SessionRunner {
     try {
       return await this.configSource.channel(channelId);
     } catch (err) {
-      // YAML の壊れで受信ループを止めない。既定動作 (mention 起動 / DM は passthrough) に落とす
+      // YAML の壊れで受信ループを止めない。既定動作 (mention 起動 / DM は disabled) に落とす
       this.logger.warn({ channelId, err }, "failed to load channel doc");
       return null;
     }
@@ -1739,7 +1824,7 @@ export class SessionRunner {
       logger: this.logger,
     };
     if (doc?.trigger === undefined) {
-      // doc なし / trigger 未設定は既定 = mention のみ、DM は passthrough
+      // doc なし / trigger 未設定は既定 = mention のみ、DM は disabled (起動しない)
       // (session-model.md §5, config.md §1)
       return buildWhen(defaultWhen(isDm), deps);
     }
@@ -1760,14 +1845,25 @@ export class SessionRunner {
   }
 }
 
-/** app 共通 + mention 記法の説明 + ChannelDoc.systemPrompt + thread_key の指示
- * (session-runtime.md §2) */
+/** shared 有効時に system prompt へ足す説明 (docs/design/shared.md §3)。
+ * 使い方の規約 (memory の書き方) は組み込み memory skill 側が担い、ここでは
+ * ディレクトリの存在と性質だけ知らせる */
+const SHARED_DIR_PROMPT =
+  "../shared/ (relative to your working directory) is a channel-wide " +
+  "persistent directory: files there survive across sessions and threads " +
+  "in this channel. Skills placed under ../shared/skills/ are loaded " +
+  "automatically in future sessions.";
+
+/** app 共通 + mention 記法の説明 + shared の説明 + ChannelDoc.systemPrompt +
+ * thread_key の指示 (session-runtime.md §2) */
 function buildSystemPrompt(
   sessionKey: string,
   doc: ChannelDoc | null,
   mentionFormat: MentionFormat,
+  sharedEnabled: boolean,
 ): string {
   const parts = [APP_SYSTEM_PROMPT, mentionInstruction(mentionFormat)];
+  if (sharedEnabled) parts.push(SHARED_DIR_PROMPT);
   if (doc?.systemPrompt !== undefined) parts.push(doc.systemPrompt.trim());
   parts.push(
     "Each incoming message is annotated with its thread_key. When calling " +

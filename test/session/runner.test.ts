@@ -519,8 +519,25 @@ describe("SessionRunner (fake-pi integration)", () => {
     await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
   });
 
-  it("DM without mention spawns a session (default = passthrough)", async () => {
+  it("DM without a 'dm' ChannelDoc never spawns a session (default = disabled)", async () => {
     const h = await harness();
+    const trigger = message({
+      conversation: { channelId: "D01", isDm: true },
+      text: "hi there, no mention",
+    });
+
+    await h.runner.handle(trigger);
+
+    expect(h.runner.activeSessionCount).toBe(0);
+    expect(h.poster.calls).toEqual([]);
+  });
+
+  it("reserved 'dm' ChannelDoc overrides the DM default (passthrough trigger)", async () => {
+    const h = await harness({
+      dm: {
+        trigger: { when: [{ kind: "passthrough" }] },
+      },
+    });
     const trigger = message({
       conversation: { channelId: "D01", isDm: true },
       text: "hi there, no mention",
@@ -536,23 +553,6 @@ describe("SessionRunner (fake-pi integration)", () => {
       text: `echo: ${renderEvent(trigger, replyThreadKeyOf(trigger))}`,
     });
     await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
-  });
-
-  it("reserved 'dm' ChannelDoc overrides the DM default (mention-only trigger)", async () => {
-    const h = await harness({
-      dm: {
-        trigger: { when: [{ kind: "mention" }] },
-      },
-    });
-    const trigger = message({
-      conversation: { channelId: "D01", isDm: true },
-      text: "hi there, no mention",
-    });
-
-    await h.runner.handle(trigger);
-
-    expect(h.runner.activeSessionCount).toBe(0);
-    expect(h.poster.calls).toEqual([]);
   });
 
   it("injects ChannelDoc.context into the first prompt only", async () => {
@@ -1589,7 +1589,10 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
   });
 
   it("progress notice: DM の flat reply はセッションの進捗メッセージを最終回答で上書きする", async () => {
-    const h = await harness({}, { progressNoticeIntervalMs: 30 });
+    const h = await harness(
+      { dm: { trigger: { when: [{ kind: "passthrough" }] } } },
+      { progressNoticeIntervalMs: 30 },
+    );
     const trigger = message({
       conversation: { channelId: "D01", isDm: true },
       mentionsBot: false,

@@ -81,10 +81,12 @@ export function createGate(spec: GateSpec, deps: GateDeps = {}): Gate {
   }
 }
 
-/** trigger 設定が無いチャンネルの既定 = mention のみ。DM は passthrough
- * (session-model.md §5, docs/design/config.md §1 のユースケース表)。 */
+/** trigger 設定が無いチャンネルの既定 = mention のみ。DM は 1:1 のため
+ * mention という操作が意味を持たず、明示的な `dm` エントリで trigger.when を
+ * 指定しない限り起動しない (vacuously false — evaluateWhen は空配列を
+ * false として扱う。session-model.md §5, docs/design/config.md §1)。 */
 export function defaultWhen(isDm: boolean): WhenNode[] {
-  return isDm ? [{ kind: "passthrough" }] : [{ kind: "mention" }];
+  return isDm ? [] : [{ kind: "mention" }];
 }
 
 /** GateConfig (WhenNode の葉) → GateSpec への narrowing。criteria/pattern は

@@ -87,8 +87,8 @@ describe("defaultWhen", () => {
     expect(defaultWhen(false)).toEqual([{ kind: "mention" }]);
   });
 
-  it("returns passthrough when node for DM", () => {
-    expect(defaultWhen(true)).toEqual([{ kind: "passthrough" }]);
+  it("returns empty (disabled) when node for DM", () => {
+    expect(defaultWhen(true)).toEqual([]);
   });
 });
 
