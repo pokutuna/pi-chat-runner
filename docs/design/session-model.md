@@ -200,7 +200,13 @@ interface InboxItem {   // sessions/{key}/inbox サブコレクション
 5. ターン完了後に inbox を再確認 → 空なら **短い linger (例 60–120 秒)** だけ待ち、
    linger 満了直前にもう一度 drain して追撃発言を拾う (コンテキストがメモリに
    温かいまま連続ターンを処理でき、再起動コストを省ける)。linger 満了で lease 解放 → return
-   → インスタンスは scale-to-zero 対象になる。
+   → インスタンスは scale-to-zero 対象になる。linger 中に届いたメッセージは
+   **steer ではなく prompt で新ターンとして開始する**: この間 pi はアイドル
+   (agent_end 済み) であり、steer は「次の LLM 呼び出し前に注入」する割り込み
+   なので、呼び出しの起きていないアイドルな pi に送ってもキューに積まれるだけで
+   ターンは始まらない。そのため linger 中は新規イベントを inbox に enqueue する
+   だけに留め、linger 満了直前の drain (= 4 のターン完了後の再確認と同じ経路) が
+   拾って prompt を送る。
 
 「実行中ターン 0 / inbox 空 / バックグラウンド作業なし」の 3 条件 AND で終了を判定するのは
 hermes の is_idle 純関数の移植。バックグラウンド作業 (サブエージェント等) は

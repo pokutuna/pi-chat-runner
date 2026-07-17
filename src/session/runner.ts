@@ -263,8 +263,10 @@ export interface SessionRunnerOptions {
 
 interface SessionRecord {
   /** starting = spawn 準備中 (多重起動防止のため Map 登録済み)、
-   * running = PiProcess 稼働中、stopping = 終了処理中 (exit を異常扱いしない) */
-  state: "starting" | "running" | "stopping";
+   * running = PiProcess がターンを実行中、lingering = agent_end 後の終了判定中
+   * (アイドルな pi。promptPending が prompt を送ると running に戻る)、
+   * stopping = 終了処理中 (exit を異常扱いしない) */
+  state: "starting" | "running" | "lingering" | "stopping";
   process?: PiProcess;
   /** トリガーメッセージの ts (👀 / ✅ の対象) */
   triggerTs: string;
@@ -827,7 +829,10 @@ export class SessionRunner {
       );
       return true;
     }
-    // starting 中は初回 prompt の drain が拾う。running なら steer で即配達する
+    // starting 中は初回 prompt の drain が拾う。running なら steer で即配達する。
+    // lingering (agent_end 後の終了判定中) は enqueue のみ — onAgentEnd の
+    // promptPending が prompt で新ターンとして拾う。アイドルな pi への steer は
+    // ターンを開始しないため (キューに積まれるだけで宙吊りになる)
     if (existing.state === "running" && existing.process?.running) {
       const items = await this.store.inbox.drain(sessionKey);
       const pending = items.filter((i) => !existing.promptedIds.has(i.id));
@@ -1781,6 +1786,10 @@ export class SessionRunner {
     // ターンが正常に終わったので timeout タイマーをクリア (リークさせない)。
     // 以降 promptPending で継続する場合は都度リセットされる
     this.clearTurnTimeout(record);
+    // アイドルな pi への steer はターンを開始しない (キューに積まれるだけ) ため、
+    // ここから終了処理完了までは trySteerExisting に steer させず enqueue のみに
+    // させる。promptPending が新ターンとして拾い、そこで running に戻す
+    record.state = "lingering";
 
     // 1. ターン境界の flush → 2. flush 成功後に ack (persistence.md §3)。
     // ack 対象は flush 前のスナップショット — flush の await 中に steer が
@@ -1977,6 +1986,9 @@ export class SessionRunner {
       record.promptedIds.add(i.id);
     }
     record.turnEpoch += 1;
+    // lingering (agent_end 後の終了判定中) からの復帰。ここで拾う item は
+    // trySteerExisting が steer せず enqueue のみで残していたものを含む
+    record.state = "running";
     this.resetTurnTimeout(sessionKey, record);
     this.resetProgressNotice(sessionKey, record);
     proc.prompt(renderItems(items));

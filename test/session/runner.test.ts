@@ -2139,6 +2139,58 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     ).not.toBeNull();
   });
 
+  it("starts a new turn (prompt, not steer) for a message that arrives during linger via handle()", async () => {
+    // linger 中 (agent_end 後、終了処理完了前) に handle() 経由で追いメッセージが
+    // 届くケース。アイドルな pi への steer はターンを開始しないため、この窓では
+    // enqueue のみで残し、onAgentEnd の promptPending が prompt として拾い直す
+    // 必要がある (steer してしまうと pi は宙吊りになり、以降そのレーンが壊れる)
+    const h = await harness({}, { lingerMs: 300 });
+    const trigger = message({ mentionsBot: true, text: "first turn" });
+    const threadKey = threadKeyOf(trigger);
+
+    await h.runner.handle(trigger);
+    await waitFor(() => h.poster.calls.length === 1, "first reply posted");
+
+    // linger 窓内 (300ms) に、handle() を経由した追いメッセージを送る
+    // (trySteerExisting → 修正前は steer、修正後は enqueue のみ)
+    await sleep(50);
+    const late = message({
+      id: "1700000000.000500",
+      conversation: { channelId: "C01", threadTs: trigger.id },
+      text: "during linger",
+    });
+    await h.runner.handle(late);
+
+    await waitFor(() => h.poster.calls.length === 2, "second reply posted");
+    expect(h.poster.calls[1]?.text).toBe(
+      `echo: ${renderEvent(late, replyThreadKeyOf(late))}`,
+    );
+
+    const commands = (await h.commandsLog("C01", trigger.id)).map((line) =>
+      JSON.parse(line),
+    );
+    // 2 件とも prompt (steer ではない) — 新ターンとして開始されたことを示す
+    expect(commands.map((c) => c.type)).toEqual(["prompt", "prompt"]);
+
+    expect(h.logLines().some((line) => line.msg === "session continued")).toBe(
+      true,
+    );
+    expect(h.logLines().some((line) => line.msg === "session steered")).toBe(
+      false,
+    );
+
+    // 宙吊りにならず、最終的にセッションが終了する
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+    expect(h.logLines().some((line) => line.msg === "session finished")).toBe(
+      true,
+    );
+
+    // lease が解放されている
+    expect(
+      await h.store.leases.acquire(threadKey, "probe", 1000),
+    ).not.toBeNull();
+  });
+
   it("cleans up and releases the lease when pi responds with success:false", async () => {
     const h = await harness();
     const trigger = message({ mentionsBot: true, text: "FAIL_PROMPT please" });
