@@ -17,9 +17,15 @@
 # ---- builder: pnpm install + tsdown build ----
 FROM node:26-slim AS builder
 
-# node:26-slim は corepack を同梱しないため、package.json の packageManager
-# に合わせて npm でバージョン固定インストールする
-RUN npm install -g pnpm@10.30.3
+# node:26-slim は corepack を同梱しないため、package.json の packageManager に
+# 合わせてバージョン固定インストールする。node:26-slim 同梱 npm (11.17.0) は
+# `npm install -g` が arborist の packument-cache 初期化で crash する既知バグを
+# 持つため、pnpm 公式のスタンドアロンインストーラを使う (npm を経由しない)
+ENV PNPM_HOME=/usr/local/share/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
+  && rm -rf /var/lib/apt/lists/* \
+  && curl -fsSL https://get.pnpm.io/install.sh | env PNPM_VERSION=10.30.3 SHELL=/bin/sh ENV=/dev/null sh -
 
 WORKDIR /app
 

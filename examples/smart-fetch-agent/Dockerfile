@@ -5,8 +5,12 @@ ARG BASE_IMAGE=ghcr.io/pokutuna/pi-chat-runner:latest
 FROM ${BASE_IMAGE}
 
 # node:26-slim (the base image's runtime stage) doesn't ship corepack, so pin
-# pnpm via npm like the base image's own builder stage does.
-RUN npm install -g pnpm@10.30.3
+# pnpm the same way the base image's own builder stage does: the standalone
+# installer, since node:26-slim's bundled npm (11.17.0) crashes on
+# `npm install -g` (arborist packument-cache init bug).
+ENV PNPM_HOME=/usr/local/share/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN curl -fsSL https://get.pnpm.io/install.sh | env PNPM_VERSION=10.30.3 SHELL=/bin/sh ENV=/dev/null sh -
 
 # Install pi-smart-fetch into /app/node_modules (the base image's existing
 # production node_modules root). This keeps the extension's file under a path
