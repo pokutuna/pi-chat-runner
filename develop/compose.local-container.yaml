@@ -1,0 +1,33 @@
+# チャンネル別 skill/extension の隔離確認用 (uid 分離 + Node Permission Model を
+# 本番相当で有効化してローカル Socket Mode を動かす)。ローカル専用・使い捨て。
+#
+# 起動: docker compose -f develop/compose.local-container.yaml --env-file .env.socket up
+# 停止: docker compose -f develop/compose.local-container.yaml down
+
+services:
+  pi-chat-runner:
+    image: smart-fetch-agent:local
+    environment:
+      SLACK_MODE: ${SLACK_MODE}
+      SLACK_APP_TOKEN: ${SLACK_APP_TOKEN}
+      SLACK_BOT_TOKEN: ${SLACK_BOT_TOKEN}
+      SLACK_BOT_USER_ID: ${SLACK_BOT_USER_ID}
+      STORE_BACKEND: memory
+      GOOGLE_APPLICATION_CREDENTIALS: /var/secrets/adc.json
+      GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT}
+      GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION}
+      PI_AGENT_UID: "1001"
+      PI_AGENT_GID: "1001"
+      PI_PERMISSION_MODE: "1"
+      # チャンネル共有ディレクトリ (docs/design/shared.md)。named volume で永続化し
+      # コンテナ再作成を跨いで蓄積を確認できる
+      SHARED_DIR: /data/shared
+      CONFIG_PATH: develop/config/agent.yaml
+      LOG_LEVEL: debug
+    volumes:
+      - ../develop/config:/app/develop/config:ro
+      - ${GOOGLE_APPLICATION_CREDENTIALS}:/var/secrets/adc.json:ro
+      - shared-data:/data/shared
+
+volumes:
+  shared-data:

@@ -1,0 +1,10 @@
+# Cloud Run での実機検証用デプロイイメージ。develop/config (git 管理外、実チャンネル
+# ID 入り) をベースイメージに焼き込む。ローカル専用・使い捨て (README.md 参照)。
+#
+# BASE_IMAGE は用途に応じて差し替える。例:
+#   pi-chat-runner:local       … base image のみ (docker build -t pi-chat-runner:local .)
+#   smart-fetch-agent:local    … pi-smart-fetch 込み (examples/smart-fetch-agent/Dockerfile)
+ARG BASE_IMAGE=pi-chat-runner:local
+FROM ${BASE_IMAGE}
+
+COPY develop/config ./develop/config
