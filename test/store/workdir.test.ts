@@ -2,9 +2,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import pino from "pino";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import type { Logger } from "../../src/logger.js";
 import {
   CopySharedStorage,
   CopyWorkdirStorage,
@@ -149,13 +149,25 @@ describe("NoopWorkdirStorage", () => {
   });
 });
 
-/** warn 呼び出しだけを記録する最小限の Logger スタブ */
-function fakeLogger(): {
-  logger: Logger;
-  warn: ReturnType<typeof vi.fn<(obj: unknown, msg?: string) => void>>;
-} {
-  const warn = vi.fn<(obj: unknown, msg?: string) => void>();
-  return { logger: { warn } as unknown as Logger, warn };
+/** pino のログ 1 行 (JSON) を配列に集めるテスト用ロガー */
+function collectingLogger(): { logger: pino.Logger; lines: () => unknown[] } {
+  const chunks: string[] = [];
+  const stream = {
+    write(chunk: string) {
+      chunks.push(chunk);
+      return true;
+    },
+  };
+  const logger = pino({ level: "info" }, stream);
+  return {
+    logger,
+    lines: () =>
+      chunks
+        .join("")
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line)),
+  };
 }
 
 describe("CopySharedStorage", () => {
@@ -213,27 +225,31 @@ describe("CopySharedStorage", () => {
   });
 
   it("warns when the shelf size exceeds warnBytes after flush", async () => {
-    const { logger, warn } = fakeLogger();
+    const { logger, lines } = collectingLogger();
     const storage = new CopySharedStorage(baseDir, logger, 10);
     await writeFile(join(workdir, "notes.md"), "this content is over 10 bytes");
 
     await storage.flush(CHANNEL_ID, workdir);
 
-    expect(warn).toHaveBeenCalledTimes(1);
-    const [context, message] = warn.mock.calls[0]!;
-    expect(context).toMatchObject({ channelId: CHANNEL_ID });
-    expect((context as { bytes: number }).bytes).toBeGreaterThan(10);
-    expect(message).toBe("shared shelf exceeds size warning threshold");
+    const warnLines = lines().filter(
+      (line) => (line as { level: number }).level === 40,
+    );
+    expect(warnLines).toHaveLength(1);
+    expect(warnLines[0]).toMatchObject({
+      channelId: CHANNEL_ID,
+      msg: "shared shelf exceeds size warning threshold",
+    });
+    expect((warnLines[0] as { bytes: number }).bytes).toBeGreaterThan(10);
   });
 
   it("does not warn when the shelf size is within warnBytes", async () => {
-    const { logger, warn } = fakeLogger();
+    const { logger, lines } = collectingLogger();
     const storage = new CopySharedStorage(baseDir, logger, 50 * 1024 * 1024);
     await writeFile(join(workdir, "notes.md"), "small content");
 
     await storage.flush(CHANNEL_ID, workdir);
 
-    expect(warn).not.toHaveBeenCalled();
+    expect(lines()).toHaveLength(0);
   });
 
   it("flushes without error when no logger is given, even past the warn threshold", async () => {
@@ -255,15 +271,18 @@ describe("createSharedStorage", () => {
   });
 
   it("wires logger and warnBytes into the CopySharedStorage it creates", async () => {
-    const { logger, warn } = fakeLogger();
+    const { logger, lines } = collectingLogger();
     const storage = createSharedStorage(baseDir, logger, 10);
 
     expect(storage).toBeInstanceOf(CopySharedStorage);
     await writeFile(join(workdir, "notes.md"), "this content is over 10 bytes");
     await storage!.flush("C123ABC", workdir);
 
-    expect(warn).toHaveBeenCalledTimes(1);
-    expect(warn.mock.calls[0]![0]).toMatchObject({ channelId: "C123ABC" });
+    const warnLines = lines().filter(
+      (line) => (line as { level: number }).level === 40,
+    );
+    expect(warnLines).toHaveLength(1);
+    expect(warnLines[0]).toMatchObject({ channelId: "C123ABC" });
   });
 });
 

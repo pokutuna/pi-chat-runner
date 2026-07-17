@@ -139,7 +139,7 @@ function resolveBuiltinMemorySkillPath(): string {
     "../builtin-skills/memory",
     "../../builtin-skills/memory",
   ]) {
-    const dir = join(fileURLToPath(new URL(rel, import.meta.url)));
+    const dir = fileURLToPath(new URL(rel, import.meta.url));
     if (existsSync(join(dir, "SKILL.md"))) {
       return dir;
     }
