@@ -8,8 +8,9 @@ See [docs/design/README.md](docs/design/README.md) for the design.
 
 - The session boundary is a `thread_key`, a conversation scope determined by config
 - The agent replies only through the `reply` tool; the host owns the actual destination
-- Per-channel trigger conditions, prompts, and models are declared in YAML — a message mention, keyword, or LLM classifier, or an emoji reaction on an existing message, can kick a session
-- DB (inbox/session/lease) and workdir archival are independent, swappable backends
+- Per-channel trigger conditions, prompts, and models are declared in YAML — a message mention, keyword, or LLM classifier, or an emoji reaction on an existing message, can kick a session. Posts from other bots (e.g. alerting webhooks) can trigger too via per-channel opt-in (`trigger.allowBots`); the bot's own posts never do
+- Chat commands (`/new`, `/enable`, `/disable`) reset or mute a channel from within the chat — see [Chat Commands](#chat-commands)
+- DB (inbox / session / lease / channel-state) and workdir archival are independent, swappable backends
 
 ## Components
 
@@ -27,7 +28,7 @@ InboxStore: durable, dedupe'd queue of accepted events
 │  InboxItem
 ▼
 SessionRunner: acquires lease, drains inbox, kicks a turn
-│                └─ Store: SessionStore / LeaseStore / WorkdirStorage
+│                └─ Store: SessionStore / LeaseStore / ChannelStateStore / WorkdirStorage
 │                   restores workdir via WorkdirStorage; new vs. resume follows
 │                   from whether a transcript exists after restore
 │  turn input
@@ -145,6 +146,15 @@ await runner.handle(inboundMessage);
 
 Not published to npm yet (planned). Until then, clone this repo, run `pnpm install && pnpm build`, and reference it as a `file:` / workspace dependency — a bare git dependency won't work because `dist/` is built, not committed.
 
+## Chat Commands
+
+Text commands, sent as a chat message, control a channel without touching config:
+
+- `/new` — cut the session: the next trigger starts with clean context. `/new <text>` kicks a new session with that text immediately. Rejected while a session is running.
+- `/enable` / `/disable` — per-channel kill switch (default enabled). While disabled, all triggers are silently dropped; `/enable` recovers. State persists in the channel-state store.
+
+Commands are exact-match, human-senders only, and apply only to messages that pass the Gate — in a mention-gated channel send `@bot /new` (which also keeps Slack's client from capturing a bare leading `/` as its own slash command).
+
 ## Configuration
 
 One YAML file, pointed at by `CONFIG_PATH` (default `examples/config/agent.yaml`; the filename is up to you):
@@ -190,9 +200,17 @@ channels:
     # any channel with no explicit entry.
     trigger:
       when: []
+
+  - channel: "C0000000002"
+    # Humans trigger by mention; bot posts (e.g. alert webhooks, allowBots opt-in) by keyword only
+    trigger:
+      allowBots: true
+      when:
+        - and: [{ kind: sender, is: human }, { kind: mention }]
+        - and: [{ kind: sender, is: bot }, { kind: keyword, pattern: "ALERT|CRITICAL" }]
 ```
 
-DB defaults to in-memory (`store.backend: memory` in `agent.yaml`, or `STORE_BACKEND` env); set it to `sqlite` (default path `/tmp/pi-chat-runner/state.db`) or `firestore` for persistence. Workdir archival defaults to no-op unless `archiveDir` is set. See [docs/design/persistence.md](docs/design/persistence.md).
+DB defaults to in-memory (`store.backend: memory` in `agent.yaml`); set it to `sqlite` (default path `/tmp/pi-chat-runner/state.db`) or `firestore` for persistence. Workdir archival defaults to no-op unless `archiveDir` is set. See [docs/design/persistence.md](docs/design/persistence.md).
 
 ```sh
 pnpm test
