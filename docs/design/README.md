@@ -166,6 +166,8 @@ Mitigations:
 - [components.md](components.md) — コンポーネント全体像 (Trigger/Gate/Inbox/Session/Runner/Reply)
 - [config.md](config.md) — Config の置き場所判断・ChannelDoc スキーマ・YAML 記述形式
 - [session-runtime.md](session-runtime.md) — pi の kick シーケンス・env の受け渡し・最小イメージ・隔離
+- [shared.md](shared.md) — チャンネル単位の共有永続ディレクトリ (セッションを越えた蓄積、skills 自動配線)
+- [memory.md](memory.md) — 組み込み memory skill (MEMORY.md + 1 事実 1 ファイルのチャンネル記憶)
 - [progress-notice.md](progress-notice.md) — 長時間ターンの進捗通知 (chat.update によるスナップショット表示)
 - [../initial-scope.md](../initial-scope.md) — 初期版スコープの決定事項
 - [../research/hermes-chat-modeling.md](../research/hermes-chat-modeling.md) / [../research/hermes-session-model.md](../research/hermes-session-model.md) / [../research/pi-session-model.md](../research/pi-session-model.md) — as-is 実装調査

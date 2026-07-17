@@ -327,6 +327,7 @@ async function main() {
   };
   const store = buildStateStore(storeConfig);
   const archiveDir = process.env.WORKDIR_ARCHIVE_DIR;
+  const sharedDir = process.env.SHARED_DIR;
   const piPermission = buildPiPermissionConfig(runtime, piPaths);
 
   const web = new WebClient(botToken);
@@ -350,6 +351,8 @@ async function main() {
     ...(Object.keys(extraEnv).length > 0 ? { extraEnv } : {}),
     // WORKDIR_ARCHIVE_DIR 未設定なら境界退避なし (Step 3 相当の挙動)
     ...(archiveDir !== undefined && archiveDir !== "" ? { archiveDir } : {}),
+    // SHARED_DIR 未設定ならチャンネル共有ディレクトリなし (docs/design/shared.md)
+    ...(sharedDir !== undefined && sharedDir !== "" ? { sharedDir } : {}),
     // agent.runtime.uid/gid (env PI_AGENT_UID/GID) 未設定なら UID 分離なし (現状動作)
     ...(runtime.uid !== undefined ? { agentUid: runtime.uid } : {}),
     ...(runtime.gid !== undefined ? { agentGid: runtime.gid } : {}),

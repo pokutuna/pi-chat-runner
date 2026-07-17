@@ -27,7 +27,9 @@ spec:
             - name: STORE_BACKEND
               value: firestore # production needs a durable backend
             - name: WORKDIR_ARCHIVE_DIR
-              value: /data # read directly by the bridge, not via agent.yaml
+              value: /data/channels # read directly by the bridge, not via agent.yaml; sub-dir keeps /data shared with SHARED_DIR
+            - name: SHARED_DIR
+              value: /data/shared # channel-shared persistent dir (docs/design/shared.md); unset to disable
             - name: PI_PERMISSION_MODE
               value: "1" # "0" disables sandboxing; any other value enables it
             - name: PI_AGENT_UID

@@ -180,8 +180,9 @@ interface SessionDoc {
     artifacts/                       … 成果物 (残すと宣言されたもの)
   docs/                              … ドキュメントセット (読み取り専用)
 
-skill はここではなくイメージに同梱する ([config.md](config.md) §0・§3)。頻繁に書き換える運用が
-生じたら /data/skills/ を復元パスとして足す (§9)
+skill はここではなくイメージに同梱する ([config.md](config.md) §0・§3)。実行時に agent 自身が
+蓄積する skill / ドキュメントはチャンネル共有ディレクトリ (SHARED_DIR、例:
+/data/shared/<channelId>/) が受ける ([shared.md](shared.md))
 ```
 
 - ターン開始: transcript を読み、leaf まで再生してコンテキストを導出
@@ -333,7 +334,7 @@ await slack.update(msgTs, progressText);              // 進捗は同じ ts を 
 | chat_ref エントリ | sentMessageTs 配列 + API 解決 | 逆引きが増えたら chat_ref を transcript エントリとして復活 |
 | dedupe コレクション | inbox doc ID = event_id | そのまま |
 | workspaces コレクション | 環境変数 + Secret Manager | マルチテナント化する時に §2 の前に workspaces/ を足す |
-| skill を GCS (`/data/skills/`) から読む | イメージ同梱 + ChannelDoc で有効化 ([config.md](config.md)) | デプロイなしで skill を書き換えたくなったら GCS 読み込みを追加 (manifest との併用可) |
+| skill を GCS (`/data/skills/`) から読む | イメージ同梱 + ChannelDoc で有効化 ([config.md](config.md))。agent 自身の蓄積分はチャンネル共有ディレクトリで実装済み ([shared.md](shared.md)) | 人がデプロイなしで全チャンネル共通 skill を書き換えたくなったら GCS 読み込みを追加 (manifest との併用可) |
 | channelIndex | SessionDoc.outcome をサブコレクションから読む | そのまま |
 
 削っても [session-model.md](session-model.md) の 3 分離 (レーン/実体、履歴/導出、プロセス/状態) は保たれている:

@@ -5,7 +5,9 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  CopySharedStorage,
   CopyWorkdirStorage,
+  createSharedStorage,
   createWorkdirStorage,
   NoopWorkdirStorage,
 } from "../../src/store/workdir.js";
@@ -143,6 +145,72 @@ describe("NoopWorkdirStorage", () => {
     await writeWorkdirFiles();
 
     await expect(storage.flush(THREAD_KEY, workdir)).resolves.toBeUndefined();
+  });
+});
+
+describe("CopySharedStorage", () => {
+  const CHANNEL_ID = "C123ABC";
+
+  it("flushes staging to the shelf and restores it into a fresh staging dir", async () => {
+    const storage = new CopySharedStorage(baseDir);
+    await mkdir(join(workdir, "memory"), { recursive: true });
+    await writeFile(join(workdir, "memory", "MEMORY.md"), "- note");
+    await writeFile(join(workdir, "notes.md"), "hello");
+
+    await storage.flush(CHANNEL_ID, workdir);
+    await rm(workdir, { recursive: true, force: true });
+    await mkdir(workdir, { recursive: true });
+    await storage.restore(CHANNEL_ID, workdir);
+
+    expect(await readFile(join(workdir, "memory", "MEMORY.md"), "utf8")).toBe(
+      "- note",
+    );
+    expect(await readFile(join(workdir, "notes.md"), "utf8")).toBe("hello");
+  });
+
+  it("restores without a session.jsonl gate (unlike CopyWorkdirStorage)", async () => {
+    const storage = new CopySharedStorage(baseDir);
+    const shelf = join(baseDir, CHANNEL_ID);
+    await mkdir(shelf, { recursive: true });
+    await writeFile(join(shelf, "notes.md"), "no transcript here");
+
+    await storage.restore(CHANNEL_ID, workdir);
+
+    expect(await readFile(join(workdir, "notes.md"), "utf8")).toBe(
+      "no transcript here",
+    );
+  });
+
+  it("does nothing when the shelf is empty", async () => {
+    const storage = new CopySharedStorage(baseDir);
+
+    await storage.restore(CHANNEL_ID, workdir);
+
+    await expect(readFile(join(workdir, "notes.md"), "utf8")).rejects.toThrow(
+      /ENOENT/,
+    );
+  });
+
+  it("uses the channelId as the shelf directory", async () => {
+    const storage = new CopySharedStorage(baseDir);
+    await writeFile(join(workdir, "notes.md"), "shelf layout");
+
+    await storage.flush(CHANNEL_ID, workdir);
+
+    expect(await readFile(join(baseDir, CHANNEL_ID, "notes.md"), "utf8")).toBe(
+      "shelf layout",
+    );
+  });
+});
+
+describe("createSharedStorage", () => {
+  it("returns undefined when sharedDir is undefined or empty", () => {
+    expect(createSharedStorage(undefined)).toBeUndefined();
+    expect(createSharedStorage("")).toBeUndefined();
+  });
+
+  it("returns a CopySharedStorage when sharedDir is set", () => {
+    expect(createSharedStorage(baseDir)).toBeInstanceOf(CopySharedStorage);
   });
 });
 

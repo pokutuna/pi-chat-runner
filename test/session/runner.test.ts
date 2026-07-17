@@ -47,8 +47,10 @@ import { InMemoryStateStore } from "../../src/store/state/backends/memory.js";
 import { inboxItemId } from "../../src/store/state/inbox-item.js";
 import type { StateStore } from "../../src/store/state/interfaces.js";
 import {
+  CopySharedStorage,
   CopyWorkdirStorage,
   NoopWorkdirStorage,
+  type SharedStorage,
   type WorkdirStorage,
 } from "../../src/store/workdir.js";
 
@@ -175,6 +177,7 @@ interface HarnessOptions {
   extraEnv?: Record<string, string>;
   store?: StateStore;
   workdirStorage?: WorkdirStorage;
+  sharedStorage?: SharedStorage;
   /** テストの実待ちを短くするため既定 30ms (本番既定は 3000ms) */
   lingerMs?: number;
   leaseTtlMs?: number;
@@ -232,6 +235,9 @@ async function harness(
     logger,
     ...(options.extraEnv !== undefined ? { extraEnv: options.extraEnv } : {}),
     workdirStorage: options.workdirStorage ?? new NoopWorkdirStorage(),
+    ...(options.sharedStorage !== undefined
+      ? { sharedStorage: options.sharedStorage }
+      : {}),
     ...(options.leaseTtlMs !== undefined
       ? { leaseTtlMs: options.leaseTtlMs }
       : {}),
@@ -391,6 +397,148 @@ describe("SessionRunner (fake-pi integration)", () => {
       "kick failure logged",
     );
     expect(h.poster.calls).toEqual([]);
+  });
+
+  it("shared: 棚から staging へ復元され、--skill 配線とプロンプト言及が入り、ターン終了で棚へ書き戻される", async () => {
+    const sharedRoot = await mkdtemp(
+      join(tmpdir(), "pi-chat-runner-test-shared-"),
+    );
+    // 過去セッションの蓄積がある棚を模す (docs/design/shared.md §2:
+    // session.jsonl が無くても復元される — WorkdirStorage との差分)
+    await mkdir(join(sharedRoot, "C01", "memory"), { recursive: true });
+    await writeFile(
+      join(sharedRoot, "C01", "memory", "MEMORY.md"),
+      "- past fact",
+    );
+
+    const h = await harness(
+      {},
+      { sharedStorage: new CopySharedStorage(sharedRoot) },
+    );
+    // 前ターンで agent が staging に書いた体のファイル (flush で棚へ上がるはず)
+    const staging = join(h.workdirRoot, "C01", "shared");
+    await mkdir(staging, { recursive: true });
+    await writeFile(join(staging, "notes.md"), "learned in a past turn");
+
+    const trigger = message({ mentionsBot: true, text: "hello" });
+    await h.runner.handle(trigger);
+    await waitFor(() => h.poster.calls.length === 1, "reply posted");
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+    // 棚の内容が staging (workdir の隣 = agent からは ../shared/) に復元されている
+    expect(await readFile(join(staging, "memory", "MEMORY.md"), "utf-8")).toBe(
+      "- past fact",
+    );
+
+    // --skill に staging の skills/ と組み込み memory skill の両方が載る
+    const argv = await h.argvSeen("C01", trigger.id);
+    const skillArgs = argv
+      .map((arg, i) => (arg === "--skill" ? argv[i + 1] : null))
+      .filter((v): v is string => v !== null);
+    expect(skillArgs).toContain(await realpath(join(staging, "skills")));
+    expect(skillArgs.some((p) => p.endsWith("builtin-skills/memory"))).toBe(
+      true,
+    );
+
+    // system prompt に ../shared/ の説明が入る
+    const appendPrompt = argv[argv.indexOf("--append-system-prompt") + 1];
+    expect(appendPrompt).toContain("../shared/");
+
+    // ターン終了の flush で staging の内容 (mkdir された skills/ 含む) が棚へ
+    expect(await readFile(join(sharedRoot, "C01", "notes.md"), "utf-8")).toBe(
+      "learned in a past turn",
+    );
+    expect((await stat(join(sharedRoot, "C01", "skills"))).isDirectory()).toBe(
+      true,
+    );
+  });
+
+  it("shared: memory: false は組み込み memory skill だけを外す (shared skills の配線は残る)", async () => {
+    const sharedRoot = await mkdtemp(
+      join(tmpdir(), "pi-chat-runner-test-shared-"),
+    );
+    const h = await harness(
+      { C01: { memory: false } },
+      { sharedStorage: new CopySharedStorage(sharedRoot) },
+    );
+    const trigger = message({ mentionsBot: true, text: "hello" });
+    await h.runner.handle(trigger);
+    await waitFor(() => h.poster.calls.length === 1, "reply posted");
+
+    const argv = await h.argvSeen("C01", trigger.id);
+    const skillArgs = argv
+      .map((arg, i) => (arg === "--skill" ? argv[i + 1] : null))
+      .filter((v): v is string => v !== null);
+    expect(skillArgs).toContain(
+      await realpath(join(h.workdirRoot, "C01", "shared", "skills")),
+    );
+    expect(skillArgs.some((p) => p.includes("builtin-skills"))).toBe(false);
+
+    // memoryEnabled が false になるため、system prompt にも memory index の
+    // 文言が入らない (docs/design/memory.md §2)
+    const appendPrompt = argv[argv.indexOf("--append-system-prompt") + 1];
+    expect(appendPrompt).not.toContain("memory index");
+  });
+
+  it("shared: 棚に MEMORY.md があると、その中身が system prompt に注入される (memory.md §2)", async () => {
+    const sharedRoot = await mkdtemp(
+      join(tmpdir(), "pi-chat-runner-test-shared-"),
+    );
+    await mkdir(join(sharedRoot, "C01", "memory"), { recursive: true });
+    await writeFile(
+      join(sharedRoot, "C01", "memory", "MEMORY.md"),
+      "- some memory fact",
+    );
+
+    const h = await harness(
+      {},
+      { sharedStorage: new CopySharedStorage(sharedRoot) },
+    );
+    const trigger = message({ mentionsBot: true, text: "hello" });
+    await h.runner.handle(trigger);
+    await waitFor(() => h.poster.calls.length === 1, "reply posted");
+
+    const argv = await h.argvSeen("C01", trigger.id);
+    const appendPrompt = argv[argv.indexOf("--append-system-prompt") + 1];
+    expect(appendPrompt).toContain("memory index");
+    expect(appendPrompt).toContain("../shared/memory/MEMORY.md");
+    expect(appendPrompt).toContain("- some memory fact");
+  });
+
+  it("shared: 棚に MEMORY.md が無い (新規チャンネル) 場合、memory index の文言は system prompt に入らない", async () => {
+    const sharedRoot = await mkdtemp(
+      join(tmpdir(), "pi-chat-runner-test-shared-"),
+    );
+
+    const h = await harness(
+      {},
+      { sharedStorage: new CopySharedStorage(sharedRoot) },
+    );
+    const trigger = message({ mentionsBot: true, text: "hello" });
+    await h.runner.handle(trigger);
+    await waitFor(() => h.poster.calls.length === 1, "reply posted");
+
+    const argv = await h.argvSeen("C01", trigger.id);
+    const appendPrompt = argv[argv.indexOf("--append-system-prompt") + 1];
+    // shared 自体の言及は入るが、MEMORY.md が存在しない (ENOENT) ので
+    // memory index のヘッダーは入らない
+    expect(appendPrompt).toContain("../shared/");
+    expect(appendPrompt).not.toContain("memory index");
+  });
+
+  it("shared: 未設定 (既定) なら staging も --skill もプロンプト言及も無い", async () => {
+    const h = await harness();
+    const trigger = message({ mentionsBot: true, text: "hello" });
+    await h.runner.handle(trigger);
+    await waitFor(() => h.poster.calls.length === 1, "reply posted");
+
+    const argv = await h.argvSeen("C01", trigger.id);
+    expect(argv).not.toContain("--skill");
+    const appendPrompt = argv[argv.indexOf("--append-system-prompt") + 1];
+    expect(appendPrompt).not.toContain("../shared/");
+    await expect(stat(join(h.workdirRoot, "C01", "shared"))).rejects.toThrow(
+      /ENOENT/,
+    );
   });
 
   it("when every reply file escapes the workdir, files is omitted (raw relative paths are not leaked)", async () => {
@@ -1226,6 +1374,53 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     // kick で restore、agent_end で flush → ack の順 (persistence.md §3)
     expect(calls).toEqual(["restore", "flush", "ack:1"]);
     expect(await h.store.inbox.drain(threadKeyOf(trigger))).toEqual([]);
+  });
+
+  it("shared の restore/flush は workdir と同じ境界で走り、flush は ack より前 (docs/design/shared.md §2)", async () => {
+    const calls: string[] = [];
+    class RecordingWorkdir implements WorkdirStorage {
+      async restore(): Promise<boolean> {
+        calls.push("restore");
+        return false;
+      }
+      async flush(): Promise<void> {
+        calls.push("flush");
+      }
+    }
+    class RecordingShared implements SharedStorage {
+      async restore(): Promise<void> {
+        calls.push("shared-restore");
+      }
+      async flush(): Promise<void> {
+        calls.push("shared-flush");
+      }
+    }
+    const store = new InMemoryStateStore();
+    const originalAck = store.inbox.ack.bind(store.inbox);
+    store.inbox.ack = async (threadKey, itemIds) => {
+      calls.push(`ack:${itemIds.length}`);
+      await originalAck(threadKey, itemIds);
+    };
+
+    const h = await harness(
+      {},
+      {
+        store,
+        workdirStorage: new RecordingWorkdir(),
+        sharedStorage: new RecordingShared(),
+      },
+    );
+    const trigger = message({ mentionsBot: true, text: "shared flush order" });
+    await h.runner.handle(trigger);
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+    expect(calls).toEqual([
+      "restore",
+      "shared-restore",
+      "flush",
+      "shared-flush",
+      "ack:1",
+    ]);
   });
 
   it("re-kicks the same thread after a failed kick (item is not lost)", async () => {

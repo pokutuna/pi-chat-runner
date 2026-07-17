@@ -5,6 +5,7 @@
   "files": [
     "dist",
     "extensions",
+    "builtin-skills",
     "skills"
   ],
   "type": "module",

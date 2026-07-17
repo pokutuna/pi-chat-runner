@@ -11,6 +11,7 @@ inbox / セッション状態 / lease (DB 系) と workdir の退避先 (Storage
 |---|---|---|---|---|
 | DB (状態) | `InboxStore` / `SessionStore` / `LeaseStore` | InMemory / SQLite / Firestore | Firestore | InMemory (既定) or SQLite |
 | Storage (workdir 退避) | `WorkdirStorage` | ファイルコピー (Copy) / 退避なし (Noop) | ベース = GCS FUSE マウント | ベース = ローカルディレクトリ or 退避なし |
+| Storage (channel 共有) | `SharedStorage` | ファイルコピー (Copy) / 未設定 = 機能ごと無効 | ベース = GCS FUSE マウント | ベース = ローカルディレクトリ or 無効 |
 
 - **DB はインタフェースが正、実装は差し込み**。SessionRunner はコンストラクタで
   Store 群を受け取るだけで、どの実装かを知らない (現行の `InboxStore` と同じ形)。
@@ -115,13 +116,28 @@ interface WorkdirStorage {
 
 実装はファイルコピーの `CopyWorkdirStorage(baseDir)` と、退避なしの
 `NoopWorkdirStorage` の 2 つ。`baseDir` がローカルの普通のディレクトリなら
-「ローカル永続化」、Cloud Run で GCS FUSE のマウントポイント (`/data`) なら
+「ローカル永続化」、Cloud Run で GCS FUSE のマウントポイント (`/data`) 配下の
+サブディレクトリ (`/data/channels`。shared 棚等と種類別に同居する) なら
 「GCS 永続化」になり、コードは同一。GCS SDK 実装は作らない (必要になった時に
 足せる形は保たれる)。
 
 選択は env `WORKDIR_ARCHIVE_DIR` から `createWorkdirStorage(archiveDir)` が
 決める (未設定/空文字なら `NoopWorkdirStorage` = 退避なし = Step 3 相当の挙動、
 設定時は `CopyWorkdirStorage`)。
+
+### SharedStorage — チャンネル単位の共有ディレクトリ
+
+WorkdirStorage と同型の境界コピーで、チャンネル共有ディレクトリ
+([shared.md](shared.md)) の棚 `<SHARED_DIR>/<channelId>/` ⇄ staging
+`<workdirRoot>/<channelId>/shared/` を往復する。差分は「キーが threadKey でなく
+channelId」「restore に session.jsonl ゲートが無い (transcript を持たないため、
+棚にエントリがあれば常に復元)」の 2 つ。
+
+選択は env `SHARED_DIR` から `createSharedStorage(sharedDir)` が決める
+(未設定/空文字なら undefined = shared 機能ごと無効、設定時は
+`CopySharedStorage`)。Noop 実装は無い — 無効時は runner が staging の作成・
+skill 配線・system prompt 追記ごとスキップするため、「何もしない Storage」を
+渡す意味が無い。
 
 ### FUSE 前提の明記
 
@@ -141,6 +157,10 @@ session-runtime.md §3 の規則をインタフェース語彙で言い直す:
 2. **agent_end 時** (ターン境界): `flush` 成功 → `inbox.ack` の順。
    逆にするとクラッシュで入力が消える
 3. **セッション終了時** (✅): 最終 `flush` → lease release
+
+shared 有効時は同じ境界に `SharedStorage` の restore / flush が並ぶ
+(kick: workdir restore の直後、agent_end: workdir flush の直後・ack の前)。
+異常終了パスで書き戻さないのも共通 ([shared.md](shared.md) §2)。
 
 flush 内部のコピー順序: workspace/ など他ファイル → 最後に session.jsonl。
 restore は transcript が存在するかで「復元があったか」を判定できる

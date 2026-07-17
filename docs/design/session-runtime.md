@@ -189,9 +189,11 @@ COPY はファイル単位の置き換えなので、このファイルの既定
 |---|---|---|
 | `<workdirRoot>/<channelId>/<threadTs>/` | tmpfs (インスタンスローカル) | workdir。pi の cwd。使い捨て (session.mode: thread) |
 | `<workdirRoot>/<channelId>/channel/` | tmpfs (インスタンスローカル) | workdir。session.mode: channel の workdir はスレッドでなくチャンネル単位 ([session-model.md](session-model.md) §3) |
+| `<workdirRoot>/<channelId>/shared/` | tmpfs (インスタンスローカル) | チャンネル共有ディレクトリの staging。agent からは cwd 相対 `../shared/` ([shared.md](shared.md)) |
 | `<workdir>/session.jsonl` | tmpfs | `--session` で pi に渡す。ターン中はここに追記される |
 | `<workdir>/workspace/` | tmpfs | 再開に必要な作業ファイル |
 | `/data/channels/<ch>/<threadTs>/` | GCS FUSE | 保存棚。session-g\<N\>.jsonl / workspace/ / artifacts/ |
+| `<SHARED_DIR>/<channelId>/` | GCS FUSE (本番) | shared の保存棚。SHARED_DIR 未設定なら shared 機能ごと無効 ([shared.md](shared.md)) |
 
 **pi に FUSE パスを直接書かせない**。GCS FUSE は close 時にオブジェクト全体を
 アップロードする一方、pi は追記型でファイルを頻繁に開閉するため、書き込み
@@ -298,7 +300,9 @@ COPY --chown=1001:1001 channel-skills/ /app/skills/
 
 規約は「`$AGENT_HOME/.pi/agent/skills|extensions/` に置けば全チャンネル共通で有効
 (config.md §3)」「チャンネル別はそれ以外の場所に焼いて channels の `skills` /
-`extensions` でパス参照 (config.md §2)」の 2 つだけ。ONBUILD や独自のビルドステージ機構は導入しない —
+`extensions` でパス参照 (config.md §2)」の 2 つだけ。これらに加え、SHARED_DIR
+有効時は agent 自身が書ける第 3 の skill 経路として `../shared/skills/` が
+`--skill` に自動配線される (イメージ焼き込みではなく実行時の蓄積。[shared.md](shared.md) §4)。ONBUILD や独自のビルドステージ機構は導入しない —
 暗黙の動作は Dockerfile を読んでも分からず、デバッグを難しくする。
 `npx <cli> init` が上記テンプレート Dockerfile と channels/ の雛形を生成する
 (scaffold) ことで「書き方が分からない」問題の方を解決する。

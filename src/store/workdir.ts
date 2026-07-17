@@ -63,6 +63,51 @@ export class CopyWorkdirStorage implements WorkdirStorage {
   }
 }
 
+/** チャンネル単位の共有ディレクトリの退避と復元 (docs/design/shared.md §2)。
+ * WorkdirStorage と違いキーは channelId のみで、transcript を持たないため
+ * session.jsonl の有無によるゲートもコピー順序の担保も行わない。 */
+export interface SharedStorage {
+  /** 保存棚 → staging へ復元。棚に無ければ何もしない */
+  restore(channelId: string, dest: string): Promise<void>;
+  /** staging → 保存棚へ退避 */
+  flush(channelId: string, src: string): Promise<void>;
+}
+
+/** ファイルコピーのみによる SharedStorage 実装。棚は `<baseDir>/<channelId>/`。 */
+export class CopySharedStorage implements SharedStorage {
+  constructor(private readonly baseDir: string) {}
+
+  async restore(channelId: string, dest: string): Promise<void> {
+    const shelf = join(this.baseDir, channelId);
+    const entries = await readEntriesOrEmpty(shelf);
+    if (entries.length === 0) return;
+
+    await mkdir(dest, { recursive: true });
+    for (const entry of entries) {
+      await copyRegularEntry(shelf, dest, entry);
+    }
+  }
+
+  async flush(channelId: string, src: string): Promise<void> {
+    const shelf = join(this.baseDir, channelId);
+    await mkdir(shelf, { recursive: true });
+    for (const entry of await readEntriesOrEmpty(src)) {
+      await copyRegularEntry(src, shelf, entry);
+    }
+  }
+}
+
+/** sharedDir の設定値から対応する SharedStorage を選ぶ。未設定/空文字なら
+ * undefined (= shared 機能ごと無効。SessionRunner は undefined を見て staging の
+ * 作成・skill 配線・system prompt への言及をすべて省く)。 */
+export function createSharedStorage(
+  sharedDir: string | undefined,
+): SharedStorage | undefined {
+  return sharedDir !== undefined && sharedDir !== ""
+    ? new CopySharedStorage(sharedDir)
+    : undefined;
+}
+
 /** 境界退避なし (アーカイブ先未設定時の既定)。restore は常に false、flush は何もしない。 */
 export class NoopWorkdirStorage implements WorkdirStorage {
   async restore(_threadKey: string, _workdir: string): Promise<boolean> {

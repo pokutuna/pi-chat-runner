@@ -30,7 +30,12 @@ import { rootLogger } from "./logger.js";
 import type { FetchMessage, PiPermissionConfig } from "./session/runner.js";
 import { SessionRunner } from "./session/runner.js";
 import type { StateStore } from "./store/state/interfaces.js";
-import { createWorkdirStorage, type WorkdirStorage } from "./store/workdir.js";
+import {
+  createSharedStorage,
+  createWorkdirStorage,
+  type SharedStorage,
+  type WorkdirStorage,
+} from "./store/workdir.js";
 
 /** classifier gate 用 LLM client のコード既定モデル (config.md §2.3: 未指定時の
  * fallback は bridge の 1 箇所に集約する)。 */
@@ -55,6 +60,9 @@ export interface BridgeOptions {
   piEntrypoint?: string;
   extraEnv?: Record<string, string>;
   archiveDir?: string;
+  /** チャンネル共有ディレクトリの保存先ルート (docs/design/shared.md)。未設定なら
+   * shared 機能ごと無効。棚は `<sharedDir>/<channelId>/` */
+  sharedDir?: string;
   agentUid?: number;
   agentGid?: number;
   agentHome?: string;
@@ -69,6 +77,9 @@ export interface BridgeOptions {
   /** workdir の保存先の注入口。省略時は archiveDir があれば CopyWorkdirStorage を、
    * なければ境界退避なしで内部構築する。指定時は archiveDir より優先される。 */
   workdirStorage?: WorkdirStorage;
+  /** 共有ディレクトリの保存先の注入口。省略時は sharedDir があれば
+   * CopySharedStorage を内部構築する。指定時は sharedDir より優先される。 */
+  sharedStorage?: SharedStorage;
 }
 
 /** SessionRunner を組み立て、eventSource を起動して配線する。呼び出し元 (server.ts の
@@ -145,6 +156,10 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
   // workdirStorage 注入があれば archiveDir より優先する
   const workdirStorage =
     options.workdirStorage ?? createWorkdirStorage(options.archiveDir);
+  // sharedStorage 注入があれば sharedDir より優先する。どちらも無ければ
+  // undefined = shared 機能ごと無効 (docs/design/shared.md)
+  const sharedStorage =
+    options.sharedStorage ?? createSharedStorage(options.sharedDir);
 
   // classifier gate 用 LLM client。注入があればそれを使い、なければ
   // GOOGLE_CLOUD_PROJECT があるときだけ GeminiClassifierClient を内部構築する
@@ -180,6 +195,8 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
       : {}),
     // workdirStorage/archiveDir 未設定なら境界退避なし (Step 3 相当の挙動)
     workdirStorage,
+    // sharedStorage/sharedDir 未設定なら shared 無効
+    ...(sharedStorage !== undefined ? { sharedStorage } : {}),
     // agentUid/Gid 未設定なら UID 分離なし (現状動作)
     ...(options.agentUid !== undefined ? { agentUid: options.agentUid } : {}),
     ...(options.agentGid !== undefined ? { agentGid: options.agentGid } : {}),

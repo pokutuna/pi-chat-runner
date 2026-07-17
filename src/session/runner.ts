@@ -17,6 +17,7 @@ import {
   lstat,
   mkdir,
   readdir,
+  readFile,
   realpath,
   rename,
   stat,
@@ -126,19 +127,25 @@ function resolveBuiltinExtensionPaths(): string[] {
   );
 }
 
-/** 組み込み memory skill (リポジトリ/パッケージ直下の skills/memory/) の絶対パスを
- * 解決する (docs/design/memory.md)。shared 有効時のみ使われる。配置と解決規則は
+/** 組み込み memory skill (リポジトリ/パッケージ直下の builtin-skills/memory/) の
+ * 絶対パスを解決する (docs/design/memory.md)。shared 有効時のみ使われる。
+ * ルート直下の skills/ (利用者が $AGENT_HOME に焼き込む全チャンネル共通 skill の口。
+ * Dockerfile 参照) とは別物 — そちらに置くと pi の HOME 自動発見で全チャンネルに
+ * 効いてしまい、ChannelDoc.memory の opt-out が効かない。配置と解決規則は
  * resolveBuiltinExtensionPaths と同じ — ソースツリーとバンドル後で深さが変わるため
  * 候補を実在チェックで選び、見つからなければ fail-loud。 */
 function resolveBuiltinMemorySkillPath(): string {
-  for (const rel of ["../skills/memory/", "../../skills/memory/"]) {
+  for (const rel of [
+    "../builtin-skills/memory",
+    "../../builtin-skills/memory",
+  ]) {
     const dir = join(fileURLToPath(new URL(rel, import.meta.url)));
     if (existsSync(join(dir, "SKILL.md"))) {
       return dir;
     }
   }
   throw new Error(
-    `built-in memory skill not found relative to ${import.meta.url} (expected "skills/memory/SKILL.md" at the package root)`,
+    `built-in memory skill not found relative to ${import.meta.url} (expected "builtin-skills/memory/SKILL.md" at the package root)`,
   );
 }
 
@@ -1187,13 +1194,18 @@ export class SessionRunner {
       doc?.extensions,
       "extensions",
     );
+    // memory 機能 (組み込み skill + MEMORY.md 注入) の有効判定。shared 有効かつ
+    // doc.memory !== false のとき (config.md §2)
+    const memoryEnabled =
+      sharedDirReal !== undefined &&
+      doc?.memory !== false &&
+      this.memorySkillPath !== undefined;
     // shared skills (存在は上の mkdir で保証済み) と組み込み memory skill
-    // (doc.memory !== false のとき。config.md §2)。どちらも shared 有効時のみ
     const sharedSkillPaths =
       sharedDirReal !== undefined
         ? [
             join(sharedDirReal, "skills"),
-            ...(doc?.memory !== false && this.memorySkillPath !== undefined
+            ...(memoryEnabled && this.memorySkillPath !== undefined
               ? [this.memorySkillPath]
               : []),
           ]
@@ -1253,6 +1265,20 @@ export class SessionRunner {
               : {}),
           })
         : undefined;
+    // memory の索引 (MEMORY.md) は skill 発火 (agent の自発的な read) に頼らず
+    // system prompt に常時注入する (docs/design/memory.md §2)。1 行 1 メモリの
+    // 短い索引という規約 (SKILL.md の Save 手順) が前提で、肥大化はしない想定。
+    // 本文ファイルは引き続き skill 経由でオンデマンドに read させる
+    const memoryIndex = memoryEnabled
+      ? await readFile(
+          join(sharedDirReal, "memory", "MEMORY.md"),
+          "utf-8",
+        ).catch((err) => {
+          if ((err as NodeJS.ErrnoException).code === "ENOENT")
+            return undefined;
+          throw err;
+        })
+      : undefined;
     const proc = new PiProcess({
       sessionPath,
       extensionPaths,
@@ -1262,6 +1288,7 @@ export class SessionRunner {
         doc,
         this.mentionFormat,
         sharedDirReal !== undefined,
+        memoryIndex,
       ),
       ...(this.piBinary !== undefined ? { piBinary: this.piBinary } : {}),
       ...(this.piEntrypoint !== undefined
@@ -1854,16 +1881,29 @@ const SHARED_DIR_PROMPT =
   "in this channel. Skills placed under ../shared/skills/ are loaded " +
   "automatically in future sessions.";
 
-/** app 共通 + mention 記法の説明 + shared の説明 + ChannelDoc.systemPrompt +
- * thread_key の指示 (session-runtime.md §2) */
+/** memory の索引 (MEMORY.md) をそのまま system prompt に注入するための前置き
+ * (docs/design/memory.md §2)。索引は常時見える化し、本文ファイルの read は
+ * 引き続き組み込み skill 側の判断に委ねる (skill 発火に頼らないのは索引だけ) */
+const MEMORY_INDEX_PROMPT_HEADER =
+  "The following is this channel's memory index " +
+  "(../shared/memory/MEMORY.md), listing durable facts learned in past " +
+  "sessions. Read the linked file under ../shared/memory/ only if it looks " +
+  "relevant to the current task:";
+
+/** app 共通 + mention 記法の説明 + shared の説明 + memory 索引 +
+ * ChannelDoc.systemPrompt + thread_key の指示 (session-runtime.md §2) */
 function buildSystemPrompt(
   sessionKey: string,
   doc: ChannelDoc | null,
   mentionFormat: MentionFormat,
   sharedEnabled: boolean,
+  memoryIndex?: string,
 ): string {
   const parts = [APP_SYSTEM_PROMPT, mentionInstruction(mentionFormat)];
   if (sharedEnabled) parts.push(SHARED_DIR_PROMPT);
+  if (memoryIndex !== undefined && memoryIndex.trim() !== "") {
+    parts.push(`${MEMORY_INDEX_PROMPT_HEADER}\n\n${memoryIndex.trim()}`);
+  }
   if (doc?.systemPrompt !== undefined) parts.push(doc.systemPrompt.trim());
   parts.push(
     "Each incoming message is annotated with its thread_key. When calling " +

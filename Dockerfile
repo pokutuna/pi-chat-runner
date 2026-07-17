@@ -74,6 +74,11 @@ COPY package.json ./
 # ビルド対象外。ソースのままコピーする
 COPY extensions ./extensions
 
+# 組み込み skill (memory)。SHARED_DIR 有効時に Runner が --skill で配線する
+# (docs/design/memory.md)。$AGENT_HOME/.pi/agent/skills/ (下の skills/) とは別物 —
+# あちらは全チャンネル常時ロード、こちらは ChannelDoc.memory で opt-out できる
+COPY builtin-skills ./builtin-skills
+
 # skill は pi の既定探索パス $AGENT_HOME/.pi/agent/skills/ に置けば pi が自動で
 # 読む (Runner 側に --skill 等の配線は不要。config.md §6)。現状 skills/ は
 # .gitkeep のみで空だが、利用者は FROM このイメージ 1 段で

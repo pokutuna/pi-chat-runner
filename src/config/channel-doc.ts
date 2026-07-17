@@ -135,6 +135,10 @@ export const ChannelDocSchema = z
      * (reply/permission-gate/export) と $AGENT_HOME/.pi/agent/extensions/ の
      * 自動列挙分への追加 (additive) (config.md §2) */
     extensions: z.array(PathRefSchema).optional(),
+    /** 組み込み memory skill の配線 (docs/design/memory.md)。shared 有効
+     * (env SHARED_DIR 設定時) の既定は true で、false でチャンネル単位に外せる
+     * (opt-out)。shared 無効時はこの値に関わらず配線されない */
+    memory: z.boolean().optional(),
     /** セッション (文脈) の単位。session-model.md §3 */
     session: z
       .object({
