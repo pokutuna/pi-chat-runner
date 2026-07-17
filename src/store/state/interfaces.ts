@@ -36,6 +36,8 @@ export interface SessionDoc {
   // §6) の resume_pending/suspended を含む状態機械を実装するまでは死んでいる値。
   status: "active" | "finished";
   updatedAt: Date;
+  /** /new コマンドによる transcript 世代交代の要求時刻。次の kick が消費してクリアする */
+  rotateRequestedAt?: Date;
 }
 
 export interface SessionStore {

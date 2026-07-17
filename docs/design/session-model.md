@@ -126,6 +126,16 @@ thread_key が併存し、ホストが宛先解決する」というモデルが
   粗い代理だが、しきい値用途には十分。トークン基準 (usage 累計の永続化) は必要になったら。
   `idleResetMinutes` / `maxTranscriptKb` はいずれも channel モード専用のフィールドであり、
   thread モードで設定されていても世代交代は起きない — kick 時に warn ログを出して無視する。
+- **`/new` コマンドでも手動で世代交代できる** (thread/channel 両モードで有効。明示的な
+  ユーザー意図のため idle/size のような channel 専用の制約は付けない)。本文 trim 後が
+  `/new` に一致、または `/new <残りテキスト>` で始まると発動し、SessionDoc に
+  `rotateRequestedAt` マーカーを書く。即 rename しないのは、境界退避棚 (WorkdirStorage) の
+  session.jsonl は次ターンの flush でしか上書きされず、restore が旧 transcript を
+  復元し直してしまうため — マーカーは次の kick で idle/size と同じ消費点に乗せて消費し、
+  クリアする。マーカー書き込みは lease を短時間取得して行い、取れない (実行中) 場合は
+  拒否する (steer 経路と交錯させない v1 の割り切り)。素の `/new` はアックのみ、
+  `/new <残りテキスト>` は残りテキストを新セッションの初手として kick する。
+  世代交代の優先順位は manual → idle → size、1 kick で最大 1 回。
 - DM は予約名 `dm` の既定を `session: channel` + `reply: flat` とし、
   追加設定なしで「1 つの続いた会話」になる。implicit prompt cache の効率面でも、
   メッセージ単位セッションより transcript prefix の再利用が効く。
@@ -380,7 +390,10 @@ mention のバイパス可否は debounce と非対称にする: debounce が me
 3. **チャンネル直下の新規メンション** → 新規セッション (新しいスレッドを根にする)。
    ただし直近 T 分以内に同チャンネルで活動したセッションがあれば
    「続きですか?」と聞かずに済むよう、**新規セッションの文脈に前セッションの outcome (§8) を注入**する
-4. **`/new`** → 明示的に新 sessionId へ回転 (キーは同じ、parentSessionId でチェーン)
+4. **`/new`** → 明示的な世代交代要求。sessionKey は不変 (workdir・shared 棚・memory は
+   引き継がれ、切れるのは transcript のみ)。SessionDoc に `rotateRequestedAt` を書くだけで
+   即 rename はせず、次の kick (lease 取得・workdir restore 後) で idle/size と同じ消費点に
+   乗せて `rotateTranscript()` する (§3)。thread/channel 両モードで有効
 
 「ルームごとに 1 実行 + 時間窓で再利用」案との比較: スレッド・ルーテッドなら「どの会話の
 続きか」が構造で決まるため時間窓ヒューリスティクスが主役でなくなる。時間窓は

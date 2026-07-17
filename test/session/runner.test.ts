@@ -892,6 +892,219 @@ describe("SessionRunner (fake-pi integration)", () => {
     );
   });
 
+  it("/new (idle・gate 通過): rotateRequestedAt が書かれ、ack が配送され、pi は起動しない", async () => {
+    const h = await harness();
+    const trigger = message({ mentionsBot: true, text: "/new" });
+
+    await h.runner.handle(trigger);
+
+    await waitFor(() => h.poster.calls.length === 1, "ack posted");
+    expect(h.poster.calls[0]?.text).toBe(
+      ":new: 次のメッセージから新しいセッションを開始します",
+    );
+
+    const sessionKey = threadKeyOf(trigger);
+    const doc = await h.store.sessions.get(sessionKey);
+    expect(doc?.rotateRequestedAt).toBeInstanceOf(Date);
+    expect(doc?.status).toBe("finished");
+
+    // pi は起動していない (セッションは走らず、inbox にも item は積まれない)
+    expect(h.runner.activeSessionCount).toBe(0);
+    expect(await h.store.inbox.drain(sessionKey)).toEqual([]);
+
+    // lease は解放済み (直後に acquire できる)
+    expect(
+      await h.store.leases.acquire(sessionKey, "probe", 1000),
+    ).not.toBeNull();
+  });
+
+  it("/new 実行中 (同一インスタンスに record あり): 拒否通知が配送され、実行中セッションに steer されない", async () => {
+    const h = await harness();
+    const trigger = message({ mentionsBot: true, text: "WAIT_FOR_STEER" });
+    await h.runner.handle(trigger);
+    await waitFor(() => h.runner.activeSessionCount === 1, "session running");
+
+    const sessionKey = threadKeyOf(trigger);
+    const newCmd = message({
+      id: "1700000001.000200",
+      conversation: { channelId: "C01", threadTs: trigger.id },
+      mentionsBot: true,
+      text: "/new",
+      metadata: { eventId: "Ev-new-cmd" },
+    });
+    await h.runner.handle(newCmd);
+
+    await waitFor(() => h.poster.calls.length === 1, "reject notice posted");
+    expect(h.poster.calls[0]?.text).toBe(
+      ":warning: セッションが実行中のため、いまは /new できません。完了後にもう一度送ってください",
+    );
+
+    // マーカーは書かれず、実行中セッションにも steer されていない (commands.jsonl に
+    // /new の steer が現れない)
+    expect(
+      (await h.store.sessions.get(sessionKey))?.rotateRequestedAt,
+    ).toBeUndefined();
+    await waitFor(async () => {
+      const commands = await h.commandsLog("C01", trigger.id).catch(() => []);
+      return commands.length > 0;
+    }, "initial prompt command logged");
+    const commandsBeforeFinish = await h.commandsLog("C01", trigger.id);
+    expect(commandsBeforeFinish.some((line) => line.includes("/new"))).toBe(
+      false,
+    );
+
+    // 元セッションを畳んで後始末する
+    const proc = message({
+      id: "1700000002.000300",
+      conversation: { channelId: "C01", threadTs: trigger.id },
+      mentionsBot: true,
+      text: "wrap up",
+      metadata: { eventId: "Ev-wrap-up" },
+    });
+    await h.runner.handle(proc);
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+  });
+
+  it("/new で lease が取れない (事前に別 owner で acquire 済み): 拒否通知", async () => {
+    const h = await harness();
+    const trigger = message({ mentionsBot: true, text: "/new" });
+    const sessionKey = threadKeyOf(trigger);
+    const heldLease = await h.store.leases.acquire(
+      sessionKey,
+      "other-owner",
+      60_000,
+    );
+    expect(heldLease).not.toBeNull();
+
+    await h.runner.handle(trigger);
+
+    await waitFor(() => h.poster.calls.length === 1, "reject notice posted");
+    expect(h.poster.calls[0]?.text).toBe(
+      ":warning: セッションが実行中のため、いまは /new できません。完了後にもう一度送ってください",
+    );
+    expect(
+      (await h.store.sessions.get(sessionKey))?.rotateRequestedAt,
+    ).toBeUndefined();
+  });
+
+  it("マーカーあり状態で次のメッセージ → kick: transcript が rotate される (channel モード)", async () => {
+    const h = await harness({
+      C01: { session: { mode: "channel" } },
+    });
+    const sessionKey = "C01";
+    const workdir = join(h.workdirRoot, "C01", "channel");
+
+    await mkdir(workdir, { recursive: true });
+    await writeFile(join(workdir, "session.jsonl"), "OLD TRANSCRIPT\n");
+    await h.store.sessions.put(sessionKey, {
+      channelId: "C01",
+      threadTs: "channel",
+      triggerTs: "1699999999.000000",
+      status: "finished",
+      updatedAt: new Date(),
+      rotateRequestedAt: new Date(),
+    });
+
+    const trigger = message({ mentionsBot: true, text: "hello again" });
+    await h.runner.handle(trigger);
+    await waitFor(() => h.poster.calls.length === 1, "reply posted");
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+    const entries = await readdir(workdir);
+    expect(entries.some((name) => /^session-\d+\.jsonl$/.test(name))).toBe(
+      true,
+    );
+    expect(entries).not.toContain("session.jsonl");
+    expect(
+      h
+        .logLines()
+        .some((line) => line.msg === "manual reset: transcript rotated"),
+    ).toBe(true);
+    expect(
+      (await h.store.sessions.get(sessionKey))?.rotateRequestedAt,
+    ).toBeUndefined();
+  });
+
+  it("マーカーあり状態で次のメッセージ → kick: transcript が rotate される (thread モード)", async () => {
+    const h = await harness();
+    const trigger = message({ mentionsBot: true, text: "hello again" });
+    const sessionKey = threadKeyOf(trigger);
+    const workdir = join(h.workdirRoot, "C01", trigger.id);
+
+    await mkdir(workdir, { recursive: true });
+    await writeFile(join(workdir, "session.jsonl"), "OLD TRANSCRIPT\n");
+    await h.store.sessions.put(sessionKey, {
+      channelId: "C01",
+      threadTs: trigger.id,
+      triggerTs: trigger.id,
+      status: "finished",
+      updatedAt: new Date(),
+      rotateRequestedAt: new Date(),
+    });
+
+    await h.runner.handle(trigger);
+    await waitFor(() => h.poster.calls.length === 1, "reply posted");
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+    const entries = await readdir(workdir);
+    expect(entries.some((name) => /^session-\d+\.jsonl$/.test(name))).toBe(
+      true,
+    );
+    expect(entries).not.toContain("session.jsonl");
+    expect(
+      h
+        .logLines()
+        .some((line) => line.msg === "manual reset: transcript rotated"),
+    ).toBe(true);
+    expect(
+      (await h.store.sessions.get(sessionKey))?.rotateRequestedAt,
+    ).toBeUndefined();
+  });
+
+  it("/new 続きの指示: マーカーが書かれ、kick が走り、初回 prompt に続きの指示が含まれ /new は含まれない", async () => {
+    const h = await harness();
+    const trigger = message({
+      mentionsBot: true,
+      text: "/new 続きの指示",
+    });
+
+    await h.runner.handle(trigger);
+    await waitFor(() => h.poster.calls.length === 1, "reply posted");
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+    const sessionKey = threadKeyOf(trigger);
+    // マーカーは書き込まれた後、同じ kick 内で消費 (rotate) されクリアされる
+    // (session-model.md §6)。消費された痕跡は rotate ログで確認する
+    expect(
+      h
+        .logLines()
+        .some((line) => line.msg === "manual reset: transcript rotated"),
+    ).toBe(true);
+    expect(
+      (await h.store.sessions.get(sessionKey))?.rotateRequestedAt,
+    ).toBeUndefined();
+
+    const commands = await h.commandsLog("C01", trigger.id);
+    const promptCommand = JSON.parse(commands[0] ?? "{}");
+    expect(promptCommand.type).toBe("prompt");
+    expect(promptCommand.message).toContain("続きの指示");
+    expect(promptCommand.message).not.toContain("/new");
+  });
+
+  it("gate 非通過の /new (mention なし・mention gate チャンネル): 何も起きない", async () => {
+    const h = await harness();
+    const trigger = message({ mentionsBot: false, text: "/new" });
+
+    await h.runner.handle(trigger);
+    // 非同期の副作用が万一起きても検出できるよう少し待つ
+    await sleep(50);
+
+    expect(h.poster.calls).toEqual([]);
+    const sessionKey = threadKeyOf(trigger);
+    expect(await h.store.sessions.get(sessionKey)).toBeNull();
+    expect(h.runner.activeSessionCount).toBe(0);
+  });
+
   it("stays silent but still adds the check reaction when reply is never called", async () => {
     const h = await harness();
     const trigger = message({ mentionsBot: true, text: "NO_REPLY please" });

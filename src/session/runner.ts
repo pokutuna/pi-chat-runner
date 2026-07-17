@@ -48,6 +48,7 @@ import type {
   StateStore,
 } from "../store/state/interfaces.js";
 import type { SharedStorage, WorkdirStorage } from "../store/workdir.js";
+import { type ChatCommand, parseCommand } from "./commands.js";
 import {
   extractReply,
   extractTurnErrors,
@@ -534,6 +535,18 @@ async function chownRecursive(
   }
 }
 
+/** /new コマンドのマーカー書き込み用 lease TTL (session-model.md §6)。実行中との
+ * 交錯を避けるためだけの短時間ロックなので、通常の kick 用 leaseTtlMs より短くてよい */
+const NEW_COMMAND_LEASE_TTL_MS = 10_000;
+
+/** /new コマンドの拒否通知 (実行中セッションへは v1 の割り切りで交錯させない、
+ * session-model.md §6)。abnormalShutdown の noticeText と同じ mrkdwn 絵文字スタイル */
+const REJECT_NOTICE_TEXT =
+  ":warning: セッションが実行中のため、いまは /new できません。完了後にもう一度送ってください";
+
+/** /new コマンド (rest なし) の受理通知 */
+const ACK_NOTICE_TEXT = ":new: 次のメッセージから新しいセッションを開始します";
+
 export class SessionRunner {
   private readonly sessions = new Map<string, SessionRecord>();
   /** debounceSec 待機中のレーン (sessionKey → 保留状態)。design 「セッション非稼働
@@ -620,6 +633,22 @@ export class SessionRunner {
       enqueuedAt: new Date(),
     };
 
+    // /new コマンド (session-model.md §6)。gate を通過したメッセージにのみ意味を
+    // 持たせる (mention gate のチャンネルでは `@bot /new`) ため、gate 評価より
+    // 前に判定するのはここまで — 実行中レーンへの拒否だけは gate をバイパスする。
+    // 実行中レーンとの交錯を避けるため、steer には流さず拒否通知を返す (v1 の割り切り)
+    const cmd = parseCommand(event.text);
+    if (cmd !== null && this.sessions.has(sessionKey)) {
+      const threadKey = this.registerReplyDestination(event, policy);
+      await this.deliverCommandNotice(
+        sessionKey,
+        threadKey,
+        REJECT_NOTICE_TEXT,
+      );
+      this.logger.info({ sessionKey }, "session rotation rejected: running");
+      return;
+    }
+
     // 実行中 (起動中含む) セッションがあるレーン: gate は通さず enqueue して
     // steer で配達 (architecture.md §6 フロー 6。後続発言は追加指示として扱う)
     if (await this.trySteerExisting(sessionKey, item)) return;
@@ -638,6 +667,11 @@ export class SessionRunner {
       { channelId, sessionKey, reason: decision.reason },
       "gate triggered",
     );
+
+    if (cmd !== null) {
+      await this.handleNewCommand(sessionKey, channelId, policy, event, cmd);
+      return;
+    }
 
     await this.kickTriggered(sessionKey, channelId, policy, event, doc, item);
   }
@@ -756,6 +790,100 @@ export class SessionRunner {
       }
     }
     return true;
+  }
+
+  /** /new コマンドの処理 (session-model.md §6)。gate を通過済み、かつこのレーンに
+   * 実行中セッションが無いことが呼び出し元 (handle) で確定した後にのみ呼ばれる。
+   * 短時間の lease を取得してマーカー (rotateRequestedAt) を書くだけで、即座の
+   * rotate はしない (WorkdirStorage の棚に旧 session.jsonl が残っており、次の
+   * restore で復元されて巻き戻るため。次の kick が restore 後に消費する) */
+  private async handleNewCommand(
+    sessionKey: string,
+    channelId: string,
+    policy: SessionPolicy,
+    event: InboundMessage,
+    cmd: ChatCommand,
+  ): Promise<void> {
+    const lease = await this.store.leases.acquire(
+      sessionKey,
+      this.owner,
+      NEW_COMMAND_LEASE_TTL_MS,
+    );
+    if (lease === null) {
+      const threadKey = this.registerReplyDestination(event, policy);
+      await this.deliverCommandNotice(
+        sessionKey,
+        threadKey,
+        REJECT_NOTICE_TEXT,
+      );
+      this.logger.info(
+        { sessionKey },
+        "session rotation rejected: lease unavailable",
+      );
+      return;
+    }
+    try {
+      const existing = await this.store.sessions.get(sessionKey);
+      if (existing !== null) {
+        // updatedAt は据え置き — マーカー書き込みは「活動」ではないので
+        // idle 判定を狂わせない (session-model.md §3)
+        await this.store.sessions.put(sessionKey, {
+          ...existing,
+          rotateRequestedAt: new Date(),
+        });
+      } else {
+        const threadTs = event.conversation.threadTs ?? event.id;
+        await this.store.sessions.put(sessionKey, {
+          channelId,
+          threadTs,
+          triggerTs: event.id,
+          status: "finished",
+          updatedAt: new Date(),
+          rotateRequestedAt: new Date(),
+        });
+      }
+    } finally {
+      await this.store.leases.release(lease);
+    }
+    this.logger.info({ sessionKey }, "session rotation requested");
+
+    if (cmd.rest !== undefined) {
+      const restEvent: InboundMessage = { ...event, text: cmd.rest };
+      const restItem: InboxItem = {
+        id: inboxItemId(restEvent),
+        event: restEvent,
+        enqueuedAt: new Date(),
+      };
+      await this.kickTriggered(
+        sessionKey,
+        channelId,
+        policy,
+        restEvent,
+        await this.loadChannelDoc(
+          event.conversation.isDm === true ? DM_CHANNEL : channelId,
+        ),
+        restItem,
+      );
+      return;
+    }
+
+    const threadKey = this.registerReplyDestination(event, policy);
+    await this.deliverCommandNotice(sessionKey, threadKey, ACK_NOTICE_TEXT);
+  }
+
+  /** /new の拒否・ack 通知の配達。thread_key は registerReplyDestination が
+   * 返したメッセージごとの宛先キー。abnormalShutdown と違い progress キー
+   * (sessionKey) は渡さない — 実行中セッションへの拒否通知がそのセッションの
+   * 進捗メッセージを上書き消費してしまうため (セッションは継続中で、進捗
+   * タイマーも生きている)。配達失敗はログのみで進行を止めない */
+  private async deliverCommandNotice(
+    sessionKey: string,
+    threadKey: string,
+    text: string,
+  ): Promise<void> {
+    await this.router.deliver({ thread_key: threadKey, text }).catch((err) => {
+      this.logger.warn({ sessionKey, err }, "command notice delivery failed");
+    });
   }
 
   /** gate 通過が確定した後の enqueue → 多重起動チェック → debounce or 即 kick
@@ -1085,29 +1213,41 @@ export class SessionRunner {
       await mkdir(join(sharedDir, "skills"), { recursive: true });
       await sharedStorage.restore(channelId, sharedDir);
     }
-    // channel モードの世代交代 (session-model.md §3): idle 超過 または transcript
-    // サイズ超過のいずれかで transcript を世代交代する。rotate は chown より前
-    // (rotate されたファイルの所有権も chown で揃うため)。判定は idle → size の順で
-    // 独立に行うが、rotate 自体は最大 1 回 (idle が発動したら size 判定は省略する)
+    // 世代交代 (session-model.md §3, §6): manual (/new マーカー) → idle 超過 →
+    // transcript サイズ超過の優先順位で、いずれか 1 回だけ transcript を
+    // 世代交代する。previous は idle 判定にも使うため、ここで常時 1 回だけ fetch
+    // して使い回す。rotate は chown より前 (rotate されたファイルの所有権も
+    // chown で揃うため)
+    const previous = await this.store.sessions.get(sessionKey);
+    let rotated = false;
+    // manual は session.mode に依存しない (thread モードでも効く) — idle/size が
+    // channel モード限定なのとは異なる、明示的なユーザー意図のため (session-model.md §6)
+    if (previous?.rotateRequestedAt !== undefined) {
+      const now = Date.now();
+      await rotateTranscript(workdir, now);
+      rotated = true;
+      this.logger.info({ sessionKey }, "manual reset: transcript rotated");
+      // マーカーをクリアして put し直す (exactOptionalPropertyTypes: true のため
+      // rotateRequestedAt を持つプロパティ自体を作らない)
+      const { rotateRequestedAt: _rotateRequestedAt, ...cleared } = previous;
+      await this.store.sessions.put(sessionKey, cleared);
+    }
+    // idleResetMinutes / maxTranscriptKb は channel モード専用 (session-model.md §3)
     if (policy.sessionMode === "channel") {
-      let rotated = false;
       const idleResetMinutes = doc?.session?.idleResetMinutes;
-      if (idleResetMinutes !== undefined) {
-        const previous = await this.store.sessions.get(sessionKey);
-        if (previous !== null) {
-          const now = Date.now();
-          if (isIdleExpired(previous.updatedAt, idleResetMinutes, now)) {
-            await rotateTranscript(workdir, now);
-            rotated = true;
-            this.logger.info(
-              {
-                sessionKey,
-                idleResetMinutes,
-                idleMs: now - previous.updatedAt.getTime(),
-              },
-              "idle reset: transcript rotated",
-            );
-          }
+      if (!rotated && idleResetMinutes !== undefined && previous !== null) {
+        const now = Date.now();
+        if (isIdleExpired(previous.updatedAt, idleResetMinutes, now)) {
+          await rotateTranscript(workdir, now);
+          rotated = true;
+          this.logger.info(
+            {
+              sessionKey,
+              idleResetMinutes,
+              idleMs: now - previous.updatedAt.getTime(),
+            },
+            "idle reset: transcript rotated",
+          );
         }
       }
       const maxTranscriptKb = doc?.session?.maxTranscriptKb;

@@ -172,6 +172,39 @@ export function describeStateStoreContract(
         expect(got?.updatedAt).toBeInstanceOf(Date);
       });
 
+      it("put/get: rotateRequestedAt を含む doc は Date として往復する", async () => {
+        const doc: SessionDoc = {
+          channelId: "C1",
+          threadTs: "1000.0",
+          triggerTs: "1000.0",
+          status: "active",
+          updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+          rotateRequestedAt: new Date("2026-01-01T00:00:05.000Z"),
+        };
+        await harness.store.sessions.put("T1", doc);
+
+        const got = await harness.store.sessions.get("T1");
+        expect(got).toEqual(doc);
+        expect(got?.rotateRequestedAt).toBeInstanceOf(Date);
+        expect(got?.rotateRequestedAt?.getTime()).toBe(
+          doc.rotateRequestedAt?.getTime(),
+        );
+      });
+
+      it("put/get: rotateRequestedAt を含まない doc は get 後も undefined のまま", async () => {
+        const doc: SessionDoc = {
+          channelId: "C1",
+          threadTs: "1000.0",
+          triggerTs: "1000.0",
+          status: "active",
+          updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+        };
+        await harness.store.sessions.put("T1", doc);
+
+        const got = await harness.store.sessions.get("T1");
+        expect(got?.rotateRequestedAt).toBeUndefined();
+      });
+
       it("put: 同 thread_key への再 put は上書きする", async () => {
         const doc1: SessionDoc = {
           channelId: "C1",

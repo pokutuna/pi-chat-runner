@@ -57,6 +57,7 @@ interface SessionDocData {
   triggerTs: string;
   status: "active" | "finished";
   updatedAt: Timestamp;
+  rotateRequestedAt?: Timestamp;
 }
 
 interface LeaseDocData {
@@ -162,6 +163,9 @@ class FirestoreSessionStore implements SessionStore {
       triggerTs: data.triggerTs,
       status: data.status,
       updatedAt: data.updatedAt.toDate(),
+      ...(data.rotateRequestedAt !== undefined && {
+        rotateRequestedAt: data.rotateRequestedAt.toDate(),
+      }),
     };
   }
 
@@ -172,6 +176,10 @@ class FirestoreSessionStore implements SessionStore {
       triggerTs: doc.triggerTs,
       status: doc.status,
       updatedAt: Timestamp.fromDate(doc.updatedAt),
+      // Firestore は undefined フィールドを拒否するため、値がある場合のみ書く
+      ...(doc.rotateRequestedAt !== undefined && {
+        rotateRequestedAt: Timestamp.fromDate(doc.rotateRequestedAt),
+      }),
     };
     await this.db.collection(this.collectionName).doc(threadKey).set(data);
   }

@@ -81,10 +81,21 @@ class SqliteSessionStore implements SessionStore {
       .prepare(`SELECT doc FROM sessions WHERE thread_key = ?`)
       .get(threadKey) as SessionRow | undefined;
     if (row === undefined) return null;
-    const parsed = JSON.parse(row.doc) as Omit<SessionDoc, "updatedAt"> & {
+    const parsed = JSON.parse(row.doc) as Omit<
+      SessionDoc,
+      "updatedAt" | "rotateRequestedAt"
+    > & {
       updatedAt: string;
+      rotateRequestedAt?: string;
     };
-    return { ...parsed, updatedAt: new Date(parsed.updatedAt) };
+    const { rotateRequestedAt, ...rest } = parsed;
+    return {
+      ...rest,
+      updatedAt: new Date(parsed.updatedAt),
+      ...(rotateRequestedAt !== undefined && {
+        rotateRequestedAt: new Date(rotateRequestedAt),
+      }),
+    };
   }
 
   async put(threadKey: string, doc: SessionDoc): Promise<void> {
