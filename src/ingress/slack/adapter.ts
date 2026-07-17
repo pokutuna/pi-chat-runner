@@ -33,6 +33,9 @@ export interface SlackMessageLikeEvent {
   text?: string;
   user?: string;
   bot_id?: string;
+  /** bot_message などで送信元アプリの表示名が入ることがある (webhook 系アラート:
+   * 例 "Cloud Monitoring")。あれば sender.displayName に使う。 */
+  username?: string;
   channel: string;
   /** "im" が DM。省略される場合があるので channelId の "D" prefix で fallback する */
   channel_type?: string;
@@ -95,8 +98,12 @@ export class SlackIngressAdapter {
     event: SlackMessageLikeEvent,
     eventId?: string,
   ): InboundMessage | null {
-    // message_changed / message_deleted 等の subtype は Step 1 では扱わない
-    if (event.subtype !== undefined) {
+    // subtype 付きイベントは原則対象外だが、bot_message だけは通す。webhook 系
+    // アラート (Cloud Monitoring / Mackerel / Security Command Center 等) は
+    // Slack 連携で subtype: "bot_message" として届くため、allowBots 経路 (この
+    // 機能の主目的) の入口になる (session-model.md §5)。message_changed /
+    // message_deleted / thread_broadcast 等、それ以外の subtype は従来どおり drop する。
+    if (event.subtype !== undefined && event.subtype !== "bot_message") {
       return null;
     }
 
@@ -110,6 +117,7 @@ export class SlackIngressAdapter {
     const mentionsBot = event.type === "app_mention" ? true : strippedMention;
 
     const isBot = event.bot_id !== undefined || event.user === this.botUserId;
+    const isSelf = event.user === this.botUserId;
 
     // channel_type が無い場合 (一部の payload では省略される) は channelId の "D" prefix で
     // フォールバック判定する (Slack の DM channelId は D で始まる)。
@@ -131,6 +139,10 @@ export class SlackIngressAdapter {
       sender: {
         id: event.user ?? event.bot_id ?? "unknown",
         isBot,
+        isSelf,
+        ...(event.username !== undefined
+          ? { displayName: event.username }
+          : {}),
       },
       text,
       mentionsBot,
@@ -148,7 +160,12 @@ export class SlackIngressAdapter {
       targetMessageId: event.item.ts,
       targetIsOwnMessage: false, // 判定には対象メッセージの発言者情報が必要 (Step 1 では未解決)
       conversation: { channelId: event.item.channel },
-      sender: { id: event.user, isBot: event.user === this.botUserId },
+      // reaction には bot_id が無いので isBot は self 判定のままでよい
+      sender: {
+        id: event.user,
+        isBot: event.user === this.botUserId,
+        isSelf: event.user === this.botUserId,
+      },
       added: event.type === "reaction_added",
       timestamp: new Date(),
       raw: event,

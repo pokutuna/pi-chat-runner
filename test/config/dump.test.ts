@@ -135,4 +135,59 @@ describe("formatWhen", () => {
     ]);
     expect(out).toBe("OR[ AND[ mention, keyword ] ]");
   });
+
+  it("formats a sender leaf with its is value", () => {
+    const out = formatWhen([{ kind: "sender", is: "bot" }]);
+    expect(out).toBe("OR[ sender(is=bot) ]");
+  });
+});
+
+describe("formatEffectiveConfig: trigger.allowBots", () => {
+  it("shows trigger.allowBots when set to true", () => {
+    const file = ChannelsFileSchema.parse({
+      channels: [
+        {
+          channel: "default",
+          trigger: {
+            when: [
+              {
+                and: [
+                  { kind: "sender", is: "bot" },
+                  { kind: "keyword", pattern: "x" },
+                ],
+              },
+            ],
+            allowBots: true,
+          },
+        },
+      ],
+    });
+
+    const out = formatEffectiveConfig(file, "C_NOT_FOUND", { json: false });
+    expect(out).toMatch(/trigger\.allowBots:\s+true\s+← default/);
+  });
+
+  it("omits trigger.allowBots from pretty output when not set", () => {
+    const file = ChannelsFileSchema.parse({
+      channels: [
+        { channel: "default", trigger: { when: [{ kind: "mention" }] } },
+      ],
+    });
+
+    const out = formatEffectiveConfig(file, "C_NOT_FOUND", { json: false });
+    expect(out).not.toContain("trigger.allowBots");
+  });
+
+  it("includes trigger.allowBots in json output with source and null when unset", () => {
+    const file = ChannelsFileSchema.parse({
+      channels: [
+        { channel: "default", trigger: { when: [{ kind: "mention" }] } },
+      ],
+    });
+
+    const out = formatEffectiveConfig(file, "C_NOT_FOUND", { json: true });
+    const payload = JSON.parse(out);
+    expect(payload.fields["trigger.allowBots"].value).toBe(null);
+    expect(payload.fields["trigger.allowBots"].source).toBe("code default");
+  });
 });

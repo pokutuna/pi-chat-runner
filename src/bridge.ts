@@ -231,6 +231,9 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
   // Layer 0 (ハードフィルタ): 同一メッセージは app_mention と message の 2 イベントで
   // 届く (event_id は別) ため、メッセージ ts で重複排除する。inbox の dedupe は
   // event_id ベースなので、この二重配信はここでしか防げない
+  //
+  // 自己エコー (sender.isSelf) はここで無条件に除外する (無限ループ防止)。他 bot の
+  // 投稿はここでは弾かず、runner 側の allowBots 判定・gate に委ねる (session-model.md §5)。
   const seenMessages = new Set<string>();
 
   await eventSource.start(async (event: ChatEvent, ack: Ack) => {
@@ -251,11 +254,8 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
     );
 
     if (event.kind === "reaction") {
-      if (event.sender.isBot) {
-        logger.info(
-          { reason: "bot_message", kind: event.kind },
-          "event ignored",
-        );
+      if (event.sender.isSelf) {
+        logger.info({ reason: "self_echo", kind: event.kind }, "event ignored");
         return;
       }
       try {
@@ -287,11 +287,8 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
       seenMessages.clear();
     }
 
-    if (event.sender.isBot) {
-      logger.info(
-        { reason: "bot_message", eventId: event.id },
-        "event ignored",
-      );
+    if (event.sender.isSelf) {
+      logger.info({ reason: "self_echo", eventId: event.id }, "event ignored");
       return;
     }
 

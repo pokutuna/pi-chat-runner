@@ -52,6 +52,26 @@ describe("ChannelDocSchema", () => {
     expect(result.success).toBe(false);
   });
 
+  it("accepts trigger.allowBots as a boolean", () => {
+    const result = ChannelDocSchema.safeParse({
+      trigger: {
+        when: [{ kind: "mention" }],
+        allowBots: true,
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects a non-boolean trigger.allowBots", () => {
+    const result = ChannelDocSchema.safeParse({
+      trigger: {
+        when: [{ kind: "mention" }],
+        allowBots: "yes",
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
   it("rejects unknown top-level keys (strict)", () => {
     const result = ChannelDocSchema.safeParse({
       systemPrompt: "hi",
@@ -137,6 +157,43 @@ describe("ChannelDocSchema", () => {
     const result = ChannelDocSchema.safeParse({
       trigger: {
         when: [{ kind: "reaction", emoji: [] }],
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts a sender gate with is=bot", () => {
+    const result = ChannelDocSchema.safeParse({
+      trigger: {
+        when: [{ kind: "sender", is: "bot" }],
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a sender gate with is=human", () => {
+    const result = ChannelDocSchema.safeParse({
+      trigger: {
+        when: [{ kind: "sender", is: "human" }],
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects sender gate without is", () => {
+    expect(() =>
+      ChannelDocSchema.parse({
+        trigger: {
+          when: [{ kind: "sender" }],
+        },
+      }),
+    ).toThrow(/is/);
+  });
+
+  it("rejects sender gate with an invalid is value", () => {
+    const result = ChannelDocSchema.safeParse({
+      trigger: {
+        when: [{ kind: "sender", is: "robot" }],
       },
     });
     expect(result.success).toBe(false);

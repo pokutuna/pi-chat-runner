@@ -28,7 +28,7 @@ const PathRefSchema = z
 
 /** Gate の種別ごとに要るパラメータだけを refinement で強制する (config.md §7)。
  * keyword は pattern 必須、classifier は criteria 必須、reaction は emoji 必須
- * (非空)。mention/passthrough は無し。 */
+ * (非空)、sender は is 必須。mention/passthrough は無し。 */
 const GateSchema = z
   .object({
     kind: z.enum([
@@ -37,6 +37,7 @@ const GateSchema = z
       "classifier",
       "passthrough",
       "reaction",
+      "sender",
     ]),
     pattern: z.string().optional(),
     criteria: z.string().optional(),
@@ -45,6 +46,8 @@ const GateSchema = z
     model: z.string().optional(),
     /** reaction gate が trigger する emoji 名の一覧 (Slack の正規化名。例 "eyes")。 */
     emoji: z.array(z.string()).optional(),
+    /** sender gate が trigger する送信者種別 (session-model.md §5)。 */
+    is: z.enum(["bot", "human"]).optional(),
   })
   .strict()
   .superRefine((gate, ctx) => {
@@ -70,6 +73,13 @@ const GateSchema = z
         code: "custom",
         message: `gate kind "reaction" requires a non-empty "emoji"`,
         path: ["emoji"],
+      });
+    }
+    if (gate.kind === "sender" && gate.is === undefined) {
+      ctx.addIssue({
+        code: "custom",
+        message: `gate kind "sender" requires "is"`,
+        path: ["is"],
       });
     }
   });
@@ -98,6 +108,9 @@ const TriggerSchema = z
     when: z.array(WhenNodeSchema),
     debounceSec: z.number().optional(),
     // cooldownSec: z.number().optional(),
+    /** bot 投稿 (自分自身を除く) を gate 評価に届ける opt-in。既定 false = bot
+     * 投稿では起動しない (session-model.md §5)。 */
+    allowBots: z.boolean().optional(),
   })
   .strict();
 

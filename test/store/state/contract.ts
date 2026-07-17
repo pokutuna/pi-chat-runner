@@ -24,7 +24,7 @@ function makeInboundMessage(id: string): InboundMessage {
     kind: "message",
     id,
     conversation: { channelId: "C1", threadTs: "1000.0" },
-    sender: { id: "U1", isBot: false },
+    sender: { id: "U1", isBot: false, isSelf: false },
     text: `hello ${id}`,
     mentionsBot: true,
     attachments: [],

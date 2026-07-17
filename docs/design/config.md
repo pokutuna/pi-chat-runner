@@ -635,6 +635,26 @@ YAML に置く。これで「実行環境以外のカスタマイズは YAML で
 つまり trigger ⊃ when(gate の合成) + 発火制御。gate は trigger の構成部品で、
 trigger = gate ではない。
 
+### trigger.allowBots — bot 投稿の起動許可
+
+既定 false。他 bot の投稿はハードフィルタ (自己エコー除外のみ) は通過するが、
+`allowBots: false` のままなら SessionRunner がそこで捨てて Gate 評価に進ませない
+([session-model.md](session-model.md) §5)。true にすると bot 投稿も Gate 評価・steer に乗る。
+送信者種別で判定する `kind: sender` (`is: "bot" | "human"`) と組み合わせれば、
+「人間は mention のみ、bot はキーワードで自動起動」のような書き分けができる:
+
+```yaml
+trigger:
+  allowBots: true
+  when:
+    - and: [{ kind: sender, is: human }, { kind: mention }]
+    - and: [{ kind: sender, is: bot }, { kind: keyword, pattern: "ALERT|CRITICAL" }]
+```
+
+`/new` 等のテキストコマンドは `allowBots: true` でも bot 送信者では発動しない。
+reaction gate は対象リアクションの送信者 (通常は人間) で判定するため、
+`allowBots` の影響を受けず従来どおり動く。
+
 ### trigger.when — Gate の合成木
 
 Gate はこの基盤が提供する type 名 (`kind`) から選び、設定値を添える。読み込み時 (§6) に

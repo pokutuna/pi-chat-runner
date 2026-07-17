@@ -15,6 +15,7 @@ import { KeywordGate } from "../../src/gate/gates/keyword.js";
 import { MentionGate } from "../../src/gate/gates/mention.js";
 import { PassthroughGate } from "../../src/gate/gates/passthrough.js";
 import { ReactionGate } from "../../src/gate/gates/reaction.js";
+import { SenderGate } from "../../src/gate/gates/sender.js";
 import type { InboundMessage } from "../../src/ingress/chat-event.js";
 
 function makeMessage(overrides: Partial<InboundMessage> = {}): InboundMessage {
@@ -22,7 +23,7 @@ function makeMessage(overrides: Partial<InboundMessage> = {}): InboundMessage {
     kind: "message",
     id: "m1",
     conversation: { channelId: "C1" },
-    sender: { id: "U1", isBot: false },
+    sender: { id: "U1", isBot: false, isSelf: false },
     text: "hello",
     mentionsBot: false,
     attachments: [],
@@ -72,6 +73,11 @@ describe("createGate (registry)", () => {
   it("creates a ReactionGate for kind=reaction with emoji", () => {
     const gate = createGate({ kind: "reaction", emoji: ["eyes"] });
     expect(gate).toBeInstanceOf(ReactionGate);
+  });
+
+  it("creates a SenderGate for kind=sender with is", () => {
+    const gate = createGate({ kind: "sender", is: "bot" });
+    expect(gate).toBeInstanceOf(SenderGate);
   });
 
   it("throws for unknown kind", () => {

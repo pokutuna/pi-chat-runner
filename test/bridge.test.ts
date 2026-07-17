@@ -96,6 +96,31 @@ async function waitFor(
   throw new Error(`timed out waiting for: ${label}`);
 }
 
+/** pino のログ 1 行 (JSON) を配列に集めるテスト用ロガー
+ * (test/session/runner.test.ts の collectingLogger と同じ方法)。 */
+function collectingLogger(): {
+  logger: pino.Logger;
+  lines: () => Record<string, unknown>[];
+} {
+  const chunks: string[] = [];
+  const stream = {
+    write(chunk: string) {
+      chunks.push(chunk);
+      return true;
+    },
+  };
+  const logger = pino({ level: "debug" }, stream);
+  return {
+    logger,
+    lines: () =>
+      chunks
+        .join("")
+        .split("\n")
+        .filter((line) => line.length > 0)
+        .map((line) => JSON.parse(line)),
+  };
+}
+
 describe("startBridge", () => {
   it("wires eventSource → SessionRunner → web client for a mention event", async () => {
     const channelId = "C0000000001";
@@ -104,7 +129,7 @@ describe("startBridge", () => {
       kind: "message",
       id: triggerTs,
       conversation: { channelId },
-      sender: { id: "U01", isBot: false },
+      sender: { id: "U01", isBot: false, isSelf: false },
       text: "hello bridge",
       mentionsBot: true,
       attachments: [],
@@ -149,7 +174,7 @@ describe("startBridge", () => {
       kind: "message",
       id: triggerTs,
       conversation: { channelId },
-      sender: { id: "U01", isBot: false },
+      sender: { id: "U01", isBot: false, isSelf: false },
       text: "hello injected poster",
       mentionsBot: true,
       attachments: [],
@@ -199,5 +224,135 @@ describe("startBridge", () => {
       text: expect.stringContaining("hello injected poster"),
     });
     expect(web.posted).toHaveLength(0);
+  });
+
+  it("ignores self-echo messages (sender.isSelf) without reaching the runner", async () => {
+    const channelId = "C0000000003";
+    const triggerTs = "1700000000.000300";
+    const event: ChatEvent = {
+      kind: "message",
+      id: triggerTs,
+      conversation: { channelId },
+      sender: { id: "UBOTSELF", isBot: true, isSelf: true },
+      text: "hello from myself",
+      mentionsBot: true,
+      attachments: [],
+      timestamp: new Date("2026-07-06T00:00:00Z"),
+      metadata: { eventId: "Ev-bridge-self-echo-test" },
+    };
+
+    const eventSource = new StubIngress([event]);
+    const web = fakeWebClient();
+    const agentHome = await mkdtemp(
+      join(tmpdir(), "pi-chat-runner-bridge-self-echo-home-"),
+    );
+    const { logger, lines } = collectingLogger();
+
+    await startBridge({
+      eventSource,
+      web: web.client,
+      store: new InMemoryStateStore(),
+      configSource: new FileConfigSource(CONFIG_PATH),
+      piEntrypoint: FAKE_PI,
+      agentHome,
+      logger,
+    });
+
+    expect(eventSource.acked).toBe(1);
+    expect(
+      lines().some(
+        (line) => line.msg === "event ignored" && line.reason === "self_echo",
+      ),
+    ).toBe(true);
+    expect(web.posted).toHaveLength(0);
+  });
+
+  it("delivers other bots' messages (isBot=true, isSelf=false) to the runner", async () => {
+    // allowBots opt-in channel (session-model.md §5) — allowBots なしでは
+    // handle() が bot 投稿を既定で捨てるため、bridge がここまで届けることを
+    // 検証するにはチャンネル側で明示的に許可する必要がある
+    const channelId = "C0000000004";
+    const triggerTs = "1700000000.000400";
+    const event: ChatEvent = {
+      kind: "message",
+      id: triggerTs,
+      conversation: { channelId },
+      sender: { id: "UOTHERBOT", isBot: true, isSelf: false },
+      text: "hello from another bot",
+      mentionsBot: true,
+      attachments: [],
+      timestamp: new Date("2026-07-06T00:00:00Z"),
+      metadata: { eventId: "Ev-bridge-other-bot-test" },
+    };
+
+    const eventSource = new StubIngress([event]);
+    const web = fakeWebClient();
+    const agentHome = await mkdtemp(
+      join(tmpdir(), "pi-chat-runner-bridge-other-bot-home-"),
+    );
+    const logger = pino({ level: "silent" });
+
+    await startBridge({
+      eventSource,
+      web: web.client,
+      store: new InMemoryStateStore(),
+      configSource: new FileConfigSource(CONFIG_PATH),
+      piEntrypoint: FAKE_PI,
+      agentHome,
+      logger,
+    });
+
+    expect(eventSource.acked).toBe(1);
+    await waitFor(
+      () => web.posted.length === 1,
+      "reply posted for other bot's message",
+    );
+    expect(web.posted[0]).toMatchObject({
+      channel: channelId,
+      thread_ts: triggerTs,
+      text: expect.stringContaining("hello from another bot"),
+    });
+  });
+
+  it("ignores self-echo reactions (sender.isSelf) without reaching the runner", async () => {
+    const channelId = "C0000000005";
+    const event: ChatEvent = {
+      kind: "reaction",
+      emoji: "eyes",
+      targetMessageId: "1700000000.000500",
+      targetIsOwnMessage: false,
+      conversation: { channelId },
+      sender: { id: "UBOTSELF", isBot: true, isSelf: true },
+      added: true,
+      timestamp: new Date("2026-07-06T00:00:00Z"),
+    };
+
+    const eventSource = new StubIngress([event]);
+    const web = fakeWebClient();
+    const agentHome = await mkdtemp(
+      join(tmpdir(), "pi-chat-runner-bridge-reaction-self-echo-home-"),
+    );
+    const { logger, lines } = collectingLogger();
+
+    await startBridge({
+      eventSource,
+      web: web.client,
+      store: new InMemoryStateStore(),
+      configSource: new FileConfigSource(CONFIG_PATH),
+      piEntrypoint: FAKE_PI,
+      agentHome,
+      logger,
+    });
+
+    expect(eventSource.acked).toBe(1);
+    expect(
+      lines().some(
+        (line) =>
+          line.msg === "event ignored" &&
+          line.reason === "self_echo" &&
+          line.kind === "reaction",
+      ),
+    ).toBe(true);
+    expect(web.reacted).toHaveLength(0);
   });
 });

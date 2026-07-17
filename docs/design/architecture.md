@@ -238,8 +238,9 @@ hydrate/dehydrate コードを消す。判断材料:
 
 ```
 受信 (/slack/events, いずれかのインスタンスが受ける):
- 1. 署名検証 → bot 発言/自己エコー除外
- 2. 起動判定: mention → 即対象。classifier チャンネルは debounce 後に Flash-Lite で判定
+ 1. 署名検証 → 自己エコー除外 (他 bot の投稿はここでは弾かない)
+ 2. 起動判定: `trigger.allowBots` (既定 false) が false なら bot 投稿をここで除外。
+    mention → 即対象。classifier チャンネルは debounce 後に Flash-Lite で判定
     (criteria は ChannelDoc)。対象外なら 200 だけ返して終わり (inbox に積まない)
  3. 対象なら inbox に event_id で create() (Slack リトライを冪等排除) → 200 を返す
     ── ここまでで Slack への ACK は完了。event ハンドラの仕事は「積む」まで ──

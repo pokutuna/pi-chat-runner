@@ -33,7 +33,7 @@ describe("SlackIngressAdapter.normalize", () => {
       channelId: "C123",
       threadTs: "1720000000.000100",
     });
-    expect(msg.sender).toEqual({ id: "U123", isBot: false });
+    expect(msg.sender).toEqual({ id: "U123", isBot: false, isSelf: false });
     expect(msg.metadata).toEqual({ eventId: "Ev123" });
   });
 
@@ -53,7 +53,7 @@ describe("SlackIngressAdapter.normalize", () => {
     expect(msg.conversation.threadTs).toBeUndefined();
   });
 
-  it("marks sender.isBot=true for messages with bot_id", () => {
+  it("marks sender.isBot=true (isSelf=false) for messages with bot_id from another bot", () => {
     const result = adapter.normalize({
       type: "message",
       text: "posted by another bot",
@@ -65,6 +65,7 @@ describe("SlackIngressAdapter.normalize", () => {
     expect(result).not.toBeNull();
     const msg = result as InboundMessage;
     expect(msg.sender.isBot).toBe(true);
+    expect(msg.sender.isSelf).toBe(false);
     expect(msg.sender.id).toBe("B999");
   });
 
@@ -83,10 +84,14 @@ describe("SlackIngressAdapter.normalize", () => {
     expect(reaction.targetMessageId).toBe("1720000000.000100");
     expect(reaction.added).toBe(true);
     expect(reaction.conversation).toEqual({ channelId: "C123" });
-    expect(reaction.sender).toEqual({ id: "U123", isBot: false });
+    expect(reaction.sender).toEqual({
+      id: "U123",
+      isBot: false,
+      isSelf: false,
+    });
   });
 
-  it("marks sender.isBot=true for the bot's own reaction_added echo", () => {
+  it("marks sender.isBot=true and isSelf=true for the bot's own reaction_added echo", () => {
     const result = adapter.normalize({
       type: "reaction_added",
       user: BOT_USER_ID,
@@ -96,7 +101,11 @@ describe("SlackIngressAdapter.normalize", () => {
 
     expect(result).not.toBeNull();
     const reaction = result as ReactionEvent;
-    expect(reaction.sender).toEqual({ id: BOT_USER_ID, isBot: true });
+    expect(reaction.sender).toEqual({
+      id: BOT_USER_ID,
+      isBot: true,
+      isSelf: true,
+    });
   });
 
   it("keeps the raw reaction_added payload on ReactionEvent.raw", () => {
@@ -117,7 +126,7 @@ describe("SlackIngressAdapter.normalize", () => {
     expect(reaction.raw).toEqual(raw);
   });
 
-  it("returns null for message subtypes (e.g. message_changed)", () => {
+  it("returns null for message subtypes other than bot_message (e.g. message_changed)", () => {
     const result = adapter.normalize({
       type: "message",
       subtype: "message_changed",
@@ -126,6 +135,29 @@ describe("SlackIngressAdapter.normalize", () => {
     });
 
     expect(result).toBeNull();
+  });
+
+  it("normalizes subtype=bot_message (webhook alerts) with isBot=true, isSelf=false, displayName from username", () => {
+    const result = adapter.normalize({
+      type: "message",
+      subtype: "bot_message",
+      text: "CPU usage above threshold",
+      bot_id: "B999",
+      username: "Cloud Monitoring",
+      channel: "C123",
+      ts: "1720000008.000100",
+    });
+
+    expect(result).not.toBeNull();
+    const msg = result as InboundMessage;
+    expect(msg.kind).toBe("message");
+    expect(msg.sender).toEqual({
+      id: "B999",
+      isBot: true,
+      isSelf: false,
+      displayName: "Cloud Monitoring",
+    });
+    expect(msg.text).toBe("CPU usage above threshold");
   });
 
   it("sets isDm=true for message events with channel_type=im", () => {

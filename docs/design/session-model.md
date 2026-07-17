@@ -240,12 +240,22 @@ NO_REPLY」の 3 点構成で、軽量 LLM 分類器を持たない ([../researc
 (自然文で書ける自動起動条件) のため中段に分類器を足す。
 
 ```
-Layer 0: ハードフィルタ (コード)     … bot 発言・自己エコー・subtype・allowlist・dedupe・レート制限
+Layer 0: ハードフィルタ (コード)     … 自己エコー・subtype・allowlist・dedupe・レート制限
 Layer 1: 決定的トリガ (コード)       … bot メンション / DM / 特定リアクション / スラッシュコマンド
                                         → 無条件で起動
 Layer 2: 分類器 (軽量 LLM)           … チャンネル設定の自然文条件 + 直近文脈で判定 → 起動/観測のみ
 Layer 3: エージェント自身の沈黙      … 起動したが返答不要と判断したら reply を呼ばない ([chat-model.md](chat-model.md) §5.7)
 ```
+
+他 bot の投稿は Layer 0 では除外しない。SessionRunner が channel 設定
+`trigger.allowBots` (既定 false) を見て、false ならそこで捨てる。true なら
+Gate 評価・steer に通常どおり乗る (ただし `/new` 等のテキストコマンドは bot
+送信者では発動しない)。
+
+ingress (SlackIngressAdapter) は `subtype: "bot_message"` を通す (Cloud Monitoring /
+Mackerel / Security Command Center 等、webhook 系アラートの Slack 連携の主経路のため)。
+それ以外の subtype (message_changed / message_deleted / thread_broadcast 等) は
+従来どおり Layer 0 より手前 (adapter) で除外する。
 
 ### Gate は差し替え・合成できる部品にする
 
@@ -274,6 +284,7 @@ interface Gate {
 //   ClassifierGate   … criteria + recent を Gemini Flash-Lite に渡し JSON 判定 (下記)
 //   PassthroughGate  … 常に trigger=true (mention なしで全部拾う実験・DM 専用チャンネル用)
 //   ReactionGate     … 指定 emoji でのリアクションで、対象メッセージを起点に起動
+//   SenderGate       … 送信者が bot/human かで判定 (allowBots と組み合わせて使う)
 // cooldownSec (連続起動抑止) は Gate ではなく Trigger 直下のフィールドとして
 // 検討中。実装保留のため現状スキーマからもコメントアウトしてある (下記参照)。
 ```
@@ -289,6 +300,7 @@ interface Trigger {
   when: WhenNode[];         // 評価する Gate の合成木 (配列 = OR)
   // cooldownSec?: number;  // 実装保留中。スキーマからも外してある (下記「実装案」参照)
   debounceSec?: number;     // 連投バーストが静まるまで kick を遅らせて 1 ターンに束ねる (実装済み)
+  allowBots?: boolean;      // 既定 false。true で bot 投稿 (自分以外) を when 評価まで通す (config.md §7)
 }
 ```
 

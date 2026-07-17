@@ -633,11 +633,22 @@ export class SessionRunner {
       enqueuedAt: new Date(),
     };
 
+    // bot 投稿 (自己エコーは bridge で除外済み) は allowBots opt-in の
+    // channel でのみ gate 評価・steer に乗せる (session-model.md §5)
+    if (event.sender.isBot && doc?.trigger?.allowBots !== true) {
+      this.logger.debug(
+        { channelId, sessionKey },
+        "bot message ignored (allowBots not enabled)",
+      );
+      return;
+    }
+
     // /new コマンド (session-model.md §6)。gate を通過したメッセージにのみ意味を
     // 持たせる (mention gate のチャンネルでは `@bot /new`) ため、gate 評価より
     // 前に判定するのはここまで — 実行中レーンへの拒否だけは gate をバイパスする。
-    // 実行中レーンとの交錯を避けるため、steer には流さず拒否通知を返す (v1 の割り切り)
-    const cmd = parseCommand(event.text);
+    // 実行中レーンとの交錯を避けるため、steer には流さず拒否通知を返す (v1 の割り切り)。
+    // bot にセッションを切らせない (session-model.md §5) ため bot 送信者ではコマンド化しない
+    const cmd = event.sender.isBot ? null : parseCommand(event.text);
     if (cmd !== null && this.sessions.has(sessionKey)) {
       const threadKey = this.registerReplyDestination(event, policy);
       await this.deliverCommandNotice(

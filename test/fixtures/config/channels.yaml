@@ -18,3 +18,8 @@ channels:
         - kind: keyword
           pattern: "(?i)(help|error)"
         - kind: mention
+  - channel: "C0000000004"
+    trigger:
+      allowBots: true
+      when:
+        - kind: mention

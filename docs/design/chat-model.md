@@ -68,7 +68,8 @@ interface UserRef {
   userId: string;        // Slack: U..., メール: アドレス
   altUserId?: string;    // 同一人物の別 ID (hermes user_id_alt: 電話番号↔UUID 問題)
   displayName?: string;
-  isBot: boolean;        // 他 bot 発言のループ防止に必須
+  isBot: boolean;        // bot による投稿か (自分自身を含む)。既定は gate 評価から除外
+  isSelf: boolean;       // 自分自身 (この bot) の投稿か。ループ防止のため bridge が常に除外
 }
 ```
 

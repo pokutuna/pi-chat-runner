@@ -11,7 +11,7 @@ function makeMessage(overrides: Partial<InboundMessage> = {}): InboundMessage {
     kind: "message",
     id: "m1",
     conversation: { channelId: "C1" },
-    sender: { id: "U1", isBot: false },
+    sender: { id: "U1", isBot: false, isSelf: false },
     text: "hello",
     mentionsBot: false,
     attachments: [],
@@ -45,7 +45,7 @@ describe("MentionGate", () => {
       targetMessageId: "m1",
       targetIsOwnMessage: false,
       conversation: { channelId: "C1" },
-      sender: { id: "U1", isBot: false },
+      sender: { id: "U1", isBot: false, isSelf: false },
       added: true,
       timestamp: new Date("2026-07-05T00:00:00Z"),
     };

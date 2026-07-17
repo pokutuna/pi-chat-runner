@@ -46,6 +46,9 @@ function formatWhenNode(node: WhenNode): string {
     const model = node.model ?? "code default";
     return `classifier(${model})`;
   }
+  if (node.kind === "sender") {
+    return `sender(is=${node.is})`;
+  }
   return node.kind;
 }
 
@@ -128,6 +131,13 @@ function buildFields(
       fields.push({
         label: "trigger.debounceSec",
         value: String(doc.trigger.debounceSec),
+        source: fieldSource(provenance.trigger, true),
+      });
+    }
+    if (doc.trigger.allowBots !== undefined) {
+      fields.push({
+        label: "trigger.allowBots",
+        value: String(doc.trigger.allowBots),
         source: fieldSource(provenance.trigger, true),
       });
     }
@@ -285,6 +295,13 @@ function formatJson(
       source: fieldSource(
         provenance.trigger,
         doc.trigger?.debounceSec !== undefined,
+      ),
+    },
+    "trigger.allowBots": {
+      value: doc.trigger?.allowBots ?? null,
+      source: fieldSource(
+        provenance.trigger,
+        doc.trigger?.allowBots !== undefined,
       ),
     },
   };

@@ -141,16 +141,19 @@ interface Gate {
 // ChannelDoc 側: trigger.when (Gate の合成木。配列は OR、{and}/{or} で明示合成)
 ```
 
-**具体**: ハードフィルタ (bot 発言・自己エコー除外) は常に前段に固定し、その後を合成する。
+**具体**: ハードフィルタ (自己エコー除外) は常に前段に固定し、その後を合成する。
+他 bot の投稿は `trigger.allowBots` (既定 false) が opt-in したチャンネルだけ
+このハードフィルタを通り、Gate の合成に届く。
 
 ```mermaid
 flowchart LR
-    E[ChatEvent] --> HF[ハードフィルタ<br/>常に前段・固定]
+    E[ChatEvent] --> HF[ハードフィルタ<br/>自己エコー除外・常に前段]
     HF --> M[MentionGate<br/>決定的]
     HF --> K[KeywordGate<br/>正規表現・安価]
     HF --> L[ClassifierGate<br/>Flash-Lite 自然文判定]
     HF --> PS[PassthroughGate<br/>素通し]
-    M & K & L & PS --> D{when<br/>OR / AND}
+    HF --> S[SenderGate<br/>bot/human 判定]
+    M & K & L & PS & S --> D{when<br/>OR / AND}
     D -->|trigger| IB[(Inbox へ)]
     D -->|観測のみ| O[observed 記録]
 ```

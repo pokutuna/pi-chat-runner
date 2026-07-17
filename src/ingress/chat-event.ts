@@ -3,7 +3,7 @@
 // 汎用モデルの ConversationRef / UserRef は docs/design/architecture.md §0 の
 // 簡素化方針 (単一組織・Slack のみ) に従い、ここでは以下に潰す:
 //   - ConversationRef -> ConversationRef { channelId, threadTs? }
-//   - UserRef          -> Sender { id, isBot, displayName? }
+//   - UserRef          -> Sender { id, isBot, isSelf, displayName? }
 
 /** 会話 (返信先) の参照。Slack: (channelId, threadTs) の 2 つだけ。 */
 export interface ConversationRef {
@@ -17,7 +17,11 @@ export interface ConversationRef {
 /** 発言者。簡素版のため scope/platform は持たない。 */
 export interface Sender {
   id: string;
+  /** bot による投稿 (自分自身を含む)。 */
   isBot: boolean;
+  /** 自分自身 (この bot) の投稿。エコーの無限ループ防止のため bridge が
+   * 設定に関わらず常に除外する。 */
+  isSelf: boolean;
   /** 表示名。EventSource/bridge 層で解決できた場合のみ入る。無ければ id を使う。 */
   displayName?: string;
 }

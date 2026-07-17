@@ -110,7 +110,7 @@ function message(overrides: Partial<InboundMessage> = {}): InboundMessage {
     kind: "message",
     id: "1700000000.000100",
     conversation: { channelId: "C01" },
-    sender: { id: "U01", isBot: false },
+    sender: { id: "U01", isBot: false, isSelf: false },
     text: "hello",
     mentionsBot: false,
     attachments: [],
@@ -1360,6 +1360,132 @@ describe("SessionRunner (fake-pi integration)", () => {
   // extension dirs)」でカバーする。ここでは extension dirs 込みの extraRead を
   // 積んだ状態でも実際に Permission Model 下で pi (fake-pi) が起動し reply まで
   // 到達すること (上のテスト) をもって、配線が壊れていないことの回帰保護とする
+
+  // bot 投稿の gate 起動 (opt-in) — session-model.md §5
+  it("bot 投稿は既定 (allowBots なし) では起動しない (when がマッチしても捨てる)", async () => {
+    const h = await harness({
+      C01: {
+        trigger: {
+          when: [{ kind: "keyword", pattern: "ALERT" }],
+        },
+      },
+    });
+    const trigger = message({
+      sender: { id: "B01", isBot: true, isSelf: false },
+      text: "ALERT: disk full",
+    });
+
+    await h.runner.handle(trigger);
+    await sleep(50);
+
+    expect(h.poster.calls).toEqual([]);
+    expect(h.runner.activeSessionCount).toBe(0);
+    expect(
+      h
+        .logLines()
+        .some(
+          (line) => line.msg === "bot message ignored (allowBots not enabled)",
+        ),
+    ).toBe(true);
+  });
+
+  it("allowBots: true + and 合成: bot の ALERT 投稿は起動し、人間の同文は sender:bot ノードで弾かれる", async () => {
+    const h = await harness({
+      C01: {
+        trigger: {
+          allowBots: true,
+          when: [
+            {
+              and: [
+                { kind: "sender", is: "bot" },
+                { kind: "keyword", pattern: "ALERT" },
+              ],
+            },
+          ],
+        },
+      },
+    });
+
+    const botTrigger = message({
+      sender: { id: "B01", isBot: true, isSelf: false },
+      text: "ALERT: disk full",
+    });
+    await h.runner.handle(botTrigger);
+    await waitFor(() => h.poster.calls.length === 1, "bot-triggered reply");
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+    const humanTrigger = message({
+      id: "1700000000.000900",
+      sender: { id: "U01", isBot: false, isSelf: false },
+      text: "ALERT: disk full",
+    });
+    await h.runner.handle(humanTrigger);
+    await sleep(50);
+
+    expect(h.poster.calls.length).toBe(1);
+    expect(h.runner.activeSessionCount).toBe(0);
+  });
+
+  it("allowBots: true でも bot 送信者の /new はコマンドにならない (通常メッセージとして gate 評価される)", async () => {
+    const h = await harness({
+      C01: {
+        trigger: {
+          allowBots: true,
+          when: [{ kind: "keyword", pattern: "ALERT" }],
+        },
+      },
+    });
+    const trigger = message({
+      sender: { id: "B01", isBot: true, isSelf: false },
+      text: "/new",
+    });
+
+    await h.runner.handle(trigger);
+    await sleep(50);
+
+    // when (keyword: ALERT) にマッチしないので何も起きない。/new のコマンド化も
+    // されていない (rotateRequestedAt が書かれない・ack も出ない)
+    expect(h.poster.calls).toEqual([]);
+    expect(h.runner.activeSessionCount).toBe(0);
+    const sessionKey = threadKeyOf(trigger);
+    expect(await h.store.sessions.get(sessionKey)).toBeNull();
+  });
+
+  it("allowBots: true で実行中セッションへの bot 投稿が steer される", async () => {
+    const h = await harness({
+      C01: { trigger: { allowBots: true, when: [{ kind: "mention" }] } },
+    });
+    const trigger = message({ mentionsBot: true, text: "WAIT_FOR_STEER" });
+    const threadTs = trigger.id;
+
+    await h.runner.handle(trigger);
+    await waitFor(async () => {
+      try {
+        return (await h.commandsLog("C01", threadTs)).length >= 1;
+      } catch {
+        return false;
+      }
+    }, "initial prompt recorded");
+
+    const botFollowUp = message({
+      id: "1700000001.000200",
+      conversation: { channelId: "C01", threadTs },
+      sender: { id: "B01", isBot: true, isSelf: false },
+      text: "bot follow-up",
+    });
+    await h.runner.handle(botFollowUp);
+
+    await waitFor(() => h.poster.calls.length === 1, "steered reply posted");
+    expect(h.poster.calls[0]?.text).toBe(
+      `steered: ${renderEvent(botFollowUp, replyThreadKeyOf(botFollowUp))}`,
+    );
+
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+    const commands = (await h.commandsLog("C01", threadTs)).map((line) =>
+      JSON.parse(line),
+    );
+    expect(commands.map((c) => c.type)).toEqual(["prompt", "steer"]);
+  });
 });
 
 describe("SessionRunner.handleReaction (reaction trigger for initial kick)", () => {
@@ -1370,7 +1496,7 @@ describe("SessionRunner.handleReaction (reaction trigger for initial kick)", () 
       targetMessageId: "1700000000.000300",
       targetIsOwnMessage: false,
       conversation: { channelId: "C01" },
-      sender: { id: "U02", isBot: false },
+      sender: { id: "U02", isBot: false, isSelf: false },
       added: true,
       timestamp: new Date("2026-07-05T00:00:00Z"),
       ...overrides,
@@ -2253,7 +2379,12 @@ describe("replyThreadKeyOf", () => {
 describe("renderEvent", () => {
   it("shows displayName with the user id when resolved", () => {
     const event = message({
-      sender: { id: "U123", isBot: false, displayName: "pokutuna" },
+      sender: {
+        id: "U123",
+        isBot: false,
+        isSelf: false,
+        displayName: "pokutuna",
+      },
       text: "hello",
     });
     expect(renderEvent(event)).toBe(
@@ -2263,7 +2394,7 @@ describe("renderEvent", () => {
 
   it("falls back to the bare user id when unresolved", () => {
     const event = message({
-      sender: { id: "U123", isBot: false },
+      sender: { id: "U123", isBot: false, isSelf: false },
       text: "hello",
     });
     expect(renderEvent(event)).toBe(
@@ -2273,7 +2404,7 @@ describe("renderEvent", () => {
 
   it("thread_key 指定時は from/time に続けて thread_key を列挙する", () => {
     const event = message({
-      sender: { id: "U123", isBot: false },
+      sender: { id: "U123", isBot: false, isSelf: false },
       text: "hello",
     });
     expect(renderEvent(event, "C01:1700000000.000100")).toBe(

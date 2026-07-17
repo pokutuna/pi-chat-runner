@@ -15,7 +15,7 @@ function baseMessage(overrides: Partial<InboundMessage> = {}): InboundMessage {
     kind: "message",
     id: "1720000000.000100",
     conversation: { channelId: "C123" },
-    sender: { id: "U123", isBot: false },
+    sender: { id: "U123", isBot: false, isSelf: false },
     text: "hello",
     mentionsBot: false,
     attachments: [],
@@ -35,12 +35,15 @@ describe("enrichEvent", () => {
   }
 
   it("sets sender.displayName when the sender id resolves", async () => {
-    const event = baseMessage({ sender: { id: "U123", isBot: false } });
+    const event = baseMessage({
+      sender: { id: "U123", isBot: false, isSelf: false },
+    });
     const resolver = stubResolver({ U123: "たなか" });
     const result = (await enrichEvent(event, resolver)) as InboundMessage;
     expect(result.sender).toEqual({
       id: "U123",
       isBot: false,
+      isSelf: false,
       displayName: "たなか",
     });
   });
@@ -74,7 +77,7 @@ describe("enrichEvent", () => {
       targetMessageId: "1720000000.000100",
       targetIsOwnMessage: false,
       conversation: { channelId: "C123" },
-      sender: { id: "U123", isBot: false },
+      sender: { id: "U123", isBot: false, isSelf: false },
       added: true,
       timestamp: new Date("2026-07-06T00:00:00Z"),
     };
@@ -85,7 +88,7 @@ describe("enrichEvent", () => {
 
   it("does not mutate the original event object", async () => {
     const event = baseMessage({
-      sender: { id: "U123", isBot: false },
+      sender: { id: "U123", isBot: false, isSelf: false },
       text: "@U999 さんへ",
     });
     const resolver = stubResolver({ U123: "たなか" });
