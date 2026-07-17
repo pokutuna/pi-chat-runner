@@ -297,7 +297,7 @@ doc が無いチャンネルは既定動作 (mention 起動・既定イメージ
 
 | ストア | 置くもの | 理由 |
 |---|---|---|
-| Firestore | ChannelDoc / SessionDoc (status, lease, outcome) / inbox | txn による排他と dedupe が要る調整データ |
+| Firestore | ChannelDoc / SessionDoc (status, lease, outcome) / inbox / ChannelStateDoc (enable/disable) | txn による排他と dedupe が要る調整データ |
 | GCS (FUSE) | transcript (JSONL) / workspace (WIP) / artifacts (成果物) / docs | サイズが大きく追記中心。pi のファイル形式をそのまま使う |
 | コンテナイメージ | pi 本体 / CLI / skill / reply extension (固定パス規約) | 能力はイメージのレビュー範囲に収める ([config.md](config.md) §3) |
 | Secret Manager | Slack bot token / signing secret | 1 組織 1 ワークスペースなので 1 組だけ |

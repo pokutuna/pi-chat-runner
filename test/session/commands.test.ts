@@ -44,4 +44,33 @@ describe("parseCommand", () => {
   it("空文字は null", () => {
     expect(parseCommand("")).toBeNull();
   });
+
+  it("/enable は { kind: 'enable' }", () => {
+    expect(parseCommand("/enable")).toEqual({ kind: "enable" });
+  });
+
+  it("/disable は { kind: 'disable' }", () => {
+    expect(parseCommand("/disable")).toEqual({ kind: "disable" });
+  });
+
+  it("前後の空白は無視される (/enable, /disable)", () => {
+    expect(parseCommand("  /enable  ")).toEqual({ kind: "enable" });
+    expect(parseCommand("  /disable  ")).toEqual({ kind: "disable" });
+  });
+
+  it("/disable に続くテキストは rest に意味がないため null", () => {
+    expect(parseCommand("/disable foo")).toBeNull();
+  });
+
+  it("/enable に続くテキストは null", () => {
+    expect(parseCommand("/enable foo")).toBeNull();
+  });
+
+  it("大文字 /ENABLE は null (小文字のみ有効)", () => {
+    expect(parseCommand("/ENABLE")).toBeNull();
+  });
+
+  it("大文字 /DISABLE は null", () => {
+    expect(parseCommand("/DISABLE")).toBeNull();
+  });
 });

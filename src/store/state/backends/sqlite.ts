@@ -6,6 +6,8 @@
 import Database from "better-sqlite3";
 
 import type {
+  ChannelStateDoc,
+  ChannelStateStore,
   InboxItem,
   InboxStore,
   Lease,
@@ -30,6 +32,10 @@ interface LeaseRow {
   owner: string;
   token: number;
   expires_at: number;
+}
+
+interface ChannelRow {
+  doc: string;
 }
 
 class SqliteInboxStore implements InboxStore {
@@ -109,6 +115,40 @@ class SqliteSessionStore implements SessionStore {
   }
 }
 
+class SqliteChannelStateStore implements ChannelStateStore {
+  constructor(private readonly db: Database.Database) {}
+
+  async get(channelId: string): Promise<ChannelStateDoc | null> {
+    const row = this.db
+      .prepare(`SELECT doc FROM channel_state WHERE channel_id = ?`)
+      .get(channelId) as ChannelRow | undefined;
+    if (row === undefined) return null;
+    const parsed = JSON.parse(row.doc) as Omit<
+      ChannelStateDoc,
+      "updatedAt" | "updatedBy"
+    > & {
+      updatedAt: string;
+      updatedBy?: string;
+    };
+    const { updatedBy, ...rest } = parsed;
+    return {
+      ...rest,
+      updatedAt: new Date(parsed.updatedAt),
+      ...(updatedBy !== undefined && { updatedBy }),
+    };
+  }
+
+  async put(channelId: string, doc: ChannelStateDoc): Promise<void> {
+    const payload = JSON.stringify(doc);
+    this.db
+      .prepare(
+        `INSERT INTO channel_state (channel_id, doc) VALUES (?, ?)
+				 ON CONFLICT(channel_id) DO UPDATE SET doc = excluded.doc`,
+      )
+      .run(channelId, payload);
+  }
+}
+
 class SqliteLeaseStore implements LeaseStore {
   private readonly acquireTxn: (
     threadKey: string,
@@ -184,6 +224,7 @@ export class SqliteStateStore implements StateStore {
   readonly inbox: InboxStore;
   readonly sessions: SessionStore;
   readonly leases: LeaseStore;
+  readonly channels: ChannelStateStore;
 
   constructor(filePath: string, now: () => number = Date.now) {
     this.db = new Database(filePath);
@@ -207,11 +248,16 @@ export class SqliteStateStore implements StateStore {
 				token INTEGER NOT NULL,
 				expires_at INTEGER NOT NULL
 			);
+			CREATE TABLE IF NOT EXISTS channel_state (
+				channel_id TEXT PRIMARY KEY,
+				doc TEXT NOT NULL
+			);
 		`);
 
     this.inbox = new SqliteInboxStore(this.db);
     this.sessions = new SqliteSessionStore(this.db);
     this.leases = new SqliteLeaseStore(this.db, now);
+    this.channels = new SqliteChannelStateStore(this.db);
   }
 
   close(): void {

@@ -9,7 +9,7 @@ inbox / セッション状態 / lease (DB 系) と workdir の退避先 (Storage
 
 | 抽象 | インタフェース | 実装 | 本番 | ローカル |
 |---|---|---|---|---|
-| DB (状態) | `InboxStore` / `SessionStore` / `LeaseStore` | InMemory / SQLite / Firestore | Firestore | InMemory (既定) or SQLite |
+| DB (状態) | `InboxStore` / `SessionStore` / `LeaseStore` / `ChannelStateStore` | InMemory / SQLite / Firestore | Firestore | InMemory (既定) or SQLite |
 | Storage (workdir 退避) | `WorkdirStorage` | ファイルコピー (Copy) / 退避なし (Noop) | ベース = GCS FUSE マウント | ベース = ローカルディレクトリ or 退避なし |
 | Storage (channel 共有) | `SharedStorage` | ファイルコピー (Copy) / 未設定 = 機能ごと無効 | ベース = GCS FUSE マウント | ベース = ローカルディレクトリ or 無効 |
 
@@ -22,10 +22,10 @@ inbox / セッション状態 / lease (DB 系) と workdir の退避先 (Storage
   InMemory で動き、永続化込みの確認をしたければ SQLite を選ぶ。
   エミュレータ (compose) は Firestore 実装のテスト専用に格下げする。
 
-## 1. DB 抽象 — 3 つの Store
+## 1. DB 抽象 — 4 つの Store
 
-永続化が必要な状態は 3 つで、それぞれ独立したインタフェースにする
-(1 つの巨大な `Store` にしない。実装体は 1 つのクラスが 3 つを implements してよい)。
+永続化が必要な状態は 4 つで、それぞれ独立したインタフェースにする
+(1 つの巨大な `Store` にしない。実装体は 1 つのクラスが 4 つを implements してよい)。
 
 ```typescript
 /** イベントの耐久キュー。enqueue は dedupe を兼ねる (session-model.md §4) */
@@ -51,6 +51,12 @@ interface LeaseStore {
   /** 延長。owner 不一致 / 期限切れなら false (fencing) */
   renew(lease: Lease, ttlMs: number): Promise<boolean>;
   release(lease: Lease): Promise<void>;
+}
+
+/** チャンネル単位の有効/無効 (session-model.md §5)。doc 不在 = enabled */
+interface ChannelStateStore {
+  get(channelId: string): Promise<ChannelStateDoc | null>;
+  put(channelId: string, doc: ChannelStateDoc): Promise<void>;
 }
 ```
 

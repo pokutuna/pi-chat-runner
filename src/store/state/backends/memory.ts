@@ -5,6 +5,8 @@
 // `now` をコンストラクタで注入可能にする。
 
 import type {
+  ChannelStateDoc,
+  ChannelStateStore,
   InboxItem,
   InboxStore,
   Lease,
@@ -115,10 +117,24 @@ class InMemoryLeaseStore implements LeaseStore {
   }
 }
 
+class InMemoryChannelStateStore implements ChannelStateStore {
+  private readonly docs = new Map<string, ChannelStateDoc>();
+
+  async get(channelId: string): Promise<ChannelStateDoc | null> {
+    const doc = this.docs.get(channelId);
+    return doc === undefined ? null : { ...doc };
+  }
+
+  async put(channelId: string, doc: ChannelStateDoc): Promise<void> {
+    this.docs.set(channelId, { ...doc });
+  }
+}
+
 export class InMemoryStateStore implements StateStore {
   readonly inbox: InboxStore = new InMemoryInboxStore();
   readonly sessions: SessionStore = new InMemorySessionStore();
   readonly leases: LeaseStore;
+  readonly channels: ChannelStateStore = new InMemoryChannelStateStore();
 
   constructor(now: () => number = Date.now) {
     this.leases = new InMemoryLeaseStore(now);

@@ -8,6 +8,7 @@
 //   ALREADY_EXISTS を false に写像する (dedupe。session-model.md §4)。
 // - sessions: `<prefix>-sessions/{threadKey}`
 // - leases: `<prefix>-leases/{threadKey}`
+// - channels: `<prefix>-channels/{channelId}`
 //
 // drain の順序保証: enqueue 時に `seq` フィールド (injected now() + 同 ms 単調化の
 // インスタンス内カウンタ) を書き、`where acked == false` で取得してクライアント側で
@@ -21,6 +22,8 @@ import type { Firestore, Transaction } from "@google-cloud/firestore";
 import { Timestamp } from "@google-cloud/firestore";
 
 import type {
+  ChannelStateDoc,
+  ChannelStateStore,
   InboxItem,
   InboxStore,
   Lease,
@@ -64,6 +67,12 @@ interface LeaseDocData {
   owner: string;
   token: number;
   expiresAtMs: number;
+}
+
+interface ChannelStateDocData {
+  enabled: boolean;
+  updatedAt: Timestamp;
+  updatedBy?: string;
 }
 
 class FirestoreInboxStore implements InboxStore {
@@ -185,6 +194,37 @@ class FirestoreSessionStore implements SessionStore {
   }
 }
 
+class FirestoreChannelStateStore implements ChannelStateStore {
+  constructor(
+    private readonly db: Firestore,
+    private readonly collectionName: string,
+  ) {}
+
+  async get(channelId: string): Promise<ChannelStateDoc | null> {
+    const snap = await this.db
+      .collection(this.collectionName)
+      .doc(channelId)
+      .get();
+    if (!snap.exists) return null;
+    const data = snap.data() as ChannelStateDocData;
+    return {
+      enabled: data.enabled,
+      updatedAt: data.updatedAt.toDate(),
+      ...(data.updatedBy !== undefined && { updatedBy: data.updatedBy }),
+    };
+  }
+
+  async put(channelId: string, doc: ChannelStateDoc): Promise<void> {
+    const data: ChannelStateDocData = {
+      enabled: doc.enabled,
+      updatedAt: Timestamp.fromDate(doc.updatedAt),
+      // Firestore は undefined フィールドを拒否するため、値がある場合のみ書く
+      ...(doc.updatedBy !== undefined && { updatedBy: doc.updatedBy }),
+    };
+    await this.db.collection(this.collectionName).doc(channelId).set(data);
+  }
+}
+
 class FirestoreLeaseStore implements LeaseStore {
   constructor(
     private readonly db: Firestore,
@@ -270,6 +310,7 @@ export class FirestoreStateStore implements StateStore {
   readonly inbox: InboxStore;
   readonly sessions: SessionStore;
   readonly leases: LeaseStore;
+  readonly channels: ChannelStateStore;
 
   constructor(db: Firestore, options: FirestoreStateStoreOptions = {}) {
     const prefix = options.collectionPrefix ?? "pi-chat-runner";
@@ -278,5 +319,6 @@ export class FirestoreStateStore implements StateStore {
     this.inbox = new FirestoreInboxStore(db, `${prefix}-inbox`, now);
     this.sessions = new FirestoreSessionStore(db, `${prefix}-sessions`);
     this.leases = new FirestoreLeaseStore(db, `${prefix}-leases`, now);
+    this.channels = new FirestoreChannelStateStore(db, `${prefix}-channels`);
   }
 }

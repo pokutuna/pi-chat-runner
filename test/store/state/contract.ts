@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { InboundMessage } from "../../../src/ingress/chat-event.js";
 import type {
+  ChannelStateDoc,
   InboxItem,
   SessionDoc,
   StateStore,
@@ -218,6 +219,48 @@ export function describeStateStoreContract(
         await harness.store.sessions.put("T1", doc2);
 
         expect(await harness.store.sessions.get("T1")).toEqual(doc2);
+      });
+    });
+
+    describe("ChannelStateStore", () => {
+      it("get: 未知の channelId は null", async () => {
+        expect(await harness.store.channels.get("C1")).toBeNull();
+      });
+
+      it("put/get: 往復する (Date 含む、updatedBy 込み)", async () => {
+        const doc: ChannelStateDoc = {
+          enabled: false,
+          updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+          updatedBy: "U1",
+        };
+        await harness.store.channels.put("C1", doc);
+
+        const got = await harness.store.channels.get("C1");
+        expect(got).toEqual(doc);
+        expect(got?.updatedAt).toBeInstanceOf(Date);
+      });
+
+      it("put/get: updatedBy を含まない doc は get 後も undefined のまま", async () => {
+        const doc: ChannelStateDoc = {
+          enabled: true,
+          updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+        };
+        await harness.store.channels.put("C1", doc);
+
+        const got = await harness.store.channels.get("C1");
+        expect(got?.updatedBy).toBeUndefined();
+      });
+
+      it("put: 同 channelId への再 put は上書きする", async () => {
+        const doc1: ChannelStateDoc = {
+          enabled: true,
+          updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+        };
+        const doc2: ChannelStateDoc = { ...doc1, enabled: false };
+        await harness.store.channels.put("C1", doc1);
+        await harness.store.channels.put("C1", doc2);
+
+        expect(await harness.store.channels.get("C1")).toEqual(doc2);
       });
     });
 

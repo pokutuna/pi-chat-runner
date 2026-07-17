@@ -608,6 +608,7 @@ session.mode:     thread                  ← code default
 | skill (全チャンネル共通) | 実行環境 | イメージの pi 既定パス ($AGENT_HOME/.pi/agent/skills)。pi が自動ロード (§3) | コード (イメージ) |
 | skill / extension (チャンネル別) | 実行環境 + チャンネル | 自動発見されないパスに焼き、agent.yaml の channels (skills / extensions) で参照 (§2) | コード (イメージ) + YAML |
 | ユーザー CLI 用の secret (例: GH_TOKEN) | デプロイ + 設定リポジトリ | 値は `--set-secrets` で env に、pi へ通すのは agent.yaml の `agent.env` に名前を明示列挙 (足し算モデル §5, [session-runtime.md](session-runtime.md) §2) | YAML |
+| チャンネルの有効/無効 (`/enable` `/disable`) | チャンネル | ChannelStateStore ([persistence.md](persistence.md) §1)。YAML ではない | store (実行時状態) |
 
 bridge の設定の置き場は CONFIG_PATH が指す agent.yaml (§6)。「service.yaml を bridge の
 設定ファイルとして扱う」案も検討したが、それは Cloud Run 固有の整理で、Ingress /
@@ -615,6 +616,8 @@ Store と同様に runtime を差し替え可能に保つ方針 ([architecture.m
 やめた。env の役割は secret・環境の同一性・一時的な override に限定し (agent.yaml が
 `${env.X}` で拾う source。§6 の表)、挙動の宣言は runtime に依存しない設定リポジトリ側の
 YAML に置く。これで「実行環境以外のカスタマイズは YAML で表現できる」が全層で成立する。
+ただし enable/disable はチャットから動的に切り替える実行時状態であり、この原則の外側
+(YAML ではなく store) にある — 静的設定と実行時状態は線引きを分ける。
 
 「agent の設定 (Gate)」と「チャンネルの設定 (プロンプト)」は概念としては別だが、
 格納は同じ ChannelDoc の別フィールド (trigger vs systemPrompt/context/model)。

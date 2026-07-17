@@ -1,7 +1,7 @@
 // 永続化 Store の抽象 (docs/design/persistence.md §1)
 //
-// InboxStore / SessionStore / LeaseStore の 3 つを独立したインタフェースとして定義する
-// (1 つの巨大な Store にしない。実装体は 1 つのクラスが 3 つを implements してよい)。
+// InboxStore / SessionStore / LeaseStore / ChannelStateStore の 4 つを独立したインタフェースとして
+// 定義する (1 つの巨大な Store にしない。実装体は 1 つのクラスが 4 つを implements してよい)。
 // SessionRunner はこれらを受け取るだけで、どの実装かを知らない。
 
 import type { InboundMessage } from "../../ingress/chat-event.js";
@@ -69,9 +69,24 @@ export interface LeaseStore {
   release(lease: Lease): Promise<void>;
 }
 
-/** 3 Store をまとめて提供する束。実装体は 1 つのオブジェクトでよい。 */
+/** チャンネル単位の実行時状態 (session-model.md §5 のチャンネル mute)。
+ * doc が無い = enabled が既定。チャットの /enable /disable コマンドで書き換わる */
+export interface ChannelStateDoc {
+  enabled: boolean;
+  updatedAt: Date;
+  /** 最後に切り替えた送信者 id (監査用) */
+  updatedBy?: string;
+}
+
+export interface ChannelStateStore {
+  get(channelId: string): Promise<ChannelStateDoc | null>;
+  put(channelId: string, doc: ChannelStateDoc): Promise<void>;
+}
+
+/** 4 Store をまとめて提供する束。実装体は 1 つのオブジェクトでよい。 */
 export interface StateStore {
   inbox: InboxStore;
   sessions: SessionStore;
   leases: LeaseStore;
+  channels: ChannelStateStore;
 }

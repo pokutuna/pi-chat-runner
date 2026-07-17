@@ -79,6 +79,8 @@ export {
 } from "./session/runner.js";
 export { InMemoryStateStore } from "./store/state/backends/memory.js";
 export type {
+  ChannelStateDoc,
+  ChannelStateStore,
   InboxItem,
   InboxStore,
   Lease,
