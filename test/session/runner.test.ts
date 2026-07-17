@@ -17,8 +17,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import pino from "pino";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
+import type { ClassifierClient } from "../../src/classifier/client.js";
 import type { ChannelDoc } from "../../src/config/channel-doc.js";
 import type { ConfigSource } from "../../src/config/config-source.js";
 import { Reactions } from "../../src/egress/reactions.js";
@@ -191,6 +192,7 @@ interface HarnessOptions {
   turnTimeoutMs?: number;
   progressNoticeIntervalMs?: number;
   mentionFormat?: MentionFormat;
+  classifierClient?: ClassifierClient;
 }
 
 async function harness(
@@ -257,6 +259,9 @@ async function harness(
     // SessionRunner では必須パラメータ。テストでは既定として Slack の
     // `<@USER_ID>` 記法を使う (個々のテストが上書きしない限り)
     mentionFormat: options.mentionFormat ?? ((id) => `<@${id}>`),
+    ...(options.classifierClient !== undefined
+      ? { classifierClient: options.classifierClient }
+      : {}),
   });
   return {
     runner,
@@ -1485,6 +1490,275 @@ describe("SessionRunner (fake-pi integration)", () => {
       JSON.parse(line),
     );
     expect(commands.map((c) => c.type)).toEqual(["prompt", "steer"]);
+  });
+});
+
+describe("SessionRunner: /enable /disable (channel mute, session-model.md §5)", () => {
+  it("@bot /disable (idle): channels store に enabled=false + updatedBy が書かれ、:no_bell: ack が配送される。pi は起動しない", async () => {
+    const h = await harness();
+    const trigger = message({ mentionsBot: true, text: "/disable" });
+
+    await h.runner.handle(trigger);
+
+    await waitFor(() => h.poster.calls.length === 1, "ack posted");
+    expect(h.poster.calls[0]?.text).toBe(
+      ":no_bell: このチャンネルでの起動を無効化しました。`/enable` (bot へのメンション付き) で再開できます",
+    );
+
+    const doc = await h.store.channels.get("C01");
+    expect(doc?.enabled).toBe(false);
+    expect(doc?.updatedBy).toBe("U01");
+
+    expect(h.runner.activeSessionCount).toBe(0);
+  });
+
+  it("disabled 状態で mention メッセージ: 起動しない (poster 呼び出しなし)、info ログ 'channel disabled'", async () => {
+    const h = await harness();
+    await h.store.channels.put("C01", {
+      enabled: false,
+      updatedAt: new Date(),
+      updatedBy: "U99",
+    });
+
+    const trigger = message({ mentionsBot: true, text: "question here" });
+    await h.runner.handle(trigger);
+    await sleep(50);
+
+    expect(h.poster.calls).toEqual([]);
+    expect(h.runner.activeSessionCount).toBe(0);
+    expect(
+      h
+        .logLines()
+        .some((line) => String(line.msg ?? "").includes("channel disabled")),
+    ).toBe(true);
+  });
+
+  it("disabled 状態で @bot /enable: enabled=true になり :bell: ack。その後の mention は通常どおり起動する", async () => {
+    const h = await harness();
+    await h.store.channels.put("C01", {
+      enabled: false,
+      updatedAt: new Date(),
+      updatedBy: "U99",
+    });
+
+    const enableCmd = message({ mentionsBot: true, text: "/enable" });
+    await h.runner.handle(enableCmd);
+
+    await waitFor(() => h.poster.calls.length === 1, "enable ack posted");
+    expect(h.poster.calls[0]?.text).toBe(
+      ":bell: このチャンネルでの起動を有効化しました",
+    );
+    expect((await h.store.channels.get("C01"))?.enabled).toBe(true);
+
+    const trigger = message({
+      id: "1700000001.000200",
+      mentionsBot: true,
+      text: "question here",
+      metadata: { eventId: "Ev-after-enable" },
+    });
+    await h.runner.handle(trigger);
+    await waitFor(() => h.poster.calls.length === 2, "reply posted");
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+  });
+
+  it("実行中セッションがあるレーンで /disable: ack が返り、以降のメッセージが steer されない。実行中セッション自体は完走する", async () => {
+    const h = await harness();
+    const trigger = message({ mentionsBot: true, text: "WAIT_FOR_STEER" });
+    await h.runner.handle(trigger);
+    await waitFor(() => h.runner.activeSessionCount === 1, "session running");
+
+    const disableCmd = message({
+      id: "1700000001.000200",
+      conversation: { channelId: "C01", threadTs: trigger.id },
+      mentionsBot: true,
+      text: "/disable",
+      metadata: { eventId: "Ev-disable-cmd" },
+    });
+    await h.runner.handle(disableCmd);
+
+    await waitFor(() => h.poster.calls.length === 1, "disable ack posted");
+    expect(h.poster.calls[0]?.text).toBe(
+      ":no_bell: このチャンネルでの起動を無効化しました。`/enable` (bot へのメンション付き) で再開できます",
+    );
+    expect((await h.store.channels.get("C01"))?.enabled).toBe(false);
+
+    // disabled 中なので以降のメッセージは steer されない
+    const followUp = message({
+      id: "1700000002.000300",
+      conversation: { channelId: "C01", threadTs: trigger.id },
+      mentionsBot: true,
+      text: "should not be steered",
+      metadata: { eventId: "Ev-follow-up" },
+    });
+    await h.runner.handle(followUp);
+    await sleep(50);
+    expect(h.poster.calls.length).toBe(1);
+
+    // 実行中セッション自体は完走する (WAIT_FOR_STEER を解除する追いメッセージが
+    // 届かないため、fake-pi へ直接 steer 相当のコマンドは送れない。ここでは
+    // セッションが disable 後も生きたままであることだけ確認する)
+    expect(h.runner.activeSessionCount).toBe(1);
+  });
+
+  it("disabled 状態での reaction 起動: 起動しない", async () => {
+    const h = await harness({
+      C01: { trigger: { when: [{ kind: "reaction", emoji: ["eyes"] }] } },
+    });
+    await h.store.channels.put("C01", {
+      enabled: false,
+      updatedAt: new Date(),
+      updatedBy: "U99",
+    });
+
+    const target: ReactionEvent = {
+      kind: "reaction",
+      emoji: "eyes",
+      targetMessageId: "1700000000.000300",
+      targetIsOwnMessage: false,
+      conversation: { channelId: "C01" },
+      sender: { id: "U02", isBot: false, isSelf: false },
+      added: true,
+      timestamp: new Date("2026-07-05T00:00:00Z"),
+    };
+    const fetch: FetchMessage = async () => ({ text: "should not be used" });
+    await h.runner.handleReaction(target, fetch);
+    await sleep(50);
+
+    expect(h.runner.activeSessionCount).toBe(0);
+    expect(h.poster.calls).toEqual([]);
+    expect(
+      h
+        .logLines()
+        .some((line) =>
+          String(line.msg ?? "").includes("reaction trigger skipped"),
+        ),
+    ).toBe(true);
+  });
+
+  it("bot 送信者の /disable (allowBots チャンネル): コマンドにならない (状態が変わらない)", async () => {
+    const h = await harness({
+      C01: {
+        trigger: {
+          allowBots: true,
+          when: [{ kind: "keyword", pattern: "ALERT" }],
+        },
+      },
+    });
+    const trigger = message({
+      sender: { id: "B01", isBot: true, isSelf: false },
+      text: "/disable",
+    });
+
+    await h.runner.handle(trigger);
+    await sleep(50);
+
+    // when (keyword: ALERT) にマッチしないので何も起きない。/disable のコマンド化も
+    // されていないため channels store も変わらない
+    expect(h.poster.calls).toEqual([]);
+    expect(await h.store.channels.get("C01")).toBeNull();
+    expect(h.runner.activeSessionCount).toBe(0);
+  });
+
+  it("disabled 状態では classifier gate 自体が呼ばれない (LLM 呼び出しの回避)", async () => {
+    const classifierCalls: { criteria: string; text: string }[] = [];
+    const classifierClient: ClassifierClient = {
+      async classify(input) {
+        classifierCalls.push(input);
+        return { result: true, reason: "matched" };
+      },
+    };
+    const h = await harness(
+      {
+        C01: {
+          trigger: { when: [{ kind: "classifier", criteria: "anything" }] },
+        },
+      },
+      { classifierClient },
+    );
+    await h.store.channels.put("C01", {
+      enabled: false,
+      updatedAt: new Date(),
+      updatedBy: "U99",
+    });
+
+    const trigger = message({ text: "please do something" });
+    await h.runner.handle(trigger);
+    await sleep(50);
+
+    expect(classifierCalls).toEqual([]);
+    expect(h.runner.activeSessionCount).toBe(0);
+    expect(h.poster.calls).toEqual([]);
+    expect(
+      h
+        .logLines()
+        .some((line) => String(line.msg ?? "").includes("channel disabled")),
+    ).toBe(true);
+  });
+
+  it("disabled 状態で @bot /new: drop される (marker 書き込みなし・kick なし・ack なし)", async () => {
+    const h = await harness();
+    await h.store.channels.put("C01", {
+      enabled: false,
+      updatedAt: new Date(),
+      updatedBy: "U99",
+    });
+
+    const trigger = message({ mentionsBot: true, text: "/new" });
+    await h.runner.handle(trigger);
+    await sleep(50);
+
+    expect(h.poster.calls).toEqual([]);
+    expect(h.runner.activeSessionCount).toBe(0);
+    const sessionKey = threadKeyOf(trigger);
+    expect(await h.store.sessions.get(sessionKey)).toBeNull();
+    expect(
+      h
+        .logLines()
+        .some((line) => String(line.msg ?? "").includes("channel disabled")),
+    ).toBe(true);
+  });
+
+  it("debounce 待機中に /disable → タイマー発火してもセッションが起動しない", async () => {
+    vi.useFakeTimers();
+    try {
+      const h = await harness({
+        C01: {
+          trigger: {
+            when: [{ kind: "passthrough" }],
+            debounceSec: 0.2,
+          },
+        },
+      });
+
+      const trigger = message({ text: "hello there" });
+      await h.runner.handle(trigger);
+
+      // debounce 待機中に /disable する (mention 付きなのでバイパスされず即時反映)
+      const disableCmd = message({
+        id: "1700000001.000200",
+        mentionsBot: true,
+        text: "/disable",
+        metadata: { eventId: "Ev-disable-cmd" },
+      });
+      await h.runner.handle(disableCmd);
+      expect((await h.store.channels.get("C01"))?.enabled).toBe(false);
+
+      // debounce タイマーを進める
+      await vi.advanceTimersByTimeAsync(500);
+      // マイクロタスク経由の非同期処理 (isChannelDisabled 等) を流し切る
+      await vi.runAllTimersAsync();
+
+      expect(h.runner.activeSessionCount).toBe(0);
+      expect(
+        h
+          .logLines()
+          .some((line) =>
+            String(line.msg ?? "").includes("debounced kick skipped"),
+          ),
+      ).toBe(true);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 

@@ -547,6 +547,13 @@ const REJECT_NOTICE_TEXT =
 /** /new コマンド (rest なし) の受理通知 */
 const ACK_NOTICE_TEXT = ":new: 次のメッセージから新しいセッションを開始します";
 
+/** /disable コマンドの受理通知 (session-model.md §5) */
+const DISABLE_NOTICE_TEXT =
+  ":no_bell: このチャンネルでの起動を無効化しました。`/enable` (bot へのメンション付き) で再開できます";
+
+/** /enable コマンドの受理通知 (session-model.md §5) */
+const ENABLE_NOTICE_TEXT = ":bell: このチャンネルでの起動を有効化しました";
+
 export class SessionRunner {
   private readonly sessions = new Map<string, SessionRecord>();
   /** debounceSec 待機中のレーン (sessionKey → 保留状態)。design 「セッション非稼働
@@ -643,20 +650,39 @@ export class SessionRunner {
       return;
     }
 
-    // /new コマンド (session-model.md §6)。gate を通過したメッセージにのみ意味を
-    // 持たせる (mention gate のチャンネルでは `@bot /new`) ため、gate 評価より
-    // 前に判定するのはここまで — 実行中レーンへの拒否だけは gate をバイパスする。
-    // 実行中レーンとの交錯を避けるため、steer には流さず拒否通知を返す (v1 の割り切り)。
+    // コマンド (session-model.md §6, §5)。gate を通過したメッセージにのみ意味を
+    // 持たせる (mention gate のチャンネルでは `@bot /new` 等) ため、gate 評価より
+    // 前に判定するのはここまで — 実行中レーンへの /new 拒否、および実行中でも
+    // 効く /enable /disable だけは gate をバイパスする。
     // bot にセッションを切らせない (session-model.md §5) ため bot 送信者ではコマンド化しない
     const cmd = event.sender.isBot ? null : parseCommand(event.text);
     if (cmd !== null && this.sessions.has(sessionKey)) {
-      const threadKey = this.registerReplyDestination(event, policy);
-      await this.deliverCommandNotice(
-        sessionKey,
-        threadKey,
-        REJECT_NOTICE_TEXT,
+      if (cmd.kind === "new") {
+        // 実行中レーンとの交錯を避けるため、steer には流さず拒否通知を返す (v1 の割り切り)
+        const threadKey = this.registerReplyDestination(event, policy);
+        await this.deliverCommandNotice(
+          sessionKey,
+          threadKey,
+          REJECT_NOTICE_TEXT,
+        );
+        this.logger.info({ sessionKey }, "session rotation rejected: running");
+        return;
+      }
+      // enable/disable は状態書き込みのみでセッションと競合しないため、
+      // 実行中でも即座に処理する (session-model.md §5)
+      await this.handleToggleCommand(sessionKey, channelId, policy, event, cmd);
+      return;
+    }
+
+    // disabled 中は steer も gate 評価 (classifier の LLM 呼び出し含む) も行わず drop する。
+    // /enable /disable だけは復帰経路としてここを素通りさせ、gate (mention) を経て処理する
+    // (session-model.md §5)。/new も disabled 中は無効
+    const isToggleCommand = cmd !== null && cmd.kind !== "new";
+    if (!isToggleCommand && (await this.isChannelDisabled(channelId))) {
+      this.logger.info(
+        { channelId, sessionKey },
+        "message ignored (channel disabled)",
       );
-      this.logger.info({ sessionKey }, "session rotation rejected: running");
       return;
     }
 
@@ -680,7 +706,17 @@ export class SessionRunner {
     );
 
     if (cmd !== null) {
-      await this.handleNewCommand(sessionKey, channelId, policy, event, cmd);
+      if (cmd.kind === "new") {
+        await this.handleNewCommand(sessionKey, channelId, policy, event, cmd);
+      } else {
+        await this.handleToggleCommand(
+          sessionKey,
+          channelId,
+          policy,
+          event,
+          cmd,
+        );
+      }
       return;
     }
 
@@ -699,6 +735,17 @@ export class SessionRunner {
     const channelId = event.conversation.channelId;
     const isDm = event.conversation.isDm === true;
     const doc = await this.loadChannelDoc(isDm ? DM_CHANNEL : channelId);
+
+    // disabled 中は gate 評価 (classifier の LLM 呼び出し含む) 自体を行わず止める
+    // (session-model.md §5)
+    if (await this.isChannelDisabled(channelId)) {
+      this.logger.info(
+        { channelId },
+        "reaction trigger skipped (channel disabled)",
+      );
+      return;
+    }
+
     const when = this.resolveWhen(doc, isDm);
     const decision = await evaluateWhen(when, { event });
     if (!decision.trigger) {
@@ -813,7 +860,7 @@ export class SessionRunner {
     channelId: string,
     policy: SessionPolicy,
     event: InboundMessage,
-    cmd: ChatCommand,
+    cmd: Extract<ChatCommand, { kind: "new" }>,
   ): Promise<void> {
     const lease = await this.store.leases.acquire(
       sessionKey,
@@ -882,9 +929,46 @@ export class SessionRunner {
     await this.deliverCommandNotice(sessionKey, threadKey, ACK_NOTICE_TEXT);
   }
 
-  /** /new の拒否・ack 通知の配達。thread_key は registerReplyDestination が
-   * 返したメッセージごとの宛先キー。abnormalShutdown と違い progress キー
-   * (sessionKey) は渡さない — 実行中セッションへの拒否通知がそのセッションの
+  /** チャンネルが /disable で無効化されているか (session-model.md §5)。
+   * doc 不在 = enabled (既定)。DM 予約名でなく実 channelId で管理する
+   * (メッセージ側は実 channelId で判定するため、ChannelDoc の DM 束ねとは別軸) */
+  private async isChannelDisabled(channelId: string): Promise<boolean> {
+    return (await this.store.channels.get(channelId))?.enabled === false;
+  }
+
+  /** /enable /disable コマンドの処理 (session-model.md §5)。gate をバイパスして
+   * 実行中セッションの有無に関わらず呼ばれる — 状態書き込みのみでセッションの
+   * プロセスとは競合しないため、実行中でも即座に反映する。冪等: 既に同じ状態
+   * でも同じ ack を返す (分岐しない) */
+  private async handleToggleCommand(
+    sessionKey: string,
+    channelId: string,
+    policy: SessionPolicy,
+    event: InboundMessage,
+    cmd: Extract<ChatCommand, { kind: "enable" | "disable" }>,
+  ): Promise<void> {
+    const enabled = cmd.kind === "enable";
+    await this.store.channels.put(channelId, {
+      enabled,
+      updatedAt: new Date(),
+      updatedBy: event.sender.id,
+    });
+    this.logger.info(
+      { channelId, updatedBy: event.sender.id },
+      enabled ? "channel enabled via command" : "channel disabled via command",
+    );
+
+    const threadKey = this.registerReplyDestination(event, policy);
+    await this.deliverCommandNotice(
+      sessionKey,
+      threadKey,
+      enabled ? ENABLE_NOTICE_TEXT : DISABLE_NOTICE_TEXT,
+    );
+  }
+
+  /** コマンド (/new の拒否・ack、/enable /disable の ack) 通知の配達。thread_key は
+   * registerReplyDestination が返したメッセージごとの宛先キー。abnormalShutdown と
+   * 違い progress キー (sessionKey) は渡さない — 実行中セッションへの通知がそのセッションの
    * 進捗メッセージを上書き消費してしまうため (セッションは継続中で、進捗
    * タイマーも生きている)。配達失敗はログのみで進行を止めない */
   private async deliverCommandNotice(
@@ -1000,6 +1084,15 @@ export class SessionRunner {
     doc: ChannelDoc | null,
   ): Promise<void> {
     if (this.sessions.has(sessionKey)) return;
+    // debounce 待機中に /disable された場合、タイマー発火時点で再チェックする
+    // (session-model.md §5)
+    if (await this.isChannelDisabled(channelId)) {
+      this.logger.info(
+        { channelId, sessionKey },
+        "debounced kick skipped (channel disabled)",
+      );
+      return;
+    }
     await this.acquireLeaseAndKick(sessionKey, channelId, policy, event, doc);
   }
 

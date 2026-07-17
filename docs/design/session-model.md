@@ -257,6 +257,26 @@ Mackerel / Security Command Center 等、webhook 系アラートの Slack 連携
 それ以外の subtype (message_changed / message_deleted / thread_broadcast 等) は
 従来どおり Layer 0 より手前 (adapter) で除外する。
 
+### チャンネル単位の有効/無効 (チャットからの mute)
+
+`/enable` / `/disable` はチャンネル単位で bot を止める運用スイッチで、`/new` と同じ
+テキストコマンド (本文完全一致、human 送信者のみ) として扱う。効果はチャンネル全体
+(スレッド内で打っても同じ)。既定は enabled。SessionRunner は **gate 評価より前**の
+1 箇所 (message / reaction 共通) で `ChannelStateStore` ([persistence.md](persistence.md) §1)
+を読み、disabled なら info ログのみで黙って捨てる (通知しない) — steer も gate 評価
+(classifier gate の LLM 呼び出しを含む) もここで止まるため、disabled 中に classifier が
+呼ばれることはない。debounce タイマー発火時 (`fireDebouncedKick`) にも同じ判定を再度行い、
+待機中に `/disable` された場合は kick しない。
+
+素通しするのは `/enable` `/disable` のみ。`/new` を含むそれ以外はすべて disabled 中は
+drop する (`@bot /new` も同様 — 復帰経路ではないため無効)。コマンド判定はこの
+disabled 判定より前に行うため、disabled 中でも `/enable` は復帰経路として機能する。
+実行中セッションは disable で殺さない (現行ターンは完走し、以降の入力が届かなくなる
+だけ)。切り替え時は :no_bell: (disable) / :bell: (enable) で ack を返す。
+
+store 読み取りは、runner に届く全メッセージ・reaction につき 1 回発生する
+(ChannelStateStore は軽量な状態読み取りのため許容している)。
+
 ### Gate は差し替え・合成できる部品にする
 
 固定の 3 段でなく、**個々の Gate を実装として差し替え、複数を and/or で合成**できるようにする。
