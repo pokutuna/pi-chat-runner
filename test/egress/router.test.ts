@@ -431,4 +431,69 @@ describe("EgressRouter", () => {
       ]);
     });
   });
+
+  describe("progress lane closing (delayed tick after reply)", () => {
+    it("does not repost a ghost message when a stale progress tick arrives after deliver", async () => {
+      const poster = new FakePoster();
+      const router = new EgressRouter({ poster });
+      router.register("k", { channelId: "C01", threadTs: "1" });
+
+      // 進捗メッセージを 1 枚作る
+      await router.notifyProgress("k", "running");
+      // deliver がそれを本文で上書き消費する (progressConsumed: true)
+      const result = await router.deliver({
+        thread_key: "k",
+        text: "final answer",
+      });
+      expect(result.progressConsumed).toBe(true);
+
+      // deliver の後ろでキューに積まれていた (体裁上は) 古いタイマー tick。
+      // レーンが閉じているため新規投稿してはならない
+      await router.notifyProgress("k", "stale tick after reply");
+
+      expect(poster.calls).toEqual([
+        { channelId: "C01", threadTs: "1", text: "running" },
+      ]);
+      expect(poster.updateCalls).toEqual([
+        { channelId: "C01", messageId: "msg-1", text: "final answer" },
+      ]);
+    });
+
+    it("reopenProgress lets the next turn's notifyProgress post again", async () => {
+      const poster = new FakePoster();
+      const router = new EgressRouter({ poster });
+      router.register("k", { channelId: "C01", threadTs: "1" });
+
+      await router.notifyProgress("k", "running");
+      await router.deliver({ thread_key: "k", text: "final answer" });
+      // レーンが閉じている間は捨てられる
+      await router.notifyProgress("k", "stale tick after reply");
+      expect(poster.calls).toHaveLength(1);
+
+      await router.reopenProgress("k");
+      await router.notifyProgress("k", "next turn running");
+
+      expect(poster.calls).toEqual([
+        { channelId: "C01", threadTs: "1", text: "running" },
+        { channelId: "C01", threadTs: "1", text: "next turn running" },
+      ]);
+    });
+
+    it("clearProgress also reopens the lane", async () => {
+      const poster = new FakePoster();
+      const router = new EgressRouter({ poster });
+      router.register("k", { channelId: "C01", threadTs: "1" });
+
+      await router.notifyProgress("k", "running");
+      await router.deliver({ thread_key: "k", text: "final answer" });
+      await router.clearProgress("k");
+
+      await router.notifyProgress("k", "new session running");
+
+      expect(poster.calls).toEqual([
+        { channelId: "C01", threadTs: "1", text: "running" },
+        { channelId: "C01", threadTs: "1", text: "new session running" },
+      ]);
+    });
+  });
 });

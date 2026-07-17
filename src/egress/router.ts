@@ -69,6 +69,13 @@ export class EgressRouter {
    * messageId 消費と再投稿の順序が入れ替わりうるため、同一進捗キーへの
    * 呼び出しは常に呼ばれた順に完了させる */
   private readonly queues = new Map<string, Promise<unknown>>();
+  /** reply が配達された進捗キー (progress-notice.md「進捗レーンの閉鎖」)。
+   * deliver は同じキューを通るとはいえ、reply 配達の直後に積まれた進捗タイマーの
+   * tick は「配達済みの進捗メッセージが跡形もなく消費された後」の stale な
+   * スナップショットであり、そのまま流すと消費済みメッセージの跡地に新規投稿して
+   * しまう。deliverNow がこのキーを閉じ、notifyProgressNow は閉じている間
+   * 何もしない。次ターン開始時に reopenProgress で再び開く */
+  private readonly progressClosed = new Set<string>();
   private readonly poster: ChatPoster;
   private readonly formatter: EgressFormatter;
   private readonly logger: Logger;
@@ -116,6 +123,10 @@ export class EgressRouter {
     payload: EgressPayload,
     progressThreadKey: string,
   ): Promise<{ progressConsumed: boolean }> {
+    // reply の配達が走った時点で、そのターンの以降の進捗 tick は全て stale
+    // なので閉じる。destination 未登録 (unknown thread_key) の早期 return
+    // より前に行う — 未知の thread_key でも進捗レーンの意味論は変わらない
+    this.progressClosed.add(progressThreadKey);
     const destination = this.destinations.get(payload.thread_key);
     if (destination === undefined) {
       this.logger.warn(
@@ -182,6 +193,13 @@ export class EgressRouter {
     threadKey: string,
     text: string,
   ): Promise<void> {
+    if (this.progressClosed.has(threadKey)) {
+      this.logger.debug(
+        { threadKey },
+        "progress notice dropped (lane closed by reply)",
+      );
+      return;
+    }
     const destination = this.destinations.get(threadKey);
     if (destination === undefined) {
       this.logger.warn(
@@ -251,10 +269,25 @@ export class EgressRouter {
   /** セッション終了時に進捗通知メッセージの記憶を捨てる (次セッションが同じ
    * thread_key を再利用しても古い messageId に update しないようにする)。
    * notifyProgress/deliver と同じキューを通すことで、既にキュー投入済みだが
-   * 未実行のタイマー tick が古い messageId を読む前に消してしまう競合を防ぐ */
+   * 未実行のタイマー tick が古い messageId を読む前に消してしまう競合を防ぐ。
+   * 進捗レーンの閉鎖も併せて解除し、次セッションが同じキーを再利用したときに
+   * 閉鎖状態が残らないようにする */
   async clearProgress(threadKey: string): Promise<void> {
     return this.enqueue(threadKey, () => {
       this.progressMessageIds.delete(threadKey);
+      this.progressClosed.delete(threadKey);
+      return Promise.resolve();
+    });
+  }
+
+  /** 新しいターンの開始時に進捗レーンを再び開く (progress-notice.md)。deliver
+   * 配達で閉じられたレーンは、reopen するまで notifyProgress を黙って捨て続ける。
+   * enqueue 経由にすることで、前ターンの遅延 tick がキューに残っていても
+   * reopen より前に処理されて閉鎖中として破棄され、reopen 後に積まれた
+   * 新ターンの tick だけが通るようにする */
+  async reopenProgress(threadKey: string): Promise<void> {
+    return this.enqueue(threadKey, () => {
+      this.progressClosed.delete(threadKey);
       return Promise.resolve();
     });
   }

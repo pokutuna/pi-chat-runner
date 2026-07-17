@@ -2448,6 +2448,46 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
   });
 
+  it("progress notice: reply ツールの実行は currentTool/step 数に反映されない", async () => {
+    // fake-pi の REPLY_THEN_DELAYED_END は tool_execution_start("reply") →
+    // tool_execution_end (reply 本体) → 500ms 後に agent_end、という順で発火する
+    // (progress-notice.md: reply は「最終回答を作っている」段階であり進捗表示の
+    // 対象外)。tool_execution_start("reply") と agent_end の間 (500ms) にタイマーが
+    // tick しても、reply はここまでのターンで唯一発火したツールなので currentTool は
+    // undefined のまま = ":thinking_face: ... (step 0)" 側の表示になるはず。
+    // reply のツール名・絵文字 (:speech_balloon:) が表示に混ざらないことを確認する
+    const h = await harness({}, { progressNoticeIntervalMs: 100 });
+    const trigger = message({
+      mentionsBot: true,
+      text: "REPLY_THEN_DELAYED_END",
+    });
+
+    await h.runner.handle(trigger);
+
+    // tool_execution_start("reply") 後・agent_end (500ms 後) 到達前のどこかで
+    // タイマーが tick するのを待つ (postMessage/updateMessage いずれか)
+    await waitFor(
+      () => h.poster.calls.length + h.poster.updateCalls.length >= 1,
+      "at least one progress notice fired before agent_end",
+    );
+
+    const allTexts = [
+      ...h.poster.calls.map((c) => c.text),
+      ...h.poster.updateCalls.map((c) => c.text),
+    ];
+    // reply の tool_execution_end (最終回答本文) は別レーンで届きうるので、
+    // ここでは reply ツールのスナップショット表示 (絵文字・ツール名・stepが
+    // 1 以上に進んでいる状態) が混ざっていないことだけを見る
+    for (const text of allTexts) {
+      if (text.includes("REPLY_THEN_DELAYED")) continue; // reply 本文そのもの
+      expect(text).not.toContain(":speech_balloon:");
+      expect(text).not.toContain("`reply`");
+      expect(text).toContain("(step 0)");
+    }
+
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+  });
+
   it("progress notice: DM の flat reply はセッションの進捗メッセージを最終回答で上書きする", async () => {
     const h = await harness(
       { dm: { trigger: { when: [{ kind: "passthrough" }] } } },

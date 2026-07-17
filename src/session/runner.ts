@@ -297,10 +297,11 @@ interface SessionRecord {
   /** 直近に開始した、または直近に完了したツール呼び出し。tool_execution_start/end の
    * 購読だけで更新する (LLM 呼び出し・session.jsonl を経由しない、progress-notice.md)。
    * emoji は tool_execution_start 時点で確定させる (bash は候補からランダムに選ぶため、
-   * タイマー発火のたびに選び直すと同じ呼び出し中に表示が変わってしまう) */
+   * タイマー発火のたびに選び直すと同じ呼び出し中に表示が変わってしまう)。reply は
+   * 進捗表示の対象外なのでここには反映されない (progress-notice.md) */
   currentTool: { name: string; emoji: string; argsPreview: string } | undefined;
   /** このセッションでの tool_execution_start 累計回数 (progress-notice.md の
-   * 進捗表示用。ターンをまたいで積算する) */
+   * 進捗表示用。ターンをまたいで積算する)。reply は対象外なので含めない */
   toolCallCount: number;
   /** 直前に進捗通知として送信したテキスト (progress-notice.md)。同じ内容なら
    * tick をスキップし、Slack API を呼ばない (状況が進んでいないのに更新し続けない) */
@@ -442,8 +443,10 @@ function sleep(ms: number): Promise<void> {
 }
 
 /** 進捗通知でツール名ごとに絵文字を出し分ける (progress-notice.md)。
- * 分類が当たらないツールは既定の :gear: にフォールバックする。bash は頻出のため
- * 呼び出しごとに候補からランダムに1つ選び、単調な見た目にならないようにする */
+ * reply は呼び出し元 (tool_execution_start ハンドラ) で除外済みなのでここには
+ * 来ない。分類が当たらないツールは既定の :gear: にフォールバックする。bash は
+ * 頻出のため呼び出しごとに候補からランダムに1つ選び、単調な見た目にならない
+ * ようにする */
 function progressEmoji(toolName: string): string {
   switch (toolName) {
     case "bash":
@@ -459,8 +462,6 @@ function progressEmoji(toolName: string): string {
     case "write":
     case "edit":
       return ":memo:";
-    case "reply":
-      return ":speech_balloon:";
     default:
       return ":gear:";
   }
@@ -1570,17 +1571,19 @@ export class SessionRunner {
       // 進捗通知 (progress-notice.md) のための状態更新のみ。LLM 呼び出しも
       // session.jsonl への書き込みも発生しない — pi の RPC イベントの観測だけ
       if (isToolExecutionStart(piEvent)) {
-        record.toolCallCount += 1;
-        record.currentTool = {
-          name: piEvent.toolName,
-          emoji: progressEmoji(piEvent.toolName),
-          // reply の args にはユーザーへの返信本文がそのまま入る。ここで切り詰めて
-          // 見せると本来の reply 投稿と内容が重複・矮小化するため出さない
-          argsPreview:
-            piEvent.toolName === "reply"
-              ? ""
-              : toolArgsPreview(piEvent.toolName, piEvent.args, 60),
-        };
+        // reply は「最終回答を作っている」段階であり進捗表示の対象外
+        // (progress-notice.md)。currentTool/toolCallCount を更新せず、直前の
+        // スナップショットのまま据え置く — reply 実行中の表示がターン最後の
+        // 進捗として残るのを避ける。ターン最初のツールが reply なら currentTool
+        // は undefined のままで ":thinking_face: ... (step 0)" 側の表示になる
+        if (piEvent.toolName !== "reply") {
+          record.toolCallCount += 1;
+          record.currentTool = {
+            name: piEvent.toolName,
+            emoji: progressEmoji(piEvent.toolName),
+            argsPreview: toolArgsPreview(piEvent.toolName, piEvent.args, 60),
+          };
+        }
       }
       if (isToolExecutionEnd(piEvent)) {
         const payload = extractReply(piEvent);
@@ -2061,6 +2064,12 @@ export class SessionRunner {
     this.clearProgressNotice(record);
     // 新しいターンの内容と比較できるよう、前ターン分の記憶は引き継がない
     record.lastProgressNoticeText = undefined;
+    // 前ターンの reply 配達で閉じた進捗レーン (router.ts progressClosed) を
+    // 新ターン開始時に再び開く。fire-and-forget — 失敗しても次の notifyProgress
+    // が warn を出すだけで、新ターンの進捗表示自体はタイマーが担う
+    void this.router.reopenProgress(sessionKey).catch((err) => {
+      this.logger.warn({ sessionKey, err }, "failed to reopen progress lane");
+    });
     if (this.progressNoticeIntervalMs === 0) return;
     const timer = setInterval(() => {
       const tool = record.currentTool;
