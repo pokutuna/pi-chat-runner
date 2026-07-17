@@ -2,8 +2,9 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import type { Logger } from "../../src/logger.js";
 import {
   CopySharedStorage,
   CopyWorkdirStorage,
@@ -148,6 +149,15 @@ describe("NoopWorkdirStorage", () => {
   });
 });
 
+/** warn 呼び出しだけを記録する最小限の Logger スタブ */
+function fakeLogger(): {
+  logger: Logger;
+  warn: ReturnType<typeof vi.fn<(obj: unknown, msg?: string) => void>>;
+} {
+  const warn = vi.fn<(obj: unknown, msg?: string) => void>();
+  return { logger: { warn } as unknown as Logger, warn };
+}
+
 describe("CopySharedStorage", () => {
   const CHANNEL_ID = "C123ABC";
 
@@ -201,6 +211,37 @@ describe("CopySharedStorage", () => {
       "shelf layout",
     );
   });
+
+  it("warns when the shelf size exceeds warnBytes after flush", async () => {
+    const { logger, warn } = fakeLogger();
+    const storage = new CopySharedStorage(baseDir, logger, 10);
+    await writeFile(join(workdir, "notes.md"), "this content is over 10 bytes");
+
+    await storage.flush(CHANNEL_ID, workdir);
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    const [context, message] = warn.mock.calls[0]!;
+    expect(context).toMatchObject({ channelId: CHANNEL_ID });
+    expect((context as { bytes: number }).bytes).toBeGreaterThan(10);
+    expect(message).toBe("shared shelf exceeds size warning threshold");
+  });
+
+  it("does not warn when the shelf size is within warnBytes", async () => {
+    const { logger, warn } = fakeLogger();
+    const storage = new CopySharedStorage(baseDir, logger, 50 * 1024 * 1024);
+    await writeFile(join(workdir, "notes.md"), "small content");
+
+    await storage.flush(CHANNEL_ID, workdir);
+
+    expect(warn).not.toHaveBeenCalled();
+  });
+
+  it("flushes without error when no logger is given, even past the warn threshold", async () => {
+    const storage = new CopySharedStorage(baseDir, undefined, 1);
+    await writeFile(join(workdir, "notes.md"), "content bigger than 1 byte");
+
+    await expect(storage.flush(CHANNEL_ID, workdir)).resolves.toBeUndefined();
+  });
 });
 
 describe("createSharedStorage", () => {
@@ -211,6 +252,18 @@ describe("createSharedStorage", () => {
 
   it("returns a CopySharedStorage when sharedDir is set", () => {
     expect(createSharedStorage(baseDir)).toBeInstanceOf(CopySharedStorage);
+  });
+
+  it("wires logger and warnBytes into the CopySharedStorage it creates", async () => {
+    const { logger, warn } = fakeLogger();
+    const storage = createSharedStorage(baseDir, logger, 10);
+
+    expect(storage).toBeInstanceOf(CopySharedStorage);
+    await writeFile(join(workdir, "notes.md"), "this content is over 10 bytes");
+    await storage!.flush("C123ABC", workdir);
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]![0]).toMatchObject({ channelId: "C123ABC" });
   });
 });
 

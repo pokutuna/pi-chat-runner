@@ -63,6 +63,9 @@ export interface BridgeOptions {
   /** チャンネル共有ディレクトリの保存先ルート (docs/design/shared.md)。未設定なら
    * shared 機能ごと無効。棚は `<sharedDir>/<channelId>/` */
   sharedDir?: string;
+  /** shared 棚のサイズがこれを超えたら warn ログを出す閾値 (bytes)。未設定なら
+   * createSharedStorage の既定値 (shared.md §7: ガードレールでなく気づきのため) */
+  sharedShelfWarnBytes?: number;
   agentUid?: number;
   agentGid?: number;
   agentHome?: string;
@@ -159,7 +162,12 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
   // sharedStorage 注入があれば sharedDir より優先する。どちらも無ければ
   // undefined = shared 機能ごと無効 (docs/design/shared.md)
   const sharedStorage =
-    options.sharedStorage ?? createSharedStorage(options.sharedDir);
+    options.sharedStorage ??
+    createSharedStorage(
+      options.sharedDir,
+      logger,
+      options.sharedShelfWarnBytes,
+    );
 
   // classifier gate 用 LLM client。注入があればそれを使い、なければ
   // GOOGLE_CLOUD_PROJECT があるときだけ GeminiClassifierClient を内部構築する

@@ -328,6 +328,8 @@ async function main() {
   const store = buildStateStore(storeConfig);
   const archiveDir = process.env.WORKDIR_ARCHIVE_DIR;
   const sharedDir = process.env.SHARED_DIR;
+  // 未設定/非数値なら createSharedStorage の既定閾値を使う (shared.md §7)
+  const sharedShelfWarnBytes = Number(process.env.SHARED_SHELF_WARN_BYTES);
   const piPermission = buildPiPermissionConfig(runtime, piPaths);
 
   const web = new WebClient(botToken);
@@ -353,6 +355,9 @@ async function main() {
     ...(archiveDir !== undefined && archiveDir !== "" ? { archiveDir } : {}),
     // SHARED_DIR 未設定ならチャンネル共有ディレクトリなし (docs/design/shared.md)
     ...(sharedDir !== undefined && sharedDir !== "" ? { sharedDir } : {}),
+    ...(Number.isFinite(sharedShelfWarnBytes) && sharedShelfWarnBytes > 0
+      ? { sharedShelfWarnBytes }
+      : {}),
     // agent.runtime.uid/gid (env PI_AGENT_UID/GID) 未設定なら UID 分離なし (現状動作)
     ...(runtime.uid !== undefined ? { agentUid: runtime.uid } : {}),
     ...(runtime.gid !== undefined ? { agentGid: runtime.gid } : {}),

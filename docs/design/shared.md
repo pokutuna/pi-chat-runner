@@ -142,5 +142,8 @@ workdir と同一 ([session-runtime.md](session-runtime.md) §6)。
 - flush は staging 全体のコピーなので、shared が肥大するとターン境界のコストが
   増える。想定は memory / skills / 小さなドキュメントで数 MB オーダー。
   大きな成果物は workdir の artifacts 側に置く。
+  上限は設けない代わりに、flush 後の棚サイズが閾値 (env
+  `SHARED_SHELF_WARN_BYTES`、既定 50MB) を超えたら warn ログを出し、
+  肥大化に運用者が気づけるようにする (`CopySharedStorage`、ブロックはしない)。
 - 削除の伝播はしない (コピーは上書きのみ)。棚から消したいファイルは
   staging と棚の両方から消す必要がある — 現状は運用 (手動) で対応。

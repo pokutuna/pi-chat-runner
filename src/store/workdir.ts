@@ -10,6 +10,7 @@
 import { cp, lstat, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
+import type { Logger } from "../logger.js";
 import { SESSION_FILE } from "../session/session-file.js";
 
 /** workdir の退避と復元。実体はディレクトリコピー (persistence.md §2)。 */
@@ -73,9 +74,18 @@ export interface SharedStorage {
   flush(channelId: string, src: string): Promise<void>;
 }
 
+/** 棚のサイズがこれを超えたら warn する既定値 (shared.md §7: ガードレールでは
+ * なく気づきのため。想定は memory/skills/小さなドキュメントで数 MB オーダー、
+ * その 10 倍程度を「気づくべき」ラインとする)。 */
+const DEFAULT_SHARED_SIZE_WARN_BYTES = 50 * 1024 * 1024;
+
 /** ファイルコピーのみによる SharedStorage 実装。棚は `<baseDir>/<channelId>/`。 */
 export class CopySharedStorage implements SharedStorage {
-  constructor(private readonly baseDir: string) {}
+  constructor(
+    private readonly baseDir: string,
+    private readonly logger?: Logger,
+    private readonly warnBytes: number = DEFAULT_SHARED_SIZE_WARN_BYTES,
+  ) {}
 
   async restore(channelId: string, dest: string): Promise<void> {
     const shelf = join(this.baseDir, channelId);
@@ -94,7 +104,39 @@ export class CopySharedStorage implements SharedStorage {
     for (const entry of await readEntriesOrEmpty(src)) {
       await copyRegularEntry(src, shelf, entry);
     }
+    await this.warnIfOversized(channelId, shelf);
   }
+
+  /** ロックなし・上限なしの割り切り (shared.md §3, §7) を維持したまま、肥大化に
+   * 運用者が気づけるようログだけ出す。サイズ計測の失敗でターンを失敗させない。 */
+  private async warnIfOversized(
+    channelId: string,
+    shelf: string,
+  ): Promise<void> {
+    if (this.logger === undefined) return;
+    try {
+      const bytes = await dirSize(shelf);
+      if (bytes > this.warnBytes) {
+        this.logger.warn(
+          { channelId, bytes, warnBytes: this.warnBytes },
+          "shared shelf exceeds size warning threshold",
+        );
+      }
+    } catch {
+      // サイズ計測の失敗は無視 (flush 自体は既に成功している)
+    }
+  }
+}
+
+async function dirSize(dir: string): Promise<number> {
+  let total = 0;
+  for (const entry of await readEntriesOrEmpty(dir)) {
+    const path = join(dir, entry);
+    const info = await lstat(path).catch(() => undefined);
+    if (info === undefined) continue;
+    total += info.isDirectory() ? await dirSize(path) : info.size;
+  }
+  return total;
 }
 
 /** sharedDir の設定値から対応する SharedStorage を選ぶ。未設定/空文字なら
@@ -102,9 +144,11 @@ export class CopySharedStorage implements SharedStorage {
  * 作成・skill 配線・system prompt への言及をすべて省く)。 */
 export function createSharedStorage(
   sharedDir: string | undefined,
+  logger?: Logger,
+  warnBytes?: number,
 ): SharedStorage | undefined {
   return sharedDir !== undefined && sharedDir !== ""
-    ? new CopySharedStorage(sharedDir)
+    ? new CopySharedStorage(sharedDir, logger, warnBytes)
     : undefined;
 }
 
