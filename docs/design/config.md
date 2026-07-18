@@ -98,6 +98,11 @@ interface ChannelDoc {
   memory?: boolean;        // 組み込み memory skill ([memory.md](memory.md))。shared 有効時の既定 true、false で opt-out
   session?: {              // セッション (文脈) の単位 ([session-model.md](session-model.md) §3)
     mode?: "thread" | "channel";  // 既定 thread。dm の既定は channel
+    affinity?: {                  // 既存セッションへの合流 (session-model.md §3「セッション合流」)
+      scope?: "session" | "channel";  // 既定 session (= 合流しない)
+      windowSec?: number;             // セッション終了後も合流可能な窓。既定 0 (稼働中のみ)
+      debounceSec?: number;           // 連投バーストを 1 ターンに束ねる kick 遅延
+    };
     idleResetMinutes?: number;    // channel モードのみ。無活動で transcript を世代交代
     maxTranscriptKb?: number;     // channel モードのみ。transcript がこのサイズ超過で世代交代
   };
@@ -111,6 +116,8 @@ interface ChannelDoc {
 channel = `channelId`)。`reply.mode` はチャンネル直下トリガーへの返信先で、スレッド内
 トリガーは mode に関わらずそのスレッドに返す。2 軸の組み合わせと境界規則は
 [session-model.md](session-model.md) §3「セッション単位と返信先の分離」を正とする。
+`session.affinity` は新規セッションを作る前の合流解決 (スコープ・時間窓・debounce) で、
+[session-model.md](session-model.md) §3「セッション合流」を正とする。
 
 `tools` / `excludeTools` は pi の `--tools` / `--exclude-tools` に渡る。`--tools` は
 built-in だけでなく extension のツールにも適用されるため、reply extension も対象になる。
@@ -361,7 +368,7 @@ kick シーケンスの全体・pi へ渡す env (`agent.env` の足し算モデ
 | pi settings の生パススルー | (存在しない) | §2 の通り。名前付きフィールドのみ |
 | API キー・トークン類 | Secret Manager → Cloud Run `--set-secrets` で env に。`agent.yaml` からは `${env.X}` で名前参照 | YAML に平文を置かない。実行時に Secret Manager を引くコードも書かない |
 | MCP 接続 | (初期版では存在しない) | pi は MCP ネイティブ対応を持たない (§3)。能力は CLI + skill で賄い、必要になったら extension として結線 |
-| lease TTL / linger / debounce / inbox ポーリング間隔 | env (全チャンネル共通の調整が要るなら agent.yaml §6 に昇格) | チャンネルごとに変える動機がまだ無い。生じたら §2 に昇格 |
+| lease TTL / linger / inbox ポーリング間隔 | env (全チャンネル共通の調整が要るなら agent.yaml §6 に昇格) | チャンネルごとに変える動機がまだ無い。生じたら §2 に昇格 (debounce は `session.affinity.debounceSec` として昇格済み) |
 | Slack token / Ingress 切替 | `agent.yaml` の connector.slack (値は `${env.X}` 経由) | チャンネルでなく接続の属性。§6 で connector に集約 |
 | リポジトリの clone 指定 | イメージ焼き込み or GCS tarball ([session-model.md](session-model.md) §7) | コールドスタートを Config で悪化させない |
 | ツールの allowlist | イメージ (入れない CLI は使えない) | 「何ができるか」は doc 編集でなくイメージのレビューで変わるべき。細粒度の許可制御が要る運用になったら名前付きフィールドとして昇格を検討 |
@@ -430,7 +437,6 @@ channels:
       - ./prompts/escalation.md
     model: google-vertex/gemini-3-pro   # default.model を上書き (§2.2)
     trigger:                  # trigger 単位で置換 (§2.2)
-      debounceSec: 30
       when:
         - and:                # keyword AND classifier (§7)
             - kind: keyword
@@ -439,6 +445,11 @@ channels:
               criteria: |
                 インフラのアラートや障害報告と思われる発言。
                 雑談や既に対応中と明言されたものは除く
+    session:
+      affinity:               # 連鎖アラートを 1 セッションに束ねる (session-model.md §3)
+        scope: channel        # 稼働中 (+ windowSec 以内終了) の直近セッションへ合流
+        windowSec: 600
+        debounceSec: 30       # 連投バーストが静まるまで初回 kick を遅らせる
 ```
 
 (skill や CLI はここに現れない — イメージ側の関心事 (§3)。YAML が持つのはテキストと trigger と model だけ)
@@ -631,12 +642,14 @@ YAML に置く。これで「実行環境以外のカスタマイズは YAML で
   葉に現れる (「gate」「gates」という語をキーには出さない — 語より木の構造で表す)。
 - **trigger** = そのチャンネルで「いつ起動するか」全体。中身は 2 つ:
   - `when` — gate をどう合成して**起動可否**を決めるか (ブール木、下記)。
-  - `debounceSec` (/ 実装保留中の `cooldownSec`) — 合成結果が真でも実際に
-    **発火させるかの抑制** (連投のまとめ・連続起動の抑止)。判定そのものではないので
-    `when` の木の外、`trigger` 直下に置く。
+  - `cooldownSec` (実装保留中) — 合成結果が真でも実際に**発火させるかの抑制**
+    (連続起動の間引き)。判定そのものではないので `when` の木の外、`trigger` 直下に置く。
 
 つまり trigger ⊃ when(gate の合成) + 発火制御。gate は trigger の構成部品で、
-trigger = gate ではない。
+trigger = gate ではない。連投を 1 ターンに**束ねる** debounce は起動の抑制ではなく
+「確定した入力をどのセッションにまとめるか」というセッション構成の関心なので、
+trigger ではなく `session.affinity.debounceSec` (§2、[session-model.md](session-model.md)
+§3「セッション合流」) に置く。
 
 ### trigger.allowBots — bot 投稿の起動許可
 
@@ -679,7 +692,6 @@ Node = Gate | { and: Node[] } | { or: Node[] }
 ```yaml
 # 「#alert に一致(RegEx) OR (料理の話題である AND 店の話ではない)」
 trigger:
-  debounceSec: 60
   when:
     - kind: keyword                        # ─┐ 配列 = OR
       pattern: "#alert"                     #  │
@@ -692,8 +704,8 @@ trigger:
 ```
 
 `when` の各葉 (Gate) が [session-model.md](session-model.md) §5 の 1 判定に対応し、
-`and` / `or` / 配列がその合成にあたる。`debounceSec` (/ 実装保留中の `cooldownSec`) は
-木の外 (trigger 直下) に置く — これは判定の合成ではなく起動の抑制 (発火制御) なので
+`and` / `or` / 配列がその合成にあたる。実装保留中の `cooldownSec` は木の外
+(trigger 直下) に置く — これは判定の合成ではなく起動の抑制 (発火制御) なので
 (上記「trigger と gate の役割分担」)。
 
 この方式で「**YAML = データ、コード搬入 = イメージのみ**」という安全特性が

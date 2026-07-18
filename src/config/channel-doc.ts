@@ -99,14 +99,15 @@ const WhenNodeSchema: z.ZodType<WhenNode> = z.lazy(() =>
   ]),
 );
 
-/** trigger = when (gate 合成木) + debounceSec (発火制御)。
+/** trigger = when (gate 合成木) + 発火制御。
  * when は trigger を書くなら必須 (config.md §7 「trigger と gate の役割分担」)。
  * cooldownSec は実装保留中 (session-model.md 「cooldownSec の実装案」参照)。
- * 実装再開まではスキーマ自体を無効化し、設定しても strict エラーになるようにする。 */
+ * 実装再開まではスキーマ自体を無効化し、設定しても strict エラーになるようにする。
+ * debounceSec は session.affinity.debounceSec へ移設済み (session-model.md §3
+ * 「debounceSec の置き場所」)。ここには持たない。 */
 const TriggerSchema = z
   .object({
     when: z.array(WhenNodeSchema),
-    debounceSec: z.number().optional(),
     // cooldownSec: z.number().optional(),
     /** bot 投稿 (自分自身を除く) を gate 評価に届ける opt-in。既定 false = bot
      * 投稿では起動しない (session-model.md §5)。 */
@@ -156,6 +157,19 @@ export const ChannelDocSchema = z
     session: z
       .object({
         mode: z.enum(["thread", "channel"]).optional(),
+        /** 既存セッションへの合流 (session-model.md §3「セッション合流」)。 */
+        affinity: z
+          .object({
+            /** 既定 "session" (= 合流しない)。既定値の適用は読む側 (runner) で行う
+             * ので schema は optional のまま。 */
+            scope: z.enum(["session", "channel"]).optional(),
+            /** セッション終了後も合流可能な秒数。既定 0 (稼働中のみ合流)。 */
+            windowSec: z.number().int().nonnegative().optional(),
+            /** 連投バーストを 1 ターンに束ねる kick 遅延 (trigger から移設)。 */
+            debounceSec: z.number().int().positive().optional(),
+          })
+          .strict()
+          .optional(),
         idleResetMinutes: z.number().positive().optional(),
         maxTranscriptKb: z.number().positive().optional(),
       })

@@ -6,6 +6,7 @@
 import Database from "better-sqlite3";
 
 import type {
+  ChannelSessionPointer,
   ChannelStateDoc,
   ChannelStateStore,
   InboxItem,
@@ -115,30 +116,85 @@ class SqliteSessionStore implements SessionStore {
   }
 }
 
-class SqliteChannelStateStore implements ChannelStateStore {
-  constructor(private readonly db: Database.Database) {}
+interface ChannelStateDocJson {
+  enabled: boolean;
+  updatedAt: string;
+  updatedBy?: string;
+  affinity?: {
+    sessionKey: string;
+    lastActiveAt: string;
+    endedAt?: string;
+  };
+}
 
-  async get(channelId: string): Promise<ChannelStateDoc | null> {
+function parseChannelStateDoc(payload: string): ChannelStateDoc {
+  const parsed = JSON.parse(payload) as ChannelStateDocJson;
+  return {
+    enabled: parsed.enabled,
+    updatedAt: new Date(parsed.updatedAt),
+    ...(parsed.updatedBy !== undefined && { updatedBy: parsed.updatedBy }),
+    ...(parsed.affinity !== undefined && {
+      affinity: {
+        sessionKey: parsed.affinity.sessionKey,
+        lastActiveAt: new Date(parsed.affinity.lastActiveAt),
+        ...(parsed.affinity.endedAt !== undefined && {
+          endedAt: new Date(parsed.affinity.endedAt),
+        }),
+      },
+    }),
+  };
+}
+
+class SqliteChannelStateStore implements ChannelStateStore {
+  private readonly putTxn: (channelId: string, doc: ChannelStateDoc) => void;
+  private readonly putSessionPointerTxn: (
+    channelId: string,
+    pointer: ChannelSessionPointer,
+  ) => void;
+
+  constructor(private readonly db: Database.Database) {
+    // read-modify-write。単一プロセス前提の backend なので better-sqlite3 の
+    // 同期トランザクションで往復させれば競合しない。
+    this.putTxn = this.db.transaction(
+      (channelId: string, doc: ChannelStateDoc) => {
+        const current = this.readDoc(channelId);
+        const merged: ChannelStateDoc = {
+          enabled: doc.enabled,
+          updatedAt: doc.updatedAt,
+          ...(doc.updatedBy !== undefined && { updatedBy: doc.updatedBy }),
+          ...(current?.affinity !== undefined && {
+            affinity: current.affinity,
+          }),
+        };
+        this.writeDoc(channelId, merged);
+      },
+    );
+
+    this.putSessionPointerTxn = this.db.transaction(
+      (channelId: string, pointer: ChannelSessionPointer) => {
+        const current = this.readDoc(channelId);
+        const merged: ChannelStateDoc = {
+          enabled: current?.enabled ?? true,
+          updatedAt: current?.updatedAt ?? pointer.lastActiveAt,
+          ...(current?.updatedBy !== undefined && {
+            updatedBy: current.updatedBy,
+          }),
+          affinity: { ...pointer },
+        };
+        this.writeDoc(channelId, merged);
+      },
+    );
+  }
+
+  private readDoc(channelId: string): ChannelStateDoc | null {
     const row = this.db
       .prepare(`SELECT doc FROM channel_state WHERE channel_id = ?`)
       .get(channelId) as ChannelRow | undefined;
     if (row === undefined) return null;
-    const parsed = JSON.parse(row.doc) as Omit<
-      ChannelStateDoc,
-      "updatedAt" | "updatedBy"
-    > & {
-      updatedAt: string;
-      updatedBy?: string;
-    };
-    const { updatedBy, ...rest } = parsed;
-    return {
-      ...rest,
-      updatedAt: new Date(parsed.updatedAt),
-      ...(updatedBy !== undefined && { updatedBy }),
-    };
+    return parseChannelStateDoc(row.doc);
   }
 
-  async put(channelId: string, doc: ChannelStateDoc): Promise<void> {
+  private writeDoc(channelId: string, doc: ChannelStateDoc): void {
     const payload = JSON.stringify(doc);
     this.db
       .prepare(
@@ -146,6 +202,21 @@ class SqliteChannelStateStore implements ChannelStateStore {
 				 ON CONFLICT(channel_id) DO UPDATE SET doc = excluded.doc`,
       )
       .run(channelId, payload);
+  }
+
+  async get(channelId: string): Promise<ChannelStateDoc | null> {
+    return this.readDoc(channelId);
+  }
+
+  async put(channelId: string, doc: ChannelStateDoc): Promise<void> {
+    this.putTxn(channelId, doc);
+  }
+
+  async putSessionPointer(
+    channelId: string,
+    pointer: ChannelSessionPointer,
+  ): Promise<void> {
+    this.putSessionPointerTxn(channelId, pointer);
   }
 }
 

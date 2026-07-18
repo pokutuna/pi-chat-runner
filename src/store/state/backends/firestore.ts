@@ -22,6 +22,7 @@ import type { Firestore, Transaction } from "@google-cloud/firestore";
 import { Timestamp } from "@google-cloud/firestore";
 
 import type {
+  ChannelSessionPointer,
   ChannelStateDoc,
   ChannelStateStore,
   InboxItem,
@@ -69,10 +70,17 @@ interface LeaseDocData {
   expiresAtMs: number;
 }
 
+interface ChannelSessionPointerData {
+  sessionKey: string;
+  lastActiveAt: Timestamp;
+  endedAt?: Timestamp;
+}
+
 interface ChannelStateDocData {
   enabled: boolean;
   updatedAt: Timestamp;
   updatedBy?: string;
+  affinity?: ChannelSessionPointerData;
 }
 
 class FirestoreInboxStore implements InboxStore {
@@ -211,17 +219,71 @@ class FirestoreChannelStateStore implements ChannelStateStore {
       enabled: data.enabled,
       updatedAt: data.updatedAt.toDate(),
       ...(data.updatedBy !== undefined && { updatedBy: data.updatedBy }),
+      ...(data.affinity !== undefined && {
+        affinity: {
+          sessionKey: data.affinity.sessionKey,
+          lastActiveAt: data.affinity.lastActiveAt.toDate(),
+          ...(data.affinity.endedAt !== undefined && {
+            endedAt: data.affinity.endedAt.toDate(),
+          }),
+        },
+      }),
     };
   }
 
   async put(channelId: string, doc: ChannelStateDoc): Promise<void> {
-    const data: ChannelStateDocData = {
-      enabled: doc.enabled,
-      updatedAt: Timestamp.fromDate(doc.updatedAt),
-      // Firestore は undefined フィールドを拒否するため、値がある場合のみ書く
-      ...(doc.updatedBy !== undefined && { updatedBy: doc.updatedBy }),
+    // enabled/updatedAt/updatedBy のみを書く。affinity には触れないため、txn で
+    // 既存 doc の affinity を読んで引き継ぐ (mergeFields で "affinity" を除外する手も
+    // あるが、doc 未存在時の新規作成を素直に扱うため txn で統一する)。
+    const ref = this.db.collection(this.collectionName).doc(channelId);
+    await this.db.runTransaction(async (txn: Transaction) => {
+      const snap = await txn.get(ref);
+      const current = snap.exists
+        ? (snap.data() as ChannelStateDocData)
+        : undefined;
+      const data: ChannelStateDocData = {
+        enabled: doc.enabled,
+        updatedAt: Timestamp.fromDate(doc.updatedAt),
+        // Firestore は undefined フィールドを拒否するため、値がある場合のみ書く
+        ...(doc.updatedBy !== undefined && { updatedBy: doc.updatedBy }),
+        ...(current?.affinity !== undefined && { affinity: current.affinity }),
+      };
+      txn.set(ref, data);
+    });
+  }
+
+  async putSessionPointer(
+    channelId: string,
+    pointer: ChannelSessionPointer,
+  ): Promise<void> {
+    // affinity は pointer オブジェクト全体で置換 (endedAt なしなら消える) しつつ、
+    // enabled/updatedAt/updatedBy は保持する。doc 未存在時は enabled: true,
+    // updatedAt: pointer.lastActiveAt で新規作成する。
+    const ref = this.db.collection(this.collectionName).doc(channelId);
+    const affinity: ChannelSessionPointerData = {
+      sessionKey: pointer.sessionKey,
+      lastActiveAt: Timestamp.fromDate(pointer.lastActiveAt),
+      ...(pointer.endedAt !== undefined && {
+        endedAt: Timestamp.fromDate(pointer.endedAt),
+      }),
     };
-    await this.db.collection(this.collectionName).doc(channelId).set(data);
+
+    await this.db.runTransaction(async (txn: Transaction) => {
+      const snap = await txn.get(ref);
+      const current = snap.exists
+        ? (snap.data() as ChannelStateDocData)
+        : undefined;
+      const data: ChannelStateDocData = {
+        enabled: current?.enabled ?? true,
+        updatedAt:
+          current?.updatedAt ?? Timestamp.fromDate(pointer.lastActiveAt),
+        ...(current?.updatedBy !== undefined && {
+          updatedBy: current.updatedBy,
+        }),
+        affinity,
+      };
+      txn.set(ref, data);
+    });
   }
 }
 

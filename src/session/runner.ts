@@ -563,6 +563,12 @@ export class SessionRunner {
    * レーンで gate 通過 → inbox enqueue した後、即 kick する代わりにレーンごとの
    * タイマーで kick を遅らせる」 */
   private readonly pendingKicks = new Map<string, PendingKick>();
+  /** affinity 合流したイベントのスレッド → 合流先レーンの別名 (session-model.md §3
+   * 「セッション合流」)。合流先セッションが返信したスレッド内の追い発言を、自
+   * スレッド followUp と同じ規則 (稼働中は gate なしで steer、終了後は resume) で
+   * 合流先レーンへ届けるための in-memory マップ。プロセス再起動で消える (その後の
+   * スレッド返信は通常の新規判定に落ちる) — 永続化は §6 の chat_ref 逆引き実装時 */
+  private readonly threadAlias = new Map<string, string>();
   private readonly configSource: ConfigSource;
   private readonly store: StateStore;
   private readonly router: EgressRouter;
@@ -636,7 +642,10 @@ export class SessionRunner {
     // (config.md §1, §2)。セッション自体は実 channelId (D...) で管理する
     const doc = await this.loadChannelDoc(isDm ? DM_CHANNEL : channelId);
     const policy = resolveSessionPolicy(doc, isDm);
-    const sessionKey = sessionKeyOf(event, policy);
+    // affinity で合流したスレッド内の追い発言は合流先レーンの発言として扱う
+    // (session-model.md §3「セッション合流」の別名解決)
+    const naturalKey = sessionKeyOf(event, policy);
+    const sessionKey = this.threadAlias.get(naturalKey) ?? naturalKey;
     const item: InboxItem = {
       id: inboxItemId(event),
       event,
@@ -793,7 +802,9 @@ export class SessionRunner {
     );
 
     const policy = resolveSessionPolicy(doc, isDm);
-    const sessionKey = sessionKeyOf(synthetic, policy);
+    // message 経路と同じ別名解決 (合流済みスレッド内のメッセージへの reaction 起動)
+    const naturalKey = sessionKeyOf(synthetic, policy);
+    const sessionKey = this.threadAlias.get(naturalKey) ?? naturalKey;
     const item: InboxItem = {
       id: inboxItemId(synthetic),
       event: synthetic,
@@ -830,6 +841,11 @@ export class SessionRunner {
       );
       return true;
     }
+    // steer 配達もレーンの活動 (session-model.md §3 の直近セッションポインタ)
+    await this.touchSessionPointer(
+      item.event.conversation.channelId,
+      sessionKey,
+    );
     // starting 中は初回 prompt の drain が拾う。running なら steer で即配達する。
     // lingering (agent_end 後の終了判定中) は enqueue のみ — onAgentEnd の
     // promptPending が prompt で新ターンとして拾う。アイドルな pi への steer は
@@ -927,6 +943,8 @@ export class SessionRunner {
           event.conversation.isDm === true ? DM_CHANNEL : channelId,
         ),
         restItem,
+        // /new は明示的な新規開始なので affinity 合流させない (session-model.md §3)
+        { skipAffinity: true },
       );
       return;
     }
@@ -987,10 +1005,12 @@ export class SessionRunner {
     });
   }
 
-  /** gate 通過が確定した後の enqueue → 多重起動チェック → debounce or 即 kick
-   * (handle / handleReaction の共通経路)。item はここで永続 store へ積む (dedupe =
-   * at-least-once の再送吸収)。この後 debounce タイマーで kick を遅らせても、
-   * item は既に永続化済みなのでプロセス死で消えない (拾い直しは既存の inbox 経路に乗る) */
+  /** gate 通過が確定した後の affinity 合流解決 → enqueue → 多重起動チェック →
+   * debounce or 即 kick (handle / handleReaction の共通経路)。item はここで永続
+   * store へ積む (dedupe = at-least-once の再送吸収)。この後 debounce タイマーで
+   * kick を遅らせても、item は既に永続化済みなのでプロセス死で消えない (拾い直しは
+   * 既存の inbox 経路に乗る)。skipAffinity は /new の明示新規 (合流の逃げ道、
+   * session-model.md §3) 用 */
   private async kickTriggered(
     sessionKey: string,
     channelId: string,
@@ -998,7 +1018,38 @@ export class SessionRunner {
     event: InboundMessage,
     doc: ChannelDoc | null,
     item: InboxItem,
+    options?: { skipAffinity?: boolean },
   ): Promise<void> {
+    // affinity 合流 (session-model.md §3「セッション合流」): チャンネル直下投稿を
+    // 直近レーンへ差し替える。以降は既存の配達経路 (steer / debounce / kick=resume)
+    // がそのまま働く
+    if (options?.skipAffinity !== true) {
+      const target = await this.resolveAffinityTarget(
+        sessionKey,
+        channelId,
+        event,
+        doc,
+      );
+      if (target !== sessionKey) {
+        // このイベントのスレッドを合流先レーンの別名として記録し、以降の
+        // スレッド内の追い発言も合流先へ届くようにする
+        this.threadAlias.set(sessionKey, target);
+        this.logger.info(
+          {
+            channelId,
+            sessionKey: target,
+            naturalKey: sessionKey,
+            itemId: item.id,
+          },
+          "affinity attach",
+        );
+        sessionKey = target;
+        // 合流先が生きていれば steer 経路で配達して終わり (running なら即 steer、
+        // starting/lingering なら enqueue のみで既存の drain が拾う)
+        if (await this.trySteerExisting(sessionKey, item)) return;
+      }
+    }
+
     const fresh = await this.store.inbox.enqueue(sessionKey, item);
     if (!fresh) {
       this.logger.debug(
@@ -1007,12 +1058,14 @@ export class SessionRunner {
       );
       return;
     }
+    // レーンの発生 (debounce 待機開始 / kick) を直近セッションポインタに記録
+    await this.touchSessionPointer(channelId, sessionKey);
 
     // 多重起動防止: gate 評価の await 中に別イベントが kick 済みなら、
     // 上で enqueue した item はそのセッションの drain が拾う
     if (this.sessions.has(sessionKey)) return;
 
-    const debounceSec = doc?.trigger?.debounceSec;
+    const debounceSec = doc?.session?.affinity?.debounceSec;
     if (debounceSec !== undefined && event.mentionsBot !== true) {
       this.scheduleDebouncedKick(
         sessionKey,
@@ -1111,6 +1164,89 @@ export class SessionRunner {
     this.pendingKicks.delete(sessionKey);
   }
 
+  /** affinity 合流先の解決 (session-model.md §3「セッション合流」)。scope=channel の
+   * とき、gate 通過したチャンネル直下投稿をチャンネルの直近セッションレーンへ差し替える。
+   * 合流しない場合は naturalKey をそのまま返す。判定は時間窓ルールのみ (classifier に
+   * 委ねない) */
+  private async resolveAffinityTarget(
+    naturalKey: string,
+    channelId: string,
+    event: InboundMessage,
+    doc: ChannelDoc | null,
+  ): Promise<string> {
+    const affinity = doc?.session?.affinity;
+    if (affinity?.scope !== "channel") return naturalKey;
+    // スレッド内の発言はそのスレッドのセッションに属する (session-model.md §6
+    // 再開判定 1)。合流対象はチャンネル直下投稿のみ
+    if (event.conversation.threadTs !== undefined) return naturalKey;
+
+    const state = await this.store.channels.get(channelId);
+    const pointer = state?.affinity;
+    if (pointer === undefined || pointer.sessionKey === naturalKey) {
+      return naturalKey;
+    }
+
+    // 生きているレーン (debounce 待機 / starting / running / lingering) へは
+    // 窓に関わらず合流する
+    if (
+      this.sessions.has(pointer.sessionKey) ||
+      this.pendingKicks.has(pointer.sessionKey)
+    ) {
+      return pointer.sessionKey;
+    }
+
+    // 終了済みレーンは windowSec 以内なら resume 合流。endedAt が無い
+    // (クラッシュで書き損ね等) 場合は lastActiveAt で保守的に判定する
+    const windowSec = affinity.windowSec ?? 0;
+    const refMs = (pointer.endedAt ?? pointer.lastActiveAt).getTime();
+    if (Date.now() - refMs <= windowSec * 1000) return pointer.sessionKey;
+    return naturalKey;
+  }
+
+  /** 直近セッションポインタの活動更新 (session-model.md §3)。ポインタは合流候補の
+   * 検索用 (advisory) なので、書き込み失敗でイベント処理を止めない */
+  private async touchSessionPointer(
+    channelId: string,
+    sessionKey: string,
+  ): Promise<void> {
+    try {
+      await this.store.channels.putSessionPointer(channelId, {
+        sessionKey,
+        lastActiveAt: new Date(),
+      });
+    } catch (err) {
+      this.logger.warn(
+        { channelId, sessionKey, err },
+        "session pointer touch failed",
+      );
+    }
+  }
+
+  /** セッション終了時のポインタ endedAt 記録 (session-model.md §3。windowSec の
+   * 起点になる)。ポインタが既に別レーンを指していたら書かない — 古いレーンの終了で
+   * 「最後に活動したセッション」を巻き戻さない */
+  private async markSessionPointerEnded(
+    channelId: string,
+    sessionKey: string,
+  ): Promise<void> {
+    try {
+      const state = await this.store.channels.get(channelId);
+      const pointer = state?.affinity;
+      if (pointer === undefined || pointer.sessionKey !== sessionKey) return;
+      const now = new Date();
+      await this.store.channels.putSessionPointer(channelId, {
+        sessionKey,
+        lastActiveAt: now,
+        endedAt: now,
+      });
+    } catch (err) {
+      this.logger.warn(
+        { channelId, sessionKey, err },
+        "session pointer end mark failed",
+      );
+    }
+  }
+
   /** 実行ロックを取って kick する (即時 kick と debounce タイマー発火の両方から共有)。
    * lease が取れない・二重 kick になりそうなケースはログのみで戻る — item は
    * enqueue 済みなので保持者側の drain (steer / agent_end / linger) が拾う */
@@ -1142,7 +1278,13 @@ export class SessionRunner {
       return;
     }
 
-    const threadTs = event.conversation.threadTs ?? event.id;
+    // レーン根の threadTs は event ではなく sessionKey から導出する (thread モードの
+    // key は `${channelId}:${threadTs}`)。affinity 合流の resume では event のスレッド
+    // 位置とレーンが一致しないが、workdir/transcript は常にレーン基準 (session-model.md §3)
+    const threadTs =
+      policy.sessionMode === "channel"
+        ? (event.conversation.threadTs ?? event.id)
+        : sessionKey.slice(channelId.length + 1);
     const record: SessionRecord = {
       state: "starting",
       triggerTs: event.id,
@@ -1183,6 +1325,7 @@ export class SessionRunner {
         // spawn 途中の失敗など。stop は best-effort でよい
       }
       await this.store.leases.release(lease);
+      await this.markSessionPointerEnded(channelId, sessionKey);
       this.logger.warn({ sessionKey, err }, "session kick failed");
     }
   }
@@ -1303,6 +1446,25 @@ export class SessionRunner {
       this.logger.warn(
         { sessionKey, channelId },
         "session.idleResetMinutes / maxTranscriptKb are only effective with session.mode=channel; ignored",
+      );
+    }
+    // affinity は mode=channel では自明に成立 (同一 sessionKey) するため意味を持たない。
+    // windowSec も scope=channel 以外では読まれない (session-model.md §3)
+    const affinity = doc?.session?.affinity;
+    if (affinity?.scope === "channel" && policy.sessionMode === "channel") {
+      this.logger.warn(
+        { sessionKey, channelId },
+        "session.affinity.scope=channel is redundant with session.mode=channel; ignored",
+      );
+    }
+    if (
+      affinity?.windowSec !== undefined &&
+      affinity.windowSec > 0 &&
+      affinity.scope !== "channel"
+    ) {
+      this.logger.warn(
+        { sessionKey, channelId },
+        "session.affinity.windowSec is only effective with scope=channel; ignored",
       );
     }
 
@@ -1700,6 +1862,7 @@ export class SessionRunner {
         void this.store.leases.release(current.lease).catch((err) => {
           this.logger.warn({ sessionKey, err }, "lease release failed");
         });
+        void this.markSessionPointerEnded(current.channelId, sessionKey);
         this.logger.warn(
           { sessionKey, code, signal },
           "pi exited unexpectedly",
@@ -1846,6 +2009,8 @@ export class SessionRunner {
     await this.router.clearProgress(sessionKey);
     await this.store.leases.release(record.lease);
     this.sessions.delete(sessionKey);
+    // windowSec の起点 (session-model.md §3。以降このレーンは窓内なら resume 合流できる)
+    await this.markSessionPointerEnded(record.channelId, sessionKey);
     this.logger.info(
       {
         sessionKey,
@@ -1971,6 +2136,7 @@ export class SessionRunner {
     // activeSessionCount (テストの waitFor 等) がこのログの後で 0 になるよう、
     // Map からの削除はクリーンアップ完了後に行う
     this.sessions.delete(sessionKey);
+    await this.markSessionPointerEnded(record.channelId, sessionKey);
   }
 
   /** 未 prompt の item があれば prompt して true (drain は非破壊なので
@@ -2020,6 +2186,7 @@ export class SessionRunner {
         this.clearProgressNotice(record);
         await this.router.clearProgress(sessionKey);
         await record.process?.stop();
+        await this.markSessionPointerEnded(record.channelId, sessionKey);
       })().catch((err) => {
         this.logger.error({ sessionKey, err }, "lease renew handling failed");
       });

@@ -268,7 +268,7 @@ describe("mergeChannelDoc", () => {
 
   it("replaces the whole trigger field wholesale (no inner merge)", () => {
     const base: ChannelDoc = {
-      trigger: { when: [{ kind: "mention" }], debounceSec: 5 },
+      trigger: { when: [{ kind: "mention" }], allowBots: true },
     };
     const own: ChannelDoc = {
       trigger: { when: [{ kind: "passthrough" }] },

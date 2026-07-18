@@ -1725,8 +1725,8 @@ describe("SessionRunner: /enable /disable (channel mute, session-model.md §5)",
         C01: {
           trigger: {
             when: [{ kind: "passthrough" }],
-            debounceSec: 0.2,
           },
+          session: { affinity: { debounceSec: 0.2 } },
         },
       });
 
@@ -2547,13 +2547,13 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
   });
 
-  it("trigger.debounceSec: 連投バーストの 2 通が 1 回の kick にまとめられる", async () => {
+  it("session.affinity.debounceSec: 連投バーストの 2 通が 1 回の kick にまとめられる", async () => {
     const h = await harness({
       C01: {
         trigger: {
           when: [{ kind: "passthrough" }],
-          debounceSec: 0.2,
         },
+        session: { affinity: { debounceSec: 0.2 } },
       },
     });
     const first = message({ text: "first burst message" });
@@ -2588,13 +2588,13 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     expect(await h.store.inbox.drain(threadKey)).toEqual([]);
   });
 
-  it("trigger.debounceSec: 連投バースト A→B→C の 3 通が 1 回の kick にまとめられる", async () => {
+  it("session.affinity.debounceSec: 連投バースト A→B→C の 3 通が 1 回の kick にまとめられる", async () => {
     const h = await harness({
       C01: {
         trigger: {
           when: [{ kind: "passthrough" }],
-          debounceSec: 0.2,
         },
+        session: { affinity: { debounceSec: 0.2 } },
       },
     });
     const a = message({ text: "message A" });
@@ -2638,13 +2638,13 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     expect(await h.store.inbox.drain(threadKey)).toEqual([]);
   });
 
-  it("trigger.debounceSec: mentionsBot のメッセージは debounce をバイパスして即 kick される", async () => {
+  it("session.affinity.debounceSec: mentionsBot のメッセージは debounce をバイパスして即 kick される", async () => {
     const h = await harness({
       C01: {
         trigger: {
           when: [{ kind: "passthrough" }],
-          debounceSec: 5,
         },
+        session: { affinity: { debounceSec: 5 } },
       },
     });
     const trigger = message({
@@ -2666,6 +2666,352 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
       JSON.parse(line),
     );
     expect(commands.map((c) => c.type)).toEqual(["prompt"]);
+  });
+});
+
+describe("session.affinity (セッション合流)", () => {
+  it("稼働中の合流: scope=channel でチャンネル直下の 2 通目が既存セッションへ steer され、新セッションは立たない", async () => {
+    const h = await harness({
+      C01: { session: { affinity: { scope: "channel" } } },
+    });
+    const a = message({ mentionsBot: true, text: "WAIT_FOR_STEER" });
+
+    await h.runner.handle(a);
+    await waitFor(() => h.runner.activeSessionCount === 1, "lane A running");
+
+    // チャンネル直下 (threadTs なし) の 2 通目。gate 通過 (mention) だが
+    // 稼働中レーン A へ合流するため新セッションは立たない
+    const b = message({
+      id: "1700000000.000700",
+      mentionsBot: true,
+      text: "merged follow-up B",
+      metadata: { eventId: "Ev-affinity-b" },
+    });
+    await h.runner.handle(b);
+
+    expect(h.runner.activeSessionCount).toBe(1);
+    await waitFor(() => h.poster.calls.length === 1, "steered reply posted");
+    expect(h.poster.calls[0]?.text).toBe(
+      `steered: ${renderEvent(b, replyThreadKeyOf(b))}`,
+    );
+
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+    const commands = (await h.commandsLog("C01", a.id)).map((line) =>
+      JSON.parse(line),
+    );
+    expect(commands.map((c) => c.type)).toEqual(["prompt", "steer"]);
+  });
+
+  it("終了後の窓内 resume: windowSec 内のチャンネル直下投稿が A のレーン (workdir) で resume される", async () => {
+    const h = await harness({
+      C01: { session: { affinity: { scope: "channel", windowSec: 600 } } },
+    });
+    const a = message({ mentionsBot: true, text: "first lane message" });
+
+    await h.runner.handle(a);
+    await waitFor(() => h.runner.activeSessionCount === 0, "lane A finished");
+    expect((await h.store.channels.get("C01"))?.affinity?.sessionKey).toBe(
+      threadKeyOf(a),
+    );
+    expect(
+      (await h.store.channels.get("C01"))?.affinity?.endedAt,
+    ).toBeInstanceOf(Date);
+
+    const c = message({
+      id: "1700000000.000700",
+      mentionsBot: true,
+      text: "channel-root follow-up within window",
+      metadata: { eventId: "Ev-affinity-c" },
+    });
+    await h.runner.handle(c);
+    await waitFor(() => h.poster.calls.length === 1, "resumed reply posted");
+    await waitFor(() => h.runner.activeSessionCount === 0, "lane A done again");
+
+    // A のレーン (workdir = C01/<A.id>) の commands.jsonl に両方の prompt が
+    // 積まれている = C は自分のレーンでなく A のレーンで resume された
+    const commands = (await h.commandsLog("C01", a.id)).map((line) =>
+      JSON.parse(line),
+    );
+    expect(commands.filter((cmd) => cmd.type === "prompt")).toHaveLength(2);
+    expect(commands[1]?.message).toContain("channel-root follow-up");
+
+    // C 自身のレーン (naturalKey) では何も起きていない
+    await expect(stat(join(h.workdirRoot, "C01", c.id))).rejects.toThrow(
+      /ENOENT/,
+    );
+  });
+
+  it("窓外は新規: windowSec 未設定 (既定 0) だと終了後のチャンネル直下投稿は自分を根に新規レーンを作る", async () => {
+    const h = await harness({
+      C01: { session: { affinity: { scope: "channel" } } },
+    });
+    const a = message({ mentionsBot: true, text: "first lane message" });
+
+    await h.runner.handle(a);
+    await waitFor(() => h.runner.activeSessionCount === 0, "lane A finished");
+
+    const d = message({
+      id: "1700000000.000800",
+      mentionsBot: true,
+      text: "channel-root follow-up outside window",
+      metadata: { eventId: "Ev-affinity-d" },
+    });
+    await h.runner.handle(d);
+    await waitFor(() => h.poster.calls.length === 2, "second reply posted");
+    await waitFor(() => h.runner.activeSessionCount === 0, "lane D done");
+
+    // D は自分のレーン (workdir = C01/<D.id>) で新規に prompt された (resume でない)
+    const commandsD = (await h.commandsLog("C01", d.id)).map((line) =>
+      JSON.parse(line),
+    );
+    expect(commandsD.filter((cmd) => cmd.type === "prompt")).toHaveLength(1);
+    // A のレーンには増えていない
+    const commandsA = (await h.commandsLog("C01", a.id)).map((line) =>
+      JSON.parse(line),
+    );
+    expect(commandsA.filter((cmd) => cmd.type === "prompt")).toHaveLength(1);
+  });
+
+  it("スレッド内は合流しない: scope=channel でも threadTs 付きイベントは自分のスレッドのレーンになる", async () => {
+    const h = await harness({
+      C01: { session: { affinity: { scope: "channel" } } },
+    });
+    const a = message({ mentionsBot: true, text: "WAIT_FOR_STEER" });
+
+    await h.runner.handle(a);
+    await waitFor(() => h.runner.activeSessionCount === 1, "lane A running");
+
+    // 別スレッド (a とは無関係の threadTs) 内での mention 付き発言。
+    // スレッド内なので合流対象にならず、そのスレッド自身の新規レーンになる
+    const otherThreadRoot = "1700000000.000500";
+    const inThread = message({
+      id: "1700000000.000600",
+      conversation: { channelId: "C01", threadTs: otherThreadRoot },
+      mentionsBot: true,
+      text: "own thread message",
+      metadata: { eventId: "Ev-affinity-thread" },
+    });
+    await h.runner.handle(inThread);
+
+    // 新しいレーンが増える (A への合流ではない)
+    expect(h.runner.activeSessionCount).toBe(2);
+
+    await waitFor(() => h.poster.calls.length === 1, "own-thread reply posted");
+    expect(h.poster.calls[0]?.text).toBe(
+      `echo: ${renderEvent(inThread, replyThreadKeyOf(inThread))}`,
+    );
+    await waitFor(
+      () => h.runner.activeSessionCount === 1,
+      "own-thread session removed",
+    );
+
+    // A のレーンには steer が来ていない (自分のスレッドのレーンとして独立処理された)
+    const commandsA = (await h.commandsLog("C01", a.id)).map((line) =>
+      JSON.parse(line),
+    );
+    expect(commandsA.map((cmd) => cmd.type)).toEqual(["prompt"]);
+
+    // A を畳んで後始末する
+    const wrapUp = message({
+      id: "1700000000.000900",
+      conversation: { channelId: "C01", threadTs: a.id },
+      mentionsBot: true,
+      text: "wrap up A",
+      metadata: { eventId: "Ev-affinity-wrapup" },
+    });
+    await h.runner.handle(wrapUp);
+    await waitFor(() => h.runner.activeSessionCount === 0, "lane A done");
+  });
+
+  it("/new は合流しない: pointer が窓内でも /new テキストは自分のレーンで新規起動する", async () => {
+    const h = await harness({
+      C01: { session: { affinity: { scope: "channel", windowSec: 600 } } },
+    });
+    const a = message({ mentionsBot: true, text: "first lane message" });
+
+    await h.runner.handle(a);
+    await waitFor(() => h.runner.activeSessionCount === 0, "lane A finished");
+
+    const newCmd = message({
+      id: "1700000000.000700",
+      mentionsBot: true,
+      text: "/new 続きではなく新規です",
+      metadata: { eventId: "Ev-affinity-new" },
+    });
+    await h.runner.handle(newCmd);
+    await waitFor(() => h.poster.calls.length === 2, "second reply posted");
+    await waitFor(() => h.runner.activeSessionCount === 0, "lane new done");
+
+    // /new のレーン (workdir = C01/<newCmd.id>) で新規に 1 件 prompt された
+    const commandsNew = (await h.commandsLog("C01", newCmd.id)).map((line) =>
+      JSON.parse(line),
+    );
+    expect(commandsNew.filter((cmd) => cmd.type === "prompt")).toHaveLength(1);
+    expect(commandsNew[0]?.message).toContain("続きではなく新規です");
+    // A のレーンには増えていない (合流していない)
+    const commandsA = (await h.commandsLog("C01", a.id)).map((line) =>
+      JSON.parse(line),
+    );
+    expect(commandsA.filter((cmd) => cmd.type === "prompt")).toHaveLength(1);
+  });
+
+  it("alias 経由の追い返信: 合流したイベントのスレッド内発言が gate なしで同セッションへ steer される", async () => {
+    const h = await harness({
+      C01: { session: { affinity: { scope: "channel" } } },
+    });
+    // SLOW_TOOL: tool_execution_start を吐いた後 steer 待ち。steer に "NEXT_TOOL" が
+    // 含まれるとターンを終わらせず 2 個目の tool_execution_start を吐く (fake-pi の
+    // WAIT_FOR_STEER と違い、1 ターン中に複数回 steer を観測できる)
+    const a = message({ mentionsBot: true, text: "SLOW_TOOL" });
+
+    await h.runner.handle(a);
+    await waitFor(() => h.runner.activeSessionCount === 1, "lane A running");
+    await waitFor(async () => {
+      const commands = await h.commandsLog("C01", a.id).catch(() => []);
+      return commands.length >= 1;
+    }, "initial prompt recorded");
+
+    // B (mention 付き・チャンネル直下) が稼働中の A へ合流する。NEXT_TOOL を含めて
+    // ターンを終わらせず、後続の合流スレッド内発言も同ターンで観測できるようにする
+    const b = message({
+      id: "1700000000.000700",
+      mentionsBot: true,
+      text: "merged follow-up B NEXT_TOOL",
+      metadata: { eventId: "Ev-affinity-alias-b" },
+    });
+    await h.runner.handle(b);
+    expect(h.runner.activeSessionCount).toBe(1);
+    await waitFor(async () => {
+      const commands = (await h.commandsLog("C01", a.id)).map((line) =>
+        JSON.parse(line),
+      );
+      return commands.filter((cmd) => cmd.type === "steer").length >= 1;
+    }, "B steered into lane A");
+
+    // B のスレッド内 (threadTs = b.id) の追い発言。mention なし。
+    // 既定 gate は mention のみだが、alias 経由で合流先レーンへ steer されるため
+    // gate 評価をバイパスして届く
+    const followUpInBThread = message({
+      id: "1700000000.000800",
+      conversation: { channelId: "C01", threadTs: b.id },
+      mentionsBot: false,
+      text: "追い返信 (mention なし)",
+      metadata: { eventId: "Ev-affinity-alias-followup" },
+    });
+    await h.runner.handle(followUpInBThread);
+
+    expect(h.runner.activeSessionCount).toBe(1);
+    await waitFor(() => h.poster.calls.length === 1, "steered reply posted");
+    expect(h.poster.calls[0]?.text).toBe(
+      `steered: ${renderEvent(followUpInBThread, replyThreadKeyOf(followUpInBThread))}`,
+    );
+
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+    const commands = (await h.commandsLog("C01", a.id)).map((line) =>
+      JSON.parse(line),
+    );
+    expect(commands.map((cmd) => cmd.type)).toEqual([
+      "prompt",
+      "steer",
+      "steer",
+    ]);
+  });
+
+  it("scope 未設定は従来動作: A 実行中のチャンネル直下メッセージ B は B 自身のレーンで別セッションが立つ", async () => {
+    const h = await harness(); // affinity 未設定
+    const a = message({ mentionsBot: true, text: "WAIT_FOR_STEER" });
+
+    await h.runner.handle(a);
+    await waitFor(() => h.runner.activeSessionCount === 1, "lane A running");
+
+    const b = message({
+      id: "1700000000.000700",
+      mentionsBot: true,
+      text: "independent B",
+      metadata: { eventId: "Ev-no-affinity-b" },
+    });
+    await h.runner.handle(b);
+
+    // 合流せず、B 自身の新規レーンが立つ (2 セッション同時稼働)
+    expect(h.runner.activeSessionCount).toBe(2);
+
+    await waitFor(() => h.poster.calls.length === 1, "B's own reply posted");
+    expect(h.poster.calls[0]?.text).toBe(
+      `echo: ${renderEvent(b, replyThreadKeyOf(b))}`,
+    );
+    await waitFor(
+      () => h.runner.activeSessionCount === 1,
+      "B's session removed",
+    );
+
+    // A のレーンには steer が来ていない
+    const commandsA = (await h.commandsLog("C01", a.id)).map((line) =>
+      JSON.parse(line),
+    );
+    expect(commandsA.map((cmd) => cmd.type)).toEqual(["prompt"]);
+
+    // A を畳んで後始末する
+    const wrapUp = message({
+      id: "1700000000.000900",
+      conversation: { channelId: "C01", threadTs: a.id },
+      mentionsBot: true,
+      text: "wrap up A",
+      metadata: { eventId: "Ev-no-affinity-wrapup" },
+    });
+    await h.runner.handle(wrapUp);
+    await waitFor(() => h.runner.activeSessionCount === 0, "lane A done");
+  });
+
+  it("終了時の pointer: セッション完走後、store.channels の affinity に endedAt が入っている", async () => {
+    const h = await harness({
+      C01: { session: { affinity: { scope: "channel" } } },
+    });
+    const a = message({ mentionsBot: true, text: "finish please" });
+
+    await h.runner.handle(a);
+    await waitFor(() => h.runner.activeSessionCount === 0, "lane A finished");
+
+    const state = await h.store.channels.get("C01");
+    expect(state?.affinity?.sessionKey).toBe(threadKeyOf(a));
+    expect(state?.affinity?.endedAt).toBeInstanceOf(Date);
+    expect(state?.affinity?.lastActiveAt).toBeInstanceOf(Date);
+  });
+
+  it("debounce との合成: scope=channel + debounceSec で、待機中レーンへの後続チャンネル直下投稿が合流し 1 セッションに束ねられる", async () => {
+    const h = await harness({
+      C01: {
+        trigger: { when: [{ kind: "passthrough" }] },
+        session: { affinity: { scope: "channel", debounceSec: 0.2 } },
+      },
+    });
+    const a = message({ text: "burst message A" });
+
+    await h.runner.handle(a);
+    // debounce 待機中はまだ kick されない
+    expect(h.runner.activeSessionCount).toBe(0);
+
+    await sleep(50); // debounceSec (200ms) 未満のうちに 2 通目を送る
+    const b = message({
+      id: "1700000000.000700",
+      text: "burst message B",
+      metadata: { eventId: "Ev-affinity-debounce-b" },
+    });
+    await h.runner.handle(b);
+    expect(h.runner.activeSessionCount).toBe(0);
+
+    await waitFor(
+      () => h.poster.calls.length === 1,
+      "reply posted after debounce",
+    );
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+
+    // A のレーンで 1 回だけ kick され、初回 prompt に A/B 両方が含まれる
+    const commands = (await h.commandsLog("C01", a.id)).map((line) =>
+      JSON.parse(line),
+    );
+    expect(commands.map((cmd) => cmd.type)).toEqual(["prompt"]);
+    expect(commands[0]?.message).toContain("burst message A");
+    expect(commands[0]?.message).toContain("burst message B");
   });
 });
 

@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { InboundMessage } from "../../../src/ingress/chat-event.js";
 import type {
+  ChannelSessionPointer,
   ChannelStateDoc,
   InboxItem,
   SessionDoc,
@@ -261,6 +262,76 @@ export function describeStateStoreContract(
         await harness.store.channels.put("C1", doc2);
 
         expect(await harness.store.channels.get("C1")).toEqual(doc2);
+      });
+
+      describe("putSessionPointer (affinity)", () => {
+        it("doc 未存在で putSessionPointer → get で enabled=true + affinity が返る", async () => {
+          const pointer: ChannelSessionPointer = {
+            sessionKey: "C1:1000.0",
+            lastActiveAt: new Date("2026-01-01T00:00:00.000Z"),
+          };
+          await harness.store.channels.putSessionPointer("C1", pointer);
+
+          const got = await harness.store.channels.get("C1");
+          expect(got?.enabled).toBe(true);
+          expect(got?.affinity).toEqual(pointer);
+          expect(got?.affinity?.lastActiveAt).toBeInstanceOf(Date);
+        });
+
+        it("put (toggle) → putSessionPointer → get で両方残る", async () => {
+          await harness.store.channels.put("C1", {
+            enabled: false,
+            updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+            updatedBy: "U1",
+          });
+          const pointer: ChannelSessionPointer = {
+            sessionKey: "C1:1000.0",
+            lastActiveAt: new Date("2026-01-01T00:00:05.000Z"),
+          };
+          await harness.store.channels.putSessionPointer("C1", pointer);
+
+          const got = await harness.store.channels.get("C1");
+          expect(got?.enabled).toBe(false);
+          expect(got?.updatedBy).toBe("U1");
+          expect(got?.affinity).toEqual(pointer);
+        });
+
+        it("putSessionPointer → put (toggle、affinity なしの doc を渡す) → get で affinity が残る", async () => {
+          const pointer: ChannelSessionPointer = {
+            sessionKey: "C1:1000.0",
+            lastActiveAt: new Date("2026-01-01T00:00:00.000Z"),
+          };
+          await harness.store.channels.putSessionPointer("C1", pointer);
+          await harness.store.channels.put("C1", {
+            enabled: false,
+            updatedAt: new Date("2026-01-01T00:00:10.000Z"),
+            updatedBy: "U2",
+          });
+
+          const got = await harness.store.channels.get("C1");
+          expect(got?.enabled).toBe(false);
+          expect(got?.updatedBy).toBe("U2");
+          expect(got?.affinity).toEqual(pointer);
+        });
+
+        it("putSessionPointer を endedAt 付き → endedAt なしで上書き → get で endedAt が消えている", async () => {
+          const withEnded: ChannelSessionPointer = {
+            sessionKey: "C1:1000.0",
+            lastActiveAt: new Date("2026-01-01T00:00:00.000Z"),
+            endedAt: new Date("2026-01-01T00:00:05.000Z"),
+          };
+          await harness.store.channels.putSessionPointer("C1", withEnded);
+
+          const withoutEnded: ChannelSessionPointer = {
+            sessionKey: "C1:1000.0",
+            lastActiveAt: new Date("2026-01-01T00:00:10.000Z"),
+          };
+          await harness.store.channels.putSessionPointer("C1", withoutEnded);
+
+          const got = await harness.store.channels.get("C1");
+          expect(got?.affinity).toEqual(withoutEnded);
+          expect(got?.affinity?.endedAt).toBeUndefined();
+        });
       });
     });
 

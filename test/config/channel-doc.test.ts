@@ -23,8 +23,8 @@ describe("ChannelDocSchema", () => {
           { kind: "classifier", criteria: "infra alert" },
           { kind: "passthrough" },
         ],
-        debounceSec: 30,
       },
+      session: { affinity: { debounceSec: 30 } },
       model: "google-vertex/gemini-3-pro",
     });
     expect(result.success).toBe(true);
@@ -68,6 +68,44 @@ describe("ChannelDocSchema", () => {
         when: [{ kind: "mention" }],
         allowBots: "yes",
       },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects trigger.debounceSec (moved to session.affinity.debounceSec)", () => {
+    const result = ChannelDocSchema.safeParse({
+      trigger: {
+        when: [{ kind: "mention" }],
+        debounceSec: 30,
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("accepts session.affinity with scope/windowSec/debounceSec", () => {
+    const result = ChannelDocSchema.safeParse({
+      session: {
+        mode: "thread",
+        affinity: {
+          scope: "channel",
+          windowSec: 600,
+          debounceSec: 30,
+        },
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects an unknown session.affinity.scope value", () => {
+    const result = ChannelDocSchema.safeParse({
+      session: { affinity: { scope: "global" } },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects unknown keys inside session.affinity (strict)", () => {
+    const result = ChannelDocSchema.safeParse({
+      session: { affinity: { unknownField: true } },
     });
     expect(result.success).toBe(false);
   });

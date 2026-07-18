@@ -127,13 +127,6 @@ function buildFields(
       value: formatWhen(doc.trigger.when),
       source: fieldSource(provenance.trigger, true),
     });
-    if (doc.trigger.debounceSec !== undefined) {
-      fields.push({
-        label: "trigger.debounceSec",
-        value: String(doc.trigger.debounceSec),
-        source: fieldSource(provenance.trigger, true),
-      });
-    }
     if (doc.trigger.allowBots !== undefined) {
       fields.push({
         label: "trigger.allowBots",
@@ -184,6 +177,27 @@ function buildFields(
     value: policy.sessionMode,
     source: fieldSource(provenance.session, doc.session?.mode !== undefined),
   });
+  if (doc.session?.affinity?.scope !== undefined) {
+    fields.push({
+      label: "session.affinity.scope",
+      value: doc.session.affinity.scope,
+      source: fieldSource(provenance.session, true),
+    });
+  }
+  if (doc.session?.affinity?.windowSec !== undefined) {
+    fields.push({
+      label: "session.affinity.windowSec",
+      value: String(doc.session.affinity.windowSec),
+      source: fieldSource(provenance.session, true),
+    });
+  }
+  if (doc.session?.affinity?.debounceSec !== undefined) {
+    fields.push({
+      label: "session.affinity.debounceSec",
+      value: String(doc.session.affinity.debounceSec),
+      source: fieldSource(provenance.session, true),
+    });
+  }
   if (doc.session?.idleResetMinutes !== undefined) {
     fields.push({
       label: "session.idleResetMinutes",
@@ -272,6 +286,27 @@ function formatJson(
       value: policy.sessionMode,
       source: fieldSource(provenance.session, doc.session?.mode !== undefined),
     },
+    "session.affinity.scope": {
+      value: doc.session?.affinity?.scope ?? null,
+      source: fieldSource(
+        provenance.session,
+        doc.session?.affinity?.scope !== undefined,
+      ),
+    },
+    "session.affinity.windowSec": {
+      value: doc.session?.affinity?.windowSec ?? null,
+      source: fieldSource(
+        provenance.session,
+        doc.session?.affinity?.windowSec !== undefined,
+      ),
+    },
+    "session.affinity.debounceSec": {
+      value: doc.session?.affinity?.debounceSec ?? null,
+      source: fieldSource(
+        provenance.session,
+        doc.session?.affinity?.debounceSec !== undefined,
+      ),
+    },
     "session.idleResetMinutes": {
       value: doc.session?.idleResetMinutes ?? null,
       source: fieldSource(
@@ -289,13 +324,6 @@ function formatJson(
     "reply.mode": {
       value: policy.replyMode,
       source: fieldSource(provenance.reply, doc.reply?.mode !== undefined),
-    },
-    "trigger.debounceSec": {
-      value: doc.trigger?.debounceSec ?? null,
-      source: fieldSource(
-        provenance.trigger,
-        doc.trigger?.debounceSec !== undefined,
-      ),
     },
     "trigger.allowBots": {
       value: doc.trigger?.allowBots ?? null,

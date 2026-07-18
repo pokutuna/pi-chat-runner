@@ -53,12 +53,34 @@ interface LeaseStore {
   release(lease: Lease): Promise<void>;
 }
 
+/** affinity 合流候補: チャンネルの直近セッションレーン (session-model.md §3「セッション合流」) */
+interface ChannelSessionPointer {
+  /** 直近レーンの sessionKey (thread モードでは channelId:threadTs) */
+  sessionKey: string;
+  /** レーン発生 (debounce 待機開始/kick)・steer 配達・turn 完了で更新 */
+  lastActiveAt: Date;
+  /** agent_end で set、次の kick で clear。undefined = 稼働中 (生死の真実は lease 側) */
+  endedAt?: Date;
+}
+
 /** チャンネル単位の有効/無効 (session-model.md §5)。doc 不在 = enabled */
 interface ChannelStateStore {
   get(channelId: string): Promise<ChannelStateDoc | null>;
+  /** enabled/updatedAt/updatedBy のみを書く (toggle 用)。affinity は無視し、
+   * store 済みの affinity は保持する */
   put(channelId: string, doc: ChannelStateDoc): Promise<void>;
+  /** affinity のみを pointer オブジェクト全体で置換する (endedAt なしの pointer を
+   * 書けば endedAt はクリアされる)。enabled/updatedAt/updatedBy は保持し、doc が
+   * 存在しなければ enabled: true, updatedAt: pointer.lastActiveAt で新規作成する */
+  putSessionPointer(channelId: string, pointer: ChannelSessionPointer): Promise<void>;
 }
 ```
+
+`put` と `putSessionPointer` は互いのフィールドを潰さない。toggle (`/enable` `/disable`)
+はチャンネル mute の意思決定、affinity はセッション合流の候補ポインタで、書き込み元が
+異なるため部分更新として設計している (Firestore は既存 doc を txn で読んでから
+enabled/updatedAt/updatedBy か affinity のどちらかだけを引き継いで書き直す。SQLite は
+doc が JSON 1 カラムなので read-modify-write でよい。単一プロセス前提の backend)。
 
 意味論はインタフェース側で固定し、実装差を隠す:
 

@@ -5,6 +5,7 @@
 // `now` をコンストラクタで注入可能にする。
 
 import type {
+  ChannelSessionPointer,
   ChannelStateDoc,
   ChannelStateStore,
   InboxItem,
@@ -126,7 +127,26 @@ class InMemoryChannelStateStore implements ChannelStateStore {
   }
 
   async put(channelId: string, doc: ChannelStateDoc): Promise<void> {
-    this.docs.set(channelId, { ...doc });
+    const current = this.docs.get(channelId);
+    this.docs.set(channelId, {
+      enabled: doc.enabled,
+      updatedAt: doc.updatedAt,
+      ...(doc.updatedBy !== undefined && { updatedBy: doc.updatedBy }),
+      ...(current?.affinity !== undefined && { affinity: current.affinity }),
+    });
+  }
+
+  async putSessionPointer(
+    channelId: string,
+    pointer: ChannelSessionPointer,
+  ): Promise<void> {
+    const current = this.docs.get(channelId);
+    this.docs.set(channelId, {
+      enabled: current?.enabled ?? true,
+      updatedAt: current?.updatedAt ?? pointer.lastActiveAt,
+      ...(current?.updatedBy !== undefined && { updatedBy: current.updatedBy }),
+      affinity: { ...pointer },
+    });
   }
 }
 
