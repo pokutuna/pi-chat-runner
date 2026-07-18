@@ -82,9 +82,10 @@ channels:
         - kind: mention
 
   - channel: "dm"
-    # Fallback for DMs. Without this entry, DMs default to passthrough (every
-    # DM triggers a session); `when: []` disables them entirely (also works
-    # on "default").
+    # Fallback for DMs (they do NOT inherit "default"). Without a "dm" entry
+    # DMs are disabled — this entry exists to opt them in, e.g.
+    # `when: [{kind: passthrough}]` to accept every DM. `when: []` (as shown)
+    # keeps them disabled explicitly.
     trigger:
       when: []
 

@@ -108,7 +108,7 @@ export function mergeWithProvenance(
 /** id からエントリを解決し、default (または DM は dm) + 固有エントリをマージした
  * ChannelDoc を返す (config.md §2.1, §6 実効設定)。ファイル参照のインライン化前の値。
  *
- * - id === DM_CHANNEL: 土台は dm エントリ。無ければ null (passthrough に落ちる、config.md §2.1)。
+ * - id === DM_CHANNEL: 土台は dm エントリ。無ければ null (コード既定 = disabled に落ちる、config.md §2.1)。
  * - それ以外: 土台は default エントリ。ChannelsFileSchema が存在を必須にしているため
  *   通常は必ず在るが、防御的に無ければ fail-loud で throw する。
  * - 固有エントリが無ければ土台単独 (全フィールドが土台由来の provenance) を返す。

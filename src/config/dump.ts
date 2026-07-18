@@ -137,7 +137,7 @@ function buildFields(
   } else {
     fields.push({
       label: "trigger.when",
-      value: isDm ? "passthrough" : "mention",
+      value: isDm ? "disabled" : "mention",
       source: "code default",
     });
   }
@@ -345,7 +345,7 @@ function formatJson(
 
 /** channelId の実効設定 (default/dm + channel をマージした ChannelDoc) を
  * provenance 付きで整形する (config.md §6)。resolveChannelConfig が null を返す
- * ケース (DM で dm エントリが無い等) は passthrough 相当の注記を出す。 */
+ * ケース (DM で dm エントリが無い等) はコード既定 (DM は disabled) の注記を出す。 */
 export function formatEffectiveConfig(
   file: ChannelsFile,
   channelId: string,
@@ -360,8 +360,8 @@ export function formatEffectiveConfig(
         {
           channel: channelId,
           isDm,
-          passthrough: true,
-          note: "no entry; falls back to code default (mention trigger, or passthrough for dm)",
+          codeDefault: true,
+          note: "no entry; falls back to code default (mention trigger, or disabled for dm)",
         },
         null,
         2,
@@ -369,7 +369,7 @@ export function formatEffectiveConfig(
     }
     return [
       `channel: ${channelId}${isDm ? " (dm)" : ""}`,
-      `  (no "${isDm ? DM_CHANNEL : DEFAULT_CHANNEL}" entry; passthrough — falls back to code default)`,
+      `  (no "${isDm ? DM_CHANNEL : DEFAULT_CHANNEL}" entry; falls back to code default: ${isDm ? "disabled" : "mention trigger"})`,
     ].join("\n");
   }
 

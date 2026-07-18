@@ -44,7 +44,7 @@ Chat (e.g. Slack)
 
 | Directory | Role |
 |---|---|
-| `src/ingress/` | Platform-neutral abstractions + Slack implementation under `slack/` |
+| `src/ingress/` | Platform-neutral abstractions + implementations: Slack under `slack/`, stdin/stdout REPL for local dev under `local/` |
 | `src/gate/` | Trigger Gate abstraction + implementations under `gates/` |
 | `src/config/` | Channel configuration (YAML) loading and schema |
 | `src/classifier/` | LLM client backing the classifier Gate |
@@ -59,6 +59,7 @@ Chat (e.g. Slack)
 | `examples/slack-app-manifest.socket.yaml` | Slack App manifest template, Socket Mode |
 | `examples/slack-app-manifest.http.yaml` | Slack App manifest template, Events API |
 | `examples/gc-logging-agent/` | Sample extension image (`FROM` the base image) adding gcloud/duckdb/uv and a logging-investigation skill |
+| `examples/smart-fetch-agent/` | Sample extension image adding the `pi-smart-fetch` extension (URL fetch + summarize) for one channel |
 | `develop/` | This repo's own local dev tooling: `compose.yaml`, `drive-pi.ts` |
 
 A real deployment (your own Slack App, your own Cloud Run service) lives in a separate repo that extends the base image with `FROM` and fills in the `examples/` templates with real values — see [docs/design/session-runtime.md](docs/design/session-runtime.md) §5.
@@ -162,17 +163,7 @@ One YAML file, pointed at by `CONFIG_PATH` (default `examples/config/agent.yaml`
 - **`connector` / `store` / `agent` sections** — bridge-wide, read once at boot: Slack connector (mode/tokens), store backend, agent turn timeout and runtime (UID separation, env passthrough to the pi child process). These sections support `${env.X}` / `${env.X:-default}` references to pull values from the process environment (secrets included).
 - **`channels` section** — per-channel behavior, re-read on every message (no restart needed): trigger gates, `systemPrompt`, `model` (pi's `provider/model-id[:thinking-level]` shorthand; the provider prefix is required), `tools`/`excludeTools`, session mode, and per-channel `skills`/`extensions` (paths to image-baked skills/extensions, loaded in addition to the common ones under `$AGENT_HOME/.pi/agent/`). An array listing all channels, with a required `default` entry as the fallback. `systemPrompt`/`context` values starting with `./` are read as files relative to the config file's directory; relative `skills`/`extensions` paths resolve from there too.
 
-See [`examples/config/agent.yaml`](examples/config/agent.yaml) for an annotated template. Full schema and semantics: [docs/design/config.md](docs/design/config.md).
-
-## Local Development
-
-```sh
-pnpm install
-pnpm run dev:socket   # local dev, Socket Mode
-pnpm run dev          # Events API
-```
-
-Set Slack credentials in `.env.socket` or `.env`. See [Configuration](#configuration) above for `agent.yaml`; a `channels` section excerpt:
+A `channels` section excerpt:
 
 ```yaml
 channels:
@@ -211,6 +202,41 @@ channels:
 ```
 
 DB defaults to in-memory (`store.backend: memory` in `agent.yaml`); set it to `sqlite` (default path `/tmp/pi-chat-runner/state.db`) or `firestore` for persistence. Workdir archival defaults to no-op unless `archiveDir` is set. See [docs/design/persistence.md](docs/design/persistence.md).
+
+See [`examples/config/agent.yaml`](examples/config/agent.yaml) for an annotated template. Full schema and semantics: [docs/design/config.md](docs/design/config.md).
+
+To see what a channel's merged (default/dm + channel entry) config actually resolves to, run `node dist/server.mjs dump <channelId> [--json]` — it prints each field with its provenance, without starting the bot.
+
+## Local Development
+
+```sh
+pnpm install
+pnpm run dev:local    # REPL against the real pipeline, no Slack needed — start here
+pnpm run dev:socket   # real Slack, Socket Mode
+pnpm run dev          # real Slack, Events API
+```
+
+### Without Slack: `dev:local`
+
+`dev:local` runs the whole pipeline — gate → inbox → session (real pi) → egress — against a stdin/stdout REPL. No Slack App or tokens required; put only the model credentials (e.g. `GOOGLE_CLOUD_PROJECT`) in `.env.local`. Config is read from `CONFIG_PATH` as usual: the `connector` section is ignored, and `channels`/`store`/`agent` apply as-is, so passing a real channel ID (`node dist/server.mjs local C0123456789`) exercises that channel's production config. The default channel ID is `local` — the example `agent.yaml` ships a matching entry.
+
+```
+#local U_LOCAL> @bot investigate this alert
+[1 1752800000.000001] you: @bot investigate this alert
+⟵ [2 1752800000.000002] (thread of [1]) bot:
+   Looking into it ...
+#local U_LOCAL> >1 any update?     (reply in [1]'s thread — N is the number shown as [N])
+#local U_LOCAL> !react 1 eyes      (put an emoji reaction on [1])
+#local U_LOCAL> !help              (full grammar: switch channel/user, DM mode, ...)
+```
+
+Chat commands (`@bot /new` etc.) flow through as normal message text. Full grammar and design: [docs/design/local-dev.md](docs/design/local-dev.md).
+
+### Against real Slack
+
+Set Slack credentials in `.env.socket` (Socket Mode) or `.env` (Events API); create the Slack App from the `examples/slack-app-manifest.*.yaml` templates. What only real Slack can verify — actual mrkdwn rendering, file uploads, rate limits — needs this layer.
+
+### Checks
 
 ```sh
 pnpm test

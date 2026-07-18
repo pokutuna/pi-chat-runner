@@ -67,7 +67,7 @@ describe("formatEffectiveConfig", () => {
     expect(out).toMatch(/reply\.mode:\s+flat\s+← code default/);
   });
 
-  it("formats DM passthrough (no dm entry) in pretty mode", () => {
+  it("formats DM code default (no dm entry) as disabled in pretty mode", () => {
     const file = ChannelsFileSchema.parse({
       channels: [{ channel: "default", systemPrompt: "default prompt" }],
     });
@@ -75,10 +75,10 @@ describe("formatEffectiveConfig", () => {
     const out = formatEffectiveConfig(file, "dm", { json: false });
 
     expect(out).toContain("channel: dm (dm)");
-    expect(out).toMatch(/passthrough/);
+    expect(out).toMatch(/disabled/);
   });
 
-  it("formats DM passthrough (no dm entry) in json mode", () => {
+  it("formats DM code default (no dm entry) in json mode", () => {
     const file = ChannelsFileSchema.parse({
       channels: [{ channel: "default", systemPrompt: "default prompt" }],
     });
@@ -88,7 +88,8 @@ describe("formatEffectiveConfig", () => {
 
     expect(payload.channel).toBe("dm");
     expect(payload.isDm).toBe(true);
-    expect(payload.passthrough).toBe(true);
+    expect(payload.codeDefault).toBe(true);
+    expect(payload.note).toMatch(/disabled for dm/);
   });
 
   it("formats a normal channel in json mode with fields and when tree", () => {
