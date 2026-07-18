@@ -88,6 +88,16 @@ channels:
     trigger:
       when: []
 
+  - channel: "local"
+    # Used by `node dist/server.mjs local` / `pnpm run dev:local`
+    # (docs/design/local-dev.md) when no channelId argument is given. Not a
+    # reserved name like "default"/"dm" — it's just the code's default
+    # channelId for local mode, so a plain "mention" trigger is enough to
+    # exercise the pipeline against the REPL.
+    trigger:
+      when:
+        - kind: mention
+
   - channel: "C0000000001" # REPLACE: your channel ID
     # General-purpose assistant, mention-triggered.
     systemPrompt: ./prompts/ask-ai.md

@@ -169,6 +169,7 @@ Mitigations:
 - [shared.md](shared.md) — チャンネル単位の共有永続ディレクトリ (セッションを越えた蓄積、skills 自動配線)
 - [memory.md](memory.md) — 組み込み memory skill (MEMORY.md + 1 事実 1 ファイルのチャンネル記憶)
 - [progress-notice.md](progress-notice.md) — 長時間ターンの進捗通知 (chat.update によるスナップショット表示)
+- [local-dev.md](local-dev.md) — ローカル開発コネクタ (local mode)。stdin/stdout で全パイプラインを実配線で動かす
 - [../initial-scope.md](../initial-scope.md) — 初期版スコープの決定事項
 - [../research/hermes-chat-modeling.md](../research/hermes-chat-modeling.md) / [../research/hermes-session-model.md](../research/hermes-session-model.md) / [../research/pi-session-model.md](../research/pi-session-model.md) — as-is 実装調査
 

@@ -45,8 +45,10 @@ export interface BridgeOptions {
   /** 受信の入口 (Socket Mode / Events API / 呼び出し側独自の実装)。ライブラリ利用の
    * 本命 seam — 別の Slack app 実装から独自 Ingress を差し込める。 */
   eventSource: Ingress;
-  /** 返信投稿 (chat.postMessage) と reaction (reactions.add) に使う。 */
-  web: WebClient;
+  /** 返信投稿 (chat.postMessage) と reaction (reactions.add) に使う。省略可 —
+   * 省略時は poster/reactions/userResolver/fetchMessage の 4 点すべての注入が必須
+   * (local mode 等、Slack を介さない構成のための seam。docs/design/local-dev.md §2)。 */
+  web?: WebClient;
   store: StateStore;
   configSource: ConfigSource;
   turnTimeoutMs?: number;
@@ -77,6 +79,9 @@ export interface BridgeOptions {
   reactions?: Reactions;
   /** UserID → 表示名解決の注入口。省略時は web (WebClient) の users.info から内部構築する。 */
   userResolver?: UserResolver;
+  /** reaction トリガーの対象メッセージ本文取得の注入口。省略時は web (WebClient) の
+   * conversations.replies から内部構築する。 */
+  fetchMessage?: FetchMessage;
   /** workdir の保存先の注入口。省略時は archiveDir があれば CopyWorkdirStorage を、
    * なければ境界退避なしで内部構築する。指定時は archiveDir より優先される。 */
   workdirStorage?: WorkdirStorage;
@@ -91,12 +96,34 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
   const logger = options.logger ?? rootLogger.child({ component: "server" });
   const { web, eventSource, store, configSource } = options;
 
+  // web (WebClient) 省略時は poster/reactions/userResolver/fetchMessage の 4 点すべてが
+  // 内部構築の代わりを果たす必要がある。1 つでも欠けていれば、どれが欠けているか
+  // 分かるメッセージで fail-loud する (local mode 等、Slack を介さない構成のための seam。
+  // docs/design/local-dev.md §2)
+  if (web === undefined) {
+    const missing = (
+      [
+        ["poster", options.poster],
+        ["reactions", options.reactions],
+        ["userResolver", options.userResolver],
+        ["fetchMessage", options.fetchMessage],
+      ] as const
+    )
+      .filter(([, value]) => value === undefined)
+      .map(([name]) => name);
+    if (missing.length > 0) {
+      throw new Error(
+        `startBridge: web is undefined, so poster/reactions/userResolver/fetchMessage must all be injected. missing: ${missing.join(", ")}`,
+      );
+    }
+  }
+
   // メッセージ描画時の UserID → 表示名解決 (renderEvent / mention 展開)。
   // 注入があればそれを使い、なければ web (WebClient) の users.info から内部構築する
   const resolver: UserResolver =
     options.userResolver ??
     new SlackUserResolver({
-      usersInfo: (userId) => web.users.info({ user: userId }),
+      usersInfo: (userId) => web!.users.info({ user: userId }),
     });
 
   // 注入があればそれを使い、なければ web (WebClient) から内部構築する。files 指定時は
@@ -107,7 +134,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
   const poster: ChatPoster = options.poster ?? {
     async postMessage(channelId, text, threadTs, files) {
       if (files !== undefined && files.length > 0) {
-        await web.files.uploadV2({
+        await web!.files.uploadV2({
           channel_id: channelId,
           ...(threadTs !== undefined ? { thread_ts: threadTs } : {}),
           ...(text ? { initial_comment: text } : {}),
@@ -118,7 +145,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
         });
         return { messageId: "" };
       }
-      const res = await web.chat.postMessage({
+      const res = await web!.chat.postMessage({
         channel: channelId,
         text,
         ...(threadTs !== undefined ? { thread_ts: threadTs } : {}),
@@ -126,36 +153,39 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
       return { messageId: res.ts ?? "" };
     },
     async updateMessage(channelId, messageId, text) {
-      await web.chat.update({ channel: channelId, ts: messageId, text });
+      await web!.chat.update({ channel: channelId, ts: messageId, text });
     },
   };
   const reactions =
     options.reactions ??
     new Reactions({
-      add: (args) => web.reactions.add(args),
+      add: (args) => web!.reactions.add(args),
     });
   // reaction トリガーの対象メッセージ本文取得 (session-model.md §5「人間による
-  // リアクション起動」)。conversations.replies は ts が親でもスレッド返信でも、
-  // その ts のメッセージ自身を先頭で返す
-  const fetchMessage: FetchMessage = async (channelId, ts) => {
-    try {
-      const res = await web.conversations.replies({
-        channel: channelId,
-        ts,
-        limit: 1,
-      });
-      const msg = res.messages?.[0];
-      if (msg?.text === undefined) return null;
-      return {
-        text: msg.text,
-        ...(msg.thread_ts !== undefined ? { threadTs: msg.thread_ts } : {}),
-        ...(msg.user !== undefined ? { userId: msg.user } : {}),
-      };
-    } catch (err) {
-      logger.warn({ err, channelId, ts }, "fetchMessage failed");
-      return null;
-    }
-  };
+  // リアクション起動」)。注入があればそれを使い、なければ web (WebClient) の
+  // conversations.replies から内部構築する。conversations.replies は ts が親でも
+  // スレッド返信でも、その ts のメッセージ自身を先頭で返す
+  const fetchMessage: FetchMessage =
+    options.fetchMessage ??
+    (async (channelId, ts) => {
+      try {
+        const res = await web!.conversations.replies({
+          channel: channelId,
+          ts,
+          limit: 1,
+        });
+        const msg = res.messages?.[0];
+        if (msg?.text === undefined) return null;
+        return {
+          text: msg.text,
+          ...(msg.thread_ts !== undefined ? { threadTs: msg.thread_ts } : {}),
+          ...(msg.user !== undefined ? { userId: msg.user } : {}),
+        };
+      } catch (err) {
+        logger.warn({ err, channelId, ts }, "fetchMessage failed");
+        return null;
+      }
+    });
   // workdirStorage 注入があれば archiveDir より優先する
   const workdirStorage =
     options.workdirStorage ?? createWorkdirStorage(options.archiveDir);

@@ -1,0 +1,10 @@
+channels:
+  - channel: "default"
+    trigger:
+      when:
+        - kind: mention
+  - channel: "C0000000001"
+    trigger:
+      when:
+        - kind: reaction
+          emoji: ["eyes"]

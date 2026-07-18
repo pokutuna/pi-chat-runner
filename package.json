@@ -29,6 +29,7 @@
     "build": "tsdown",
     "dev": "tsx watch --env-file-if-exists=.env src/server.ts",
     "dev:socket": "tsx watch --env-file-if-exists=.env.socket src/server.ts",
+    "dev:local": "tsx --env-file-if-exists=.env.local src/server.ts local",
     "test": "vitest run",
     "typecheck": "tsc --noEmit",
     "lint": "oxlint . && oxfmt --check .",

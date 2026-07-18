@@ -24,6 +24,7 @@ pnpm exec vitest run -t "some test name"           # single test by name
 pnpm run typecheck                                 # tsc --noEmit
 pnpm run lint                                      # oxlint . && oxfmt --check .
 pnpm run dev:socket                                # local dev, Slack Socket Mode (.env.socket)
+pnpm run dev:local                                 # local dev, stdin/stdout REPL, no Slack (.env.local)
 ```
 
 After editing a file, run `pnpm exec oxfmt --write <file>` — oxfmt enforces 2-space indentation and import order, and a plain edit commonly leaves unsorted exports.
