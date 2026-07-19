@@ -218,18 +218,18 @@ pnpm run dev          # real Slack, Events API
 
 ### Without Slack: `dev:local`
 
-`dev:local` runs the whole pipeline — gate → inbox → session (real pi) → egress — against a terminal UI ([ink](https://github.com/vadimdemedes/ink)) split left/right into a log pane (structured pino logs) and a chat pane (conversation + input), keeping the two readable instead of interleaving on one stdout. Each pane tails its latest output; arrow keys / PageUp-Down scroll back and Tab switches which pane scrolls. No Slack App or tokens required; put only the model credentials (e.g. `GOOGLE_CLOUD_PROJECT`) in `.env.local`. Config is read from `CONFIG_PATH` as usual: the `connector` section is ignored, and `channels`/`store`/`agent` apply as-is, so passing a real channel ID (`node dist/server.mjs local C0123456789`) exercises that channel's production config. The default channel ID is `local` — the example `agent.yaml` ships a matching entry.
+`dev:local` runs the whole pipeline — gate → inbox → session (real pi) → egress — against a terminal UI ([ink](https://github.com/vadimdemedes/ink)) split top/bottom into a log pane (structured pino logs; pi-agent events are tagged `[pi]`, runner components `[session]` etc.) and a chat pane (conversation + input), keeping the two readable instead of interleaving on one stdout. Each pane tails its latest output; arrow keys / C-p C-n / PageUp-Down scroll the focused pane (Tab cycles focus, the focused pane is marked `*`), and the mouse wheel scrolls the pane under the cursor. No Slack App or tokens required; put only the model credentials (e.g. `GOOGLE_CLOUD_PROJECT`) in `.env.local`. Config is read from `CONFIG_PATH` as usual: the `connector` section is ignored, and `channels`/`store`/`agent` apply as-is, so passing a real channel ID (`node dist/server.mjs local C0123456789`) exercises that channel's production config. The default channel ID is `local` — the example `agent.yaml` ships a matching entry.
 
 Chat pane interaction (log pane omitted for brevity):
 
 ```
-#local U_LOCAL> @bot investigate this alert
-[1 1752800000.000001] you: @bot investigate this alert
-⟵ [2 1752800000.000002] (thread of [1]) bot:
+#local you> @bot investigate this alert
+[1] you: @bot investigate this alert
+[2]↳1 bot:
    Looking into it ...
-#local U_LOCAL> >1 any update?     (reply in [1]'s thread — N is the number shown as [N])
-#local U_LOCAL> !react 1 eyes      (put an emoji reaction on [1])
-#local U_LOCAL> !help              (full grammar: switch channel/user, DM mode, ...)
+#local you> >1 any update?     (reply in [1]'s thread — N is the number shown as [N])
+#local you> !react 1 eyes      (put an emoji reaction on [1])
+#local you> !help              (full grammar: switch channel/user, DM mode, ...)
 ```
 
 Chat commands (`@bot /new` etc.) flow through as normal message text. Full grammar and design: [docs/design/local-dev.md](docs/design/local-dev.md).

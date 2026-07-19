@@ -67,8 +67,8 @@ describe("parseLine", () => {
     });
   });
 
-  it(">数字.数字 text を生 ts 参照のスレッド返信として扱う", () => {
-    expect(parseLine(">1700000000.000099 続報です")).toEqual({
+  it(">ts:X text を生 ts 参照のスレッド返信として扱う", () => {
+    expect(parseLine(">ts:1700000000.000099 続報です")).toEqual({
       kind: "post",
       text: "続報です",
       mentionsBot: false,
@@ -86,7 +86,7 @@ describe("parseLine", () => {
   });
 
   it(">生ts @bot text もスレッド返信 + mention として扱う", () => {
-    expect(parseLine(">1700000000.000099 @bot 助けて")).toEqual({
+    expect(parseLine(">ts:1700000000.000099 @bot 助けて")).toEqual({
       kind: "post",
       text: "助けて",
       mentionsBot: true,
@@ -134,7 +134,7 @@ describe("parseLine", () => {
   });
 
   it("!react は生 ts も参照できる", () => {
-    expect(parseLine("!react 1700000000.000099 :eyes:")).toEqual({
+    expect(parseLine("!react ts:1700000000.000099 :eyes:")).toEqual({
       kind: "react",
       target: { kind: "ts", ts: "1700000000.000099" },
       emoji: "eyes",

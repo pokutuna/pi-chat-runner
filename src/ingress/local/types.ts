@@ -18,7 +18,8 @@ import type { UserResolver } from "../user-resolver.js";
 export interface LoggedMessage {
   /** `[N]` 表示・参照用の連番 (1 始まり、人間/bot 通し)。 */
   seq: number;
-  /** Slack 互換の `<epochSec>.<6桁連番>`。単調増加。 */
+  /** ログ連番 seq の文字列表現 ("1", "2", …)。表示の `[N]` と同一で、
+   * sessionKey (`local:3`) との突合が容易。 */
   ts: string;
   channelId: string;
   threadTs?: string;
@@ -28,6 +29,8 @@ export interface LoggedMessage {
   sender: Sender;
   /** poster.postMessage の files (パスの記録のみ。アップロードはしない)。 */
   files?: string[];
+  /** 人間 post 時の bot mention。表示で `@bot` を復元するための記録。 */
+  mentionsBot?: boolean;
 }
 
 export interface PostOptions {

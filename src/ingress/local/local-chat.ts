@@ -30,23 +30,6 @@ const DEFAULT_CHANNEL_ID = "local";
 const DEFAULT_BOT_USER_ID = "U_BOT";
 const DEFAULT_SENDER_ID = "U_LOCAL";
 
-/** ts 払い出し (Slack 互換 `<epochSec>.<6桁連番>`)。連番はプロセス内で単調増加し
- * 同一秒内でも一意にする。epochSec 側も前回値を覚えておき `Math.max(now, last)`
- * を使うことで、壁時計が巻き戻っても (NTP 補正等) ts 全体の文字列比較順序が
- * 必ず前回より大きくなるようにする。 */
-class TsSequencer {
-  private counter = 0;
-  private lastEpochSec = 0;
-
-  next(): string {
-    this.counter += 1;
-    const now = Math.floor(Date.now() / 1000);
-    this.lastEpochSec = Math.max(now, this.lastEpochSec);
-    const seq = String(this.counter).padStart(6, "0");
-    return `${this.lastEpochSec}.${seq}`;
-  }
-}
-
 export function createLocalChat(options?: LocalChatOptions): LocalChat {
   const defaultChannelId = options?.defaultChannelId ?? DEFAULT_CHANNEL_ID;
   const botUserId = options?.botUserId ?? DEFAULT_BOT_USER_ID;
@@ -59,7 +42,6 @@ export function createLocalChat(options?: LocalChatOptions): LocalChat {
   const log: LoggedMessage[] = [];
   const reactionsLog: ReactionRecord[] = [];
   const events = new EventEmitter<LocalChatOutputEvents>();
-  const tsSequencer = new TsSequencer();
 
   let onEvent: ((e: ChatEvent, ack: Ack) => Promise<void>) | undefined;
   // start() 前に post/react された ChatEvent はここに溜め、start 時に順に流す。
@@ -97,9 +79,10 @@ export function createLocalChat(options?: LocalChatOptions): LocalChat {
 
   const poster: ChatPoster = {
     async postMessage(channelId, text, threadTs, files) {
-      const ts = tsSequencer.next();
+      const seq = log.length + 1;
+      const ts = String(seq);
       const message: LoggedMessage = {
-        seq: log.length + 1,
+        seq,
         ts,
         channelId,
         ...(threadTs !== undefined ? { threadTs } : {}),
@@ -164,7 +147,8 @@ export function createLocalChat(options?: LocalChatOptions): LocalChat {
     postOptions?: PostOptions,
   ): Promise<LoggedMessage> {
     const channelId = postOptions?.channelId ?? defaultChannelId;
-    const ts = tsSequencer.next();
+    const seq = log.length + 1;
+    const ts = String(seq);
     const senderId = postOptions?.sender?.id ?? DEFAULT_SENDER_ID;
     const senderDisplayName = displayNames[senderId];
     const sender: Sender = {
@@ -176,7 +160,7 @@ export function createLocalChat(options?: LocalChatOptions): LocalChat {
         : {}),
     };
     const message: LoggedMessage = {
-      seq: log.length + 1,
+      seq,
       ts,
       channelId,
       ...(postOptions?.threadTs !== undefined
@@ -185,6 +169,7 @@ export function createLocalChat(options?: LocalChatOptions): LocalChat {
       ...(postOptions?.isDm !== undefined ? { isDm: postOptions.isDm } : {}),
       text,
       sender,
+      ...(postOptions?.mentionsBot === true ? { mentionsBot: true } : {}),
     };
     log.push(message);
     events.emit("message", message);

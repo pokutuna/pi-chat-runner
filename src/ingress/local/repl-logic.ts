@@ -11,7 +11,8 @@ import type { LoggedMessage, LocalChat, ReactionRecord } from "./types.js";
 
 // ── 1. 行パーサ ──────────────────────────────────────────────────────────
 
-/** スレッド参照。数字のみ = ログ上の seq 番号、`数字.数字` = 生の ts (local-dev.md §3)。 */
+/** スレッド参照。数字のみ = ログ上の seq 番号、`ts:X` = 未観測 ts の生指定
+ * (local-dev.md §3)。 */
 export type ThreadRef =
   | { kind: "seq"; seq: number }
   | { kind: "ts"; ts: string };
@@ -87,13 +88,14 @@ export type ParsedLine =
   | ParsedQuit
   | ParsedHelp;
 
-/** `数字のみ` = seq、`数字.数字` = 生 ts として ThreadRef を作る。どちらでもなければ null。 */
+/** `数字のみ` = seq、`ts:X` = 未観測 ts の生指定として ThreadRef を作る。
+ * どちらでもなければ null。 */
 function parseThreadRef(token: string): ThreadRef | null {
   if (/^\d+$/.test(token)) {
     return { kind: "seq", seq: Number(token) };
   }
-  if (/^\d+\.\d+$/.test(token)) {
-    return { kind: "ts", ts: token };
+  if (token.startsWith("ts:") && token.slice(3) !== "") {
+    return { kind: "ts", ts: token.slice(3) };
   }
   return null;
 }
@@ -139,7 +141,7 @@ function parseThreadReply(trimmed: string): ParsedLine {
   if (thread === null) {
     return {
       kind: "error",
-      message: `invalid thread reference (expected a number or number.number): ${refToken}`,
+      message: `invalid thread reference (expected a number or ts:<raw-ts>): ${refToken}`,
     };
   }
 
@@ -166,14 +168,14 @@ function parseMeta(trimmed: string): ParsedLine {
       if (targetToken === undefined || emojiToken === undefined) {
         return {
           kind: "error",
-          message: "usage: !react <N|ts> <emoji>",
+          message: "usage: !react <N|ts:X> <emoji>",
         };
       }
       const target = parseThreadRef(targetToken);
       if (target === null) {
         return {
           kind: "error",
-          message: `invalid reference (expected a number or number.number): ${targetToken}`,
+          message: `invalid reference (expected a number or ts:<raw-ts>): ${targetToken}`,
         };
       }
       return { kind: "react", target, emoji: stripEmojiColons(emojiToken) };
@@ -206,13 +208,13 @@ function parseMeta(trimmed: string): ParsedLine {
     case "!t": {
       const token = parts[1];
       if (token === undefined) {
-        return { kind: "error", message: "usage: !thread <N|ts>" };
+        return { kind: "error", message: "usage: !thread <N|ts:X>" };
       }
       const target = parseThreadRef(token);
       if (target === null) {
         return {
           kind: "error",
-          message: `invalid reference (expected a number or number.number): ${token}`,
+          message: `invalid reference (expected a number or ts:<raw-ts>): ${token}`,
         };
       }
       return { kind: "thread", target };
@@ -229,20 +231,23 @@ function parseMeta(trimmed: string): ParsedLine {
 }
 
 export const HELP_TEXT = `\
-Syntax (N = seq or raw ts):
-  text               post to current channel
-  @bot text          post with a bot mention
-  >N text            reply in thread of N
-  >N @bot text       thread reply + mention
-  !thread <N|ts>     enter thread (alias !t); posts go there
-  !leave             leave thread, back to channel
-  !react <N|ts> <e>  react (e: eyes or :eyes:)
-  !channel <id>      switch posting channel
-  !dm on|off         toggle conversation.isDm
-  !user <id> [--bot] switch sender (--bot=isBot)
-  !quit              quit (Ctrl-D too)
-  !help              show this list
-Scroll: arrows/PageUp-Down, Tab switches pane`;
+Display: [N] = message number, ↳N = thread (e.g. [4]↳2 = [4] is a reply in thread of [2])
+Syntax (N = message number [N]):
+  text                post to current channel
+  @bot text           post with a bot mention (Tab completes @bot)
+  >N text             reply in thread of N
+  >N @bot text        thread reply + mention
+  >ts:X text          reply to unobserved raw ts X
+  !thread <N|ts:X>    enter thread (alias !t); posts go there
+  !leave              leave thread, back to channel
+  !react <N|ts:X> <e> react (e: eyes or :eyes:)
+  !channel <id>       switch posting channel
+  !dm on|off          toggle conversation.isDm
+  !user <id> [--bot]  switch sender (--bot=isBot)
+  !quit               quit (Ctrl-D too)
+  !help               show this list
+Focus: Tab cycles input/log/chat (focused pane marked *), Esc returns to input
+Scroll: arrows / C-p C-n / PageUp-Down on the focused pane, mouse wheel on any pane`;
 
 // ── 2. REPL 状態と行ハンドラ ─────────────────────────────────────────────
 
@@ -255,7 +260,7 @@ export interface ReplState {
    * seq 参照のラベルは表示用に thread も併せ持つ ({@link threadSeq})。 */
   threadTs?: string;
   /** プロンプト表示用: 入っているスレッドの seq (ログにあれば)。ts のみ参照
-   * (`!thread 123.456`) で入った場合は undefined。 */
+   * (`!thread ts:123.456`) で入った場合は undefined。 */
   threadSeq?: number;
 }
 
@@ -269,18 +274,18 @@ export function initialReplState(initialChannelId: string): ReplState {
 }
 
 export function promptText(state: ReplState): string {
-  const parts = [`#${state.channelId}`];
-  if (state.isDm) parts.push("dm");
-  parts.push(state.isBot ? `${state.userId}(bot)` : state.userId);
-  if (state.threadTs !== undefined) {
-    // スレッド内にいることを明示 (seq が分かればそれを、なければ ts 末尾)
-    const label =
-      state.threadSeq !== undefined
-        ? `[${state.threadSeq}]`
-        : `[${state.threadTs}]`;
-    parts.push(`thread:${label}`);
-  }
-  return `${parts.join(" ")}> `;
+  const channel = state.isDm
+    ? `#${state.channelId}(dm)`
+    : `#${state.channelId}`;
+  // 既定ユーザー U_LOCAL はチャット行の表示名 (userResolver の固定マップ) と揃えて
+  // you と出す。
+  const name = state.userId === "U_LOCAL" ? "you" : state.userId;
+  const user = state.isBot ? `${name}(bot)` : name;
+  const thread =
+    state.threadTs !== undefined
+      ? ` ↳[${state.threadSeq ?? state.threadTs}]`
+      : "";
+  return `${channel} ${user}${thread}> `;
 }
 
 /** ログ中の seq → ts の逆引き。見つからなければ undefined。 */
@@ -436,30 +441,28 @@ export function formatMessageLine(
   chat: LocalChat,
   msg: LoggedMessage,
 ): FormattedLine {
-  const header = `[${msg.seq} ${msg.ts}]`;
+  const header = `[${msg.seq}]`;
   const who = displayName(msg.sender);
   const threadSuffix =
     msg.threadTs !== undefined
       ? (() => {
           const seq = seqForTs(chat, msg.threadTs as string);
-          return ` (thread of [${seq !== undefined ? seq : msg.threadTs}])`;
+          return `↳${seq !== undefined ? seq : msg.threadTs}`;
         })()
       : "";
-  const body = `${header}${threadSuffix} ${who}: ${msg.text}`;
+  const mentionPrefix = msg.mentionsBot === true ? "@bot " : "";
+  const body = `${header}${threadSuffix} ${who}: ${mentionPrefix}${msg.text}`;
   const filesSuffix =
     msg.files !== undefined && msg.files.length > 0
       ? `\n${msg.files.map((f) => `   file: ${f}`).join("\n")}`
       : "";
 
-  if (msg.sender.isSelf) {
-    return { text: `⟵ ${body}${filesSuffix}`, isSelf: true };
-  }
-  return { text: `${body}${filesSuffix}`, isSelf: false };
+  return { text: `${body}${filesSuffix}`, isSelf: msg.sender.isSelf };
 }
 
 export function formatUpdateLine(msg: LoggedMessage): FormattedLine {
   return {
-    text: `⟵ (update [${msg.seq}]) ${displayName(msg.sender)}: ${msg.text}`,
+    text: `[${msg.seq}]↺ ${displayName(msg.sender)}: ${msg.text}`,
     isSelf: true,
   };
 }
@@ -470,5 +473,5 @@ export function formatReactionLine(
 ): FormattedLine {
   const seq = seqForTs(chat, record.ts);
   const target = seq !== undefined ? `[${seq}]` : record.ts;
-  return { text: `⟵ :${record.emoji}: on ${target}`, isSelf: true };
+  return { text: `:${record.emoji}: on ${target}`, isSelf: true };
 }

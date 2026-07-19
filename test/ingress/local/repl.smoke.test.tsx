@@ -11,7 +11,11 @@
 // 直列化・EOF 待ち・チャンネル越境reply の3ケースは repl-logic.test.ts の
 // handleLine 単体テストとして再現済みなので、ここでは「起動して HELP_TEXT
 // が見える」「1行投稿してチャットペインに反映される」「!quit で終了する」
-// という画面描画の最小疎通のみを確認する。
+// という画面描画の最小疎通に加え、フォーカスマーカー (タイトルの ` *`) と
+// ペインスクロール (Ctrl-P で末尾行が画面から消える) の回帰確認を行う。
+// スクロールの確認には options.input の PassThrough に isTTY = true を
+// 立てて ink の useInput 経路 (isRawModeSupported 判定) を有効化する手法を
+// 使う (ink-testing-library の render().stdin.write でキー入力を送れる)。
 
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
@@ -220,7 +224,133 @@ describe("App (ink smoke test)", () => {
     );
 
     expect(lastFrame()).toContain("#my-channel");
-    expect(lastFrame()).toContain("U_LOCAL");
+    expect(lastFrame()).toContain("you");
+
+    unmount();
+  });
+
+  it("Tab でフォーカス移動するとタイトルに ` *` が付く", async () => {
+    const chat = createFakeLocalChat();
+    const input = new PassThrough();
+    (input as unknown as { isTTY: boolean }).isTTY = true; // useInput 経路を有効化
+    const output = new PassThrough();
+    const logStream = new PassThrough();
+
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        chat={chat}
+        options={{ initialChannelId: "local", input, output, logStream }}
+        onDone={() => {}}
+      />,
+    );
+    await flushAsync();
+
+    // 初期状態 (input フォーカス) ではどちらのペインタイトルにも `*` が付かない
+    expect(lastFrame()).not.toContain("logging *");
+    expect(lastFrame()).not.toContain("chat *");
+
+    // Tab → log ペインにフォーカス
+    stdin.write("\t");
+    await flushAsync();
+    expect(lastFrame()).toContain("logging *");
+    expect(lastFrame()).not.toContain("chat *");
+
+    // Tab → chat ペインにフォーカス
+    stdin.write("\t");
+    await flushAsync();
+    expect(lastFrame()).toContain("chat *");
+    expect(lastFrame()).not.toContain("logging *");
+
+    unmount();
+  });
+
+  it("ログペインをスクロールすると末尾行が画面から消える (回帰テスト)", async () => {
+    const chat = createFakeLocalChat();
+    const input = new PassThrough();
+    (input as unknown as { isTTY: boolean }).isTTY = true; // useInput 経路を有効化
+    const output = new PassThrough();
+    const logStream = new PassThrough();
+
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        chat={chat}
+        options={{ initialChannelId: "local", input, output, logStream }}
+        onDone={() => {}}
+      />,
+    );
+
+    for (let i = 1; i <= 30; i++) {
+      logStream.write(
+        `${JSON.stringify({ level: 30, component: "c", msg: `line-${i}` })}\n`,
+      );
+    }
+    await flushAsync();
+    expect(lastFrame()).toContain("line-30");
+
+    // Tab → log ペインにフォーカス
+    stdin.write("\t");
+    await flushAsync();
+
+    // Ctrl-P (\x10) でスクロール (上へ) を 3 回
+    stdin.write("\x10");
+    await flushAsync();
+    stdin.write("\x10");
+    await flushAsync();
+    stdin.write("\x10");
+    await flushAsync();
+
+    expect(lastFrame()).not.toContain("line-30");
+
+    unmount();
+  });
+
+  it("マウスホイール (SGR シーケンス) でペインがスクロールし、入力欄に混入しない", async () => {
+    const chat = createFakeLocalChat();
+    const input = new PassThrough();
+    (input as unknown as { isTTY: boolean }).isTTY = true; // useInput 経路を有効化
+    const output = new PassThrough();
+    const logStream = new PassThrough();
+
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        chat={chat}
+        options={{ initialChannelId: "local", input, output, logStream }}
+        onDone={() => {}}
+      />,
+    );
+
+    for (let i = 1; i <= 30; i++) {
+      logStream.write(
+        `${JSON.stringify({ level: 30, component: "c", msg: `line-${i}` })}\n`,
+      );
+    }
+    await flushAsync();
+    expect(lastFrame()).toContain("line-30");
+
+    // ホイール上 (btn 64) を log ペイン上 (y=2) で 3 回。フォーカスは input の
+    // ままでよい (座標でペインを選ぶ)。
+    stdin.write("\x1b[<64;5;2M");
+    await flushAsync();
+    stdin.write("\x1b[<64;5;2M");
+    await flushAsync();
+    stdin.write("\x1b[<64;5;2M");
+    await flushAsync();
+    expect(lastFrame()).not.toContain("line-30");
+
+    // ホイール下 (btn 65) で末尾へ戻る
+    stdin.write("\x1b[<65;5;2M");
+    await flushAsync();
+    stdin.write("\x1b[<65;5;2M");
+    await flushAsync();
+    stdin.write("\x1b[<65;5;2M");
+    await flushAsync();
+    expect(lastFrame()).toContain("line-30");
+
+    // クリック等のマウスイベントは入力欄に文字として混入しない
+    stdin.write("\x1b[<0;5;2M");
+    stdin.write("\x1b[<0;5;2m");
+    await flushAsync();
+    expect(lastFrame()).not.toContain("[<0;5;2");
 
     unmount();
   });

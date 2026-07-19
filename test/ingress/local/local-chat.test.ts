@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import type {
   InboundMessage,
@@ -84,16 +84,17 @@ describe("createLocalChat", () => {
     expect(received).toEqual(["first", "second"]);
   });
 
-  it("ts はプロセス内で単調増加し一意になる (同一秒内でも重複しない)", async () => {
+  it("ts はログ連番 (seq) の文字列表現になる (bot/人間の通し番号)", async () => {
     const chat = createLocalChat();
     const m1 = await chat.post("a");
-    const m2 = await chat.post("b");
+    const m2 = await chat.poster.postMessage("local", "b");
     const m3 = await chat.post("c");
 
-    expect(m1.ts < m2.ts).toBe(true);
-    expect(m2.ts < m3.ts).toBe(true);
-    expect(new Set([m1.ts, m2.ts, m3.ts]).size).toBe(3);
-    expect(m1.ts).toMatch(/^\d+\.\d{6}$/);
+    expect(m1.ts).toBe("1");
+    expect(m2.messageId).toBe("2");
+    expect(m3.ts).toBe("3");
+    expect(chat.log()[1]!.seq).toBe(2);
+    expect(chat.log()[1]!.ts).toBe("2");
   });
 
   it("poster.postMessage はログに積まれ message イベントが飛ぶが onEvent へは流れない", async () => {
@@ -251,23 +252,14 @@ describe("createLocalChat", () => {
     expect(chat.log()[0]!.sender.displayName).toBe("bot");
   });
 
-  it("ts の epochSec は Date.now が巻き戻っても単調増加を保つ", async () => {
+  it("post の mentionsBot が LoggedMessage に記録される", async () => {
     const chat = createLocalChat();
-    const nowSpy = vi.spyOn(Date, "now");
 
-    nowSpy.mockReturnValue(1_752_800_010_000);
-    const m1 = await chat.post("a");
+    const withMention = await chat.post("help", { mentionsBot: true });
+    const withoutMention = await chat.post("no mention");
 
-    // 壁時計が巻き戻る (NTP 補正等)
-    nowSpy.mockReturnValue(1_752_800_000_000);
-    const m2 = await chat.post("b");
-    const m3 = await chat.post("c");
-
-    expect(m1.ts < m2.ts).toBe(true);
-    expect(m2.ts < m3.ts).toBe(true);
-    expect(m2.ts.split(".")[0]).toBe("1752800010");
-
-    nowSpy.mockRestore();
+    expect(withMention.mentionsBot).toBe(true);
+    expect(withoutMention.mentionsBot).toBeUndefined();
   });
 
   it("ingress.start に渡す onEvent の ack は no-op の async 関数", async () => {

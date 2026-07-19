@@ -52,11 +52,20 @@ interface ChatLine {
 const CHAT_WINDOW = 50;
 
 // ── ログペインの行 ───────────────────────────────────────────────────────
+//
+// ログペインは level/tag/head/fields を色分けするため、単一の text/color
+// ではなく span (LogSpan) の配列 (LogEntry) として持つ。1 エントリは画面幅で
+// 複数 Row に折り返して表示する (wrapSpans。chat ペインの wrapToRows と同じ
+// 「描画前に端末幅の Row 配列へ平坦化する」方式)。これにより長いログが
+// 画面右端で切れず、末尾まで読める。
 
-interface LogLine {
+export interface LogSpan {
   text: string;
-  color?: "red" | "yellow" | "gray";
+  color?: string;
+  bold?: boolean;
 }
+
+export type LogEntry = LogSpan[];
 
 const LOG_WINDOW = 200;
 
@@ -74,18 +83,21 @@ const LOG_LEVEL_NAMES: Record<number, string> = {
   60: "FATAL",
 };
 
-function colorForLevel(level: unknown): LogLine["color"] {
-  if (typeof level !== "number") return undefined;
+/** level → 色。50 以上 red / 40 以上 yellow / 30 以上 green / それ以外
+ * (20 以下・不明) は gray。 */
+function colorForLevel(level: unknown): string {
+  if (typeof level !== "number") return "gray";
   if (level >= 50) return "red";
   if (level >= 40) return "yellow";
-  if (level <= 20) return "gray";
-  return undefined;
+  if (level >= 30) return "green";
+  return "gray";
 }
 
-/** ログ 1 エントリの text は必ず 1 行 (改行を含まない) にする。折り返しが
- * ペインの height を超えると ink が前フレームを消しきれず残像化する (log/chat
- * 両ペインで観測) ため、各フィールド値は改行を潰し長さも切り詰める。 */
-const LOG_FIELD_MAX = 48;
+/** フィールド値は改行を 1 行に潰したうえで長さも上限で切り詰める。折り返し
+ * 表示 (wrapSpans) になったため画面幅で文字が切れることはないが、上限が
+ * 無いと 1 フィールドの巨大な値だけでログペインが埋まってしまうため、その
+ * 予防として上限を設ける。 */
+const LOG_FIELD_MAX = 200;
 
 function renderFieldValue(value: unknown): string {
   const raw = typeof value === "string" ? value : JSON.stringify(value);
@@ -96,21 +108,65 @@ function renderFieldValue(value: unknown): string {
     : oneLine;
 }
 
-/** pino の NDJSON 1 行を、必ず 1 行の `LEVEL [component] head key=val ...` に
- * 整形する。msg が `pi event` のような定数のときは eventType を head に昇格し、
- * 中身の分かるログにする。パース失敗時はそのまま返す。 */
-export function formatLogLine(raw: string): {
-  text: string;
-  color?: LogLine["color"];
-} {
+// eslint-disable-next-line no-control-regex
+const CONTROL_CHARS_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
+// eslint-disable-next-line no-control-regex
+const ANSI_ESCAPE_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
+
+/** パース失敗・非オブジェクト時の fallback 整形。ANSI エスケープ/制御文字を
+ * 除去し、連続空白を 1 スペースに畳んで 1 行にする。 */
+function formatRawLine(raw: string): string {
+  return raw
+    .replace(ANSI_ESCAPE_RE, "")
+    .replace(CONTROL_CHARS_RE, "")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** pi (子プロセスとして起動する coding agent) 由来のログかどうかを判定し、
+ * tag ("pi" 固定) と head を決める。それ以外 (runner 自身のログ) は
+ * component を tag、msg を head として扱う。 */
+function classifyLogTagAndHead(
+  msg: unknown,
+  component: unknown,
+  rest: Record<string, unknown>,
+): { tag: string; tagColor: string; head: string } {
+  if (msg === "pi event" && typeof rest.eventType === "string") {
+    const head = rest.eventType;
+    delete rest.eventType;
+    return { tag: "pi", tagColor: "magenta", head };
+  }
+  if (msg === "pi stderr") {
+    if (typeof rest.line === "string") {
+      const head = `stderr ${rest.line}`;
+      delete rest.line;
+      return { tag: "pi", tagColor: "magenta", head };
+    }
+    return { tag: "pi", tagColor: "magenta", head: "stderr" };
+  }
+  const tag = component !== undefined ? String(component) : "-";
+  const head = msg !== undefined ? String(msg) : "";
+  return { tag, tagColor: "blue", head };
+}
+
+/** head 中の改行を畳んで 1 行にする (切り詰めは行わない)。 */
+function normalizeHead(head: string): string {
+  return head.replace(/\s+/g, " ").trim();
+}
+
+/** pino の NDJSON 1 行を span 列に整形する (1 論理行。画面幅での折り返しは
+ * 呼び出し側の wrapSpans が担う)。level/tag ([pi] または [component])/
+ * head/fields をそれぞれ色分けした span にする。パース失敗・非オブジェクト
+ * 時は formatRawLine で 1 span に畳んで返す。 */
+export function formatLogLine(raw: string): LogEntry {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
-    return { text: raw };
+    return [{ text: formatRawLine(raw) }];
   }
   if (typeof parsed !== "object" || parsed === null) {
-    return { text: raw };
+    return [{ text: formatRawLine(raw) }];
   }
   const { level, component, msg, ...rest } = parsed as Record<string, unknown>;
   // time/pid/hostname は表示上ノイズなので落とす (pino の既定フィールド)
@@ -118,25 +174,87 @@ export function formatLogLine(raw: string): {
   delete rest.pid;
   delete rest.hostname;
 
-  const levelName =
-    typeof level === "number" ? (LOG_LEVEL_NAMES[level] ?? String(level)) : "?";
-  const prefix = component !== undefined ? `[${String(component)}]` : "[-]";
+  const levelName = (
+    typeof level === "number" ? (LOG_LEVEL_NAMES[level] ?? String(level)) : "?"
+  ).padEnd(5);
+  const levelColor = colorForLevel(level);
 
-  // msg が定数 (`pi event` など) だと何のイベントか分からないので、eventType が
-  // あれば head に昇格し (`pi event` の文字列自体は落とす)、それを主見出しにする。
-  const eventType =
-    typeof rest.eventType === "string" ? rest.eventType : undefined;
-  if (eventType !== undefined) delete rest.eventType;
-  const headMsg =
-    eventType !== undefined ? eventType : msg !== undefined ? String(msg) : "";
+  const { tag, tagColor, head } = classifyLogTagAndHead(msg, component, rest);
+  const normalizedHead = normalizeHead(head);
 
   const fields = Object.entries(rest)
     .map(([k, v]) => `${k}=${renderFieldValue(v)}`)
     .join(" ");
-  const text = [levelName, prefix, headMsg, fields]
-    .filter((s) => s !== "")
-    .join(" ");
-  return { text, color: colorForLevel(level) };
+
+  const spans: LogSpan[] = [{ text: levelName, color: levelColor }];
+  spans.push({ text: ` [${tag}]`, color: tagColor });
+  if (normalizedHead !== "") {
+    spans.push({
+      text: ` ${normalizedHead}`,
+      ...(typeof level === "number" && level >= 30 ? { bold: true } : {}),
+    });
+  }
+  if (fields !== "") {
+    spans.push({ text: ` ${fields}`, color: "gray" });
+  }
+  return spans;
+}
+
+/** span 列を表示幅 width ごとの複数 Row (各 Row は LogSpan[]) へ折り返す
+ * (グラフェム単位、string-width 実測。clampSpans の旧実装と同じ流儀)。span の
+ * 境界をまたいでも色/bold 属性は維持する (span を分割して次 Row へ続ける)。
+ * width に収まらない単独グラフェム (幅 2 の絵文字で width 1 等) でも
+ * 無限ループにはならず、そのグラフェム単独で 1 Row になる。width <= 0 の
+ * ときは折り返さず `[spans]` を返す。空 spans (`[]`) は高さ 1 を保つため
+ * `[[]]` を返す。 */
+export function wrapSpans(spans: LogSpan[], width: number): LogSpan[][] {
+  if (width <= 0) return [spans];
+  if (spans.length === 0) return [[]];
+
+  const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+  const rows: LogSpan[][] = [];
+  let currentRow: LogSpan[] = [];
+  let currentText = "";
+  let currentWidth = 0;
+  let currentAttrs: { color?: string; bold?: boolean } = {};
+
+  const flushSpan = (): void => {
+    if (currentText !== "") {
+      currentRow.push({ text: currentText, ...currentAttrs });
+      currentText = "";
+    }
+  };
+  const flushRow = (): void => {
+    flushSpan();
+    rows.push(currentRow);
+    currentRow = [];
+    currentWidth = 0;
+  };
+
+  for (const span of spans) {
+    flushSpan();
+    currentAttrs = {
+      ...(span.color !== undefined ? { color: span.color } : {}),
+      ...(span.bold !== undefined ? { bold: span.bold } : {}),
+    };
+    for (const { segment: grapheme } of segmenter.segment(span.text)) {
+      const w = stringWidth(grapheme);
+      // Row が空でない限り、幅超過でここで折る。currentText だけでなく
+      // currentRow も見る — span 境界で flushSpan 済みだと currentText は
+      // 空だが Row には既に幅がある (ここを見ないと span 境界ちょうどで
+      // 折れず、Row が width を超えて残像の原因になる)。
+      if (
+        currentWidth + w > width &&
+        (currentText !== "" || currentRow.length > 0)
+      ) {
+        flushRow();
+      }
+      currentText += grapheme;
+      currentWidth += w;
+    }
+  }
+  flushRow();
+  return rows;
 }
 
 // ── 入力欄 (自作。ink には組み込みのテキスト入力コンポーネントがない) ─────
@@ -236,11 +354,7 @@ function InputLine({ prompt, value, cursor, width }: InputLineProps) {
 // その Row 文字列自体が端末上で複数の物理行として描画されてしまい、ここでも
 // 「Row 数 (JS 側のカウント) < 実際の物理行数」というズレが起きて残像化する。
 // そのため wrapToRows は幅で折るだけでなく、改行/制御文字の正規化も担う。
-
-// eslint-disable-next-line no-control-regex
-const CONTROL_CHARS_RE = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g;
-// eslint-disable-next-line no-control-regex
-const ANSI_ESCAPE_RE = /\x1b\[[0-9;]*[A-Za-z]/g;
+// (CONTROL_CHARS_RE / ANSI_ESCAPE_RE はログ整形の formatRawLine と共有)
 
 /** テキストを「1 端末行に対応する論理行」の配列へ正規化する。改行
  * (`\r\n`/`\r`/`\n`) で分割し、tab はスペースへ展開、ANSI エスケープや
@@ -370,23 +484,85 @@ export function titleBarText(title: string, width: number): string {
 // (justifyContent="flex-end" + slice した可変長配列を描画) が残像の主因
 // だったため、これをやめる。
 
-const BLANK_ROW: Row = { text: "" };
+/** グリッドの 1 スロットの内容。log/chat どちらも「1 スロット = span 列」に
+ * 統一する (chat の Row {text, color} は 1-span 行 `[{ text, color }]` に
+ * 変換して渡す)。 */
+type GridRow = LogSpan[];
+
+const BLANK_GRID_ROW: GridRow = [];
 
 /** viewportHeight 個の空行を作る (グリッドの余白埋め用)。 */
-function blankRows(count: number): Row[] {
-  return Array.from({ length: Math.max(0, count) }, () => BLANK_ROW);
+function blankRows(count: number): GridRow[] {
+  return Array.from({ length: Math.max(0, count) }, () => BLANK_GRID_ROW);
 }
 
-/** visible (slice 済みの実データ Row) を、常に viewportHeight 個のスロットに
+/** visible (slice 済みの実データ行) を、常に viewportHeight 個のスロットに
  * なるよう空行で埋めたグリッドにする。followTail (末尾追従中) は新着が下に
  * 来るよう上を空行で埋め、スクロールバック中は下を空行で埋める。 */
 function toGrid(
-  visible: Row[],
+  visible: GridRow[],
   viewportHeight: number,
   followTail: boolean,
-): Row[] {
+): GridRow[] {
   const pad = blankRows(viewportHeight - visible.length);
   return followTail ? [...pad, ...visible] : [...visible, ...pad];
+}
+
+// ── Pane (log/chat 共通の枠 + タイトルバー + 固定スロットグリッド) ─────────
+
+interface PaneProps {
+  title: string;
+  focused: boolean;
+  height: number;
+  innerWidth: number;
+  grid: GridRow[];
+}
+
+/** log/chat ペインで重複していた「枠 + タイトルバー + 固定スロットグリッド」
+ * の描画をまとめたコンポーネント。スロットは React key = index 固定・
+ * height 1・flexShrink 0・幅 innerWidth を維持する (残像対策。toGrid 直上の
+ * コメント参照)。フォーカス中のペインは枠線/タイトルバーの色 (cyan 反転) に
+ * 加え、色を区別しづらい環境でも分かるようタイトル末尾に ` *` を付ける。 */
+function Pane({ title, focused, height, innerWidth, grid }: PaneProps) {
+  const titleText = focused ? `${title} *` : title;
+  return (
+    <Box
+      flexDirection="column"
+      height={height}
+      overflow="hidden"
+      justifyContent="flex-start"
+      borderStyle="single"
+      borderColor={focused ? "cyan" : "gray"}
+    >
+      <Box height={1} width={innerWidth} flexShrink={0}>
+        <Text
+          backgroundColor={focused ? "cyan" : "gray"}
+          color="black"
+          wrap="truncate-end"
+        >
+          {titleBarText(titleText, innerWidth)}
+        </Text>
+      </Box>
+      {grid.map((spans, slot) => (
+        <Box key={slot} height={1} width={innerWidth} flexShrink={0}>
+          {spans.length === 0 ? (
+            <Text> </Text>
+          ) : (
+            spans.map((span, i) => (
+              <Text
+                key={i}
+                {...(span.color !== undefined ? { color: span.color } : {})}
+                {...(span.bold !== undefined ? { bold: span.bold } : {})}
+                wrap="truncate-end"
+              >
+                {span.text}
+              </Text>
+            ))
+          )}
+        </Box>
+      ))}
+    </Box>
+  );
 }
 
 // ── 本体 ─────────────────────────────────────────────────────────────────
@@ -434,7 +610,7 @@ export function App({ chat, options, onDone }: AppProps) {
 
   const [prompt, setPrompt] = useState(() => promptText(stateRef.current));
   const [chatLines, setChatLines] = useState<ChatLine[]>([]);
-  const [logLines, setLogLines] = useState<LogLine[]>([]);
+  const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [cursor, setCursor] = useState(0);
   const [terminalRows, setTerminalRows] = useState(stdout.rows);
@@ -465,6 +641,21 @@ export function App({ chat, options, onDone }: AppProps) {
     };
   }, [stdout]);
 
+  // マウスホイールでのペインスクロール用に SGR マウストラッキングを有効化
+  // する (mode 1000 = ボタンイベント通知 + 1006 = SGR 形式)。イベントは
+  // stdin にエスケープシーケンスとして届き、useInput 側の先頭で処理する。
+  // 有効中は端末ネイティブのドラッグ選択が奪われる (多くの端末では
+  // Shift+ドラッグで選択可能)。raw mode が効く実 TTY のときだけ有効化し、
+  // 端末をマウスモードのまま残さないようアンマウント時に必ず解除する。
+  useEffect(() => {
+    if (isRawModeSupported !== true) return;
+    if (!("isTTY" in stdout) || stdout.isTTY !== true) return;
+    stdout.write("\x1b[?1000;1006h");
+    return () => {
+      stdout.write("\x1b[?1000;1006l");
+    };
+  }, [isRawModeSupported, stdout]);
+
   const appendChat = (text: string, color?: ChatLine["color"]): void => {
     const line: ChatLine = {
       text,
@@ -488,13 +679,9 @@ export function App({ chat, options, onDone }: AppProps) {
     // 完全な位置追従は行わないベストエフォートとして許容する)。
   };
 
-  const appendLog = (text: string, color?: LogLine["color"]): void => {
-    const line: LogLine = {
-      text,
-      ...(color !== undefined ? { color } : {}),
-    };
-    setLogLines((prev) => {
-      const next = [...prev, line];
+  const appendLog = (entry: LogEntry): void => {
+    setLogEntries((prev) => {
+      const next = [...prev, entry];
       return next.length > LOG_WINDOW
         ? next.slice(next.length - LOG_WINDOW)
         : next;
@@ -538,8 +725,7 @@ export function App({ chat, options, onDone }: AppProps) {
     const rl = readline.createInterface({ input: logStream });
     rl.on("line", (raw) => {
       if (raw.trim() === "") return;
-      const { text, color } = formatLogLine(raw);
-      appendLog(text, color);
+      appendLog(formatLogLine(raw));
     });
     return () => {
       rl.close();
@@ -648,7 +834,10 @@ export function App({ chat, options, onDone }: AppProps) {
   // が取れない (非TTY) 場合は広め (弱い折り返し) にする。
   const innerWidth =
     terminalCols !== undefined ? Math.max(1, terminalCols - 2 - 1) : 80;
-  const logRows = toRows(logLines, innerWidth);
+  // ログの各エントリ (span 列) を端末幅で複数 Row へ折り返し平坦化する
+  // (chat の toRows と同じ方式)。これで offset/viewport の単位が chat と
+  // 同じ Row (端末 1 行) になり、長いログも折り返して最後まで読める。
+  const logRows = logEntries.flatMap((e) => wrapSpans(e, innerWidth));
   const chatRows = toRows(chatLines, innerWidth);
 
   // スクロール位置は最新 Row 数に応じてクランプ (行が減った/端末が縮んだ場合に
@@ -682,6 +871,31 @@ export function App({ chat, options, onDone }: AppProps) {
   // フォーカスに関わらず常に有効。
   useInput(
     (input, key) => {
+      // ── SGR マウスイベント ──
+      // ink の parse-keypress はマウスシーケンスを解釈せず sequence をその
+      // まま input に流してくる (先頭の ESC 1 個は use-input 側で剥がされる
+      // ため "[<btn;x;yM" の形で届く。複数イベントが 1 チャンクに合流した
+      // 場合は 2 個目以降が ESC 付きで後続する)。ホイール (btn 64=上/65=下)
+      // は y 座標 (端末 1-origin 行) が指すペインを 1 行スクロールし、それ
+      // 以外のマウスイベント (クリック等) は入力欄へ文字として混入しない
+      // よう握りつぶす。マウストラッキングの有効化は下の useEffect 参照。
+      if (/^\[<\d+;\d+;\d+[Mm]/.test(input)) {
+        for (const m of input.matchAll(/\[<(\d+);\d+;(\d+)M/g)) {
+          const btn = m[1];
+          if (btn !== "64" && btn !== "65") continue;
+          const y = Number(m[2]);
+          // レイアウトは端末全面 (log ペイン: 1..logOuterHeight 行、以降は
+          // chat ペイン + 入力欄) なので y でペインを選ぶ。
+          const isLogPane = showLogPane && y <= logOuterHeight;
+          const setOffset = isLogPane ? setLogOffset : setChatOffset;
+          const total = isLogPane ? logRows.length : chatRows.length;
+          const viewport = isLogPane ? logViewport : chatViewport;
+          const delta = btn === "64" ? 1 : -1;
+          setOffset((o) => clampOffset(total, viewport, o + delta));
+        }
+        return;
+      }
+
       if (key.ctrl && input === "c") {
         exit();
         onDone();
@@ -690,6 +904,21 @@ export function App({ chat, options, onDone }: AppProps) {
 
       // ── フォーカス切替 (Tab / Shift-Tab / Escape) ── 常に有効
       if (key.tab) {
+        // @bot 補完: input フォーカス中に "@bot" の前方一致 ("@", "@b", "@bo",
+        // "@bot") を入力しているときだけ Tab で "@bot " に補完する。それ以外
+        // は従来通りフォーカス巡回。
+        if (
+          focusedTarget === "input" &&
+          !key.shift &&
+          inputValue !== "" &&
+          inputValue.startsWith("@") &&
+          "@bot".startsWith(inputValue)
+        ) {
+          setInputValue("@bot ");
+          setCursor(5);
+          return;
+        }
+
         const idx = focusRing.indexOf(focusedTarget);
         const current = idx === -1 ? 0 : idx;
         const next = key.shift
@@ -828,14 +1057,27 @@ export function App({ chat, options, onDone }: AppProps) {
 
   // 各ペインを固定 viewportHeight スロットのグリッドへ組み立てる。followTail
   // (offset 0) のときは新着が下に来るよう上を空行で埋め、スクロールバック中は
-  // 下を空行で埋める (詳細は toGrid のコメント参照)。
+  // 下を空行で埋める (詳細は toGrid のコメント参照)。log/chat とも Row 側で
+  // 既に折り返し済み (幅内) のため、ここでの追加の切り詰めは不要。
   const logGrid = toGrid(
     visibleSlice(logRows, logViewport, logOffsetClamped),
     logViewport,
     logOffsetClamped === 0,
   );
   const chatGrid = toGrid(
-    visibleSlice(chatRows, chatViewport, chatOffsetClamped),
+    visibleSlice(chatRows, chatViewport, chatOffsetClamped).map(
+      (row): GridRow =>
+        // 空の論理行は空スロット扱いにして、グリッドの余白埋めと同じ描画
+        // (単一スペース) に揃える。
+        row.text === ""
+          ? BLANK_GRID_ROW
+          : [
+              {
+                text: row.text,
+                ...(row.color !== undefined ? { color: row.color } : {}),
+              },
+            ],
+    ),
     chatViewport,
     chatOffsetClamped === 0,
   );
@@ -851,63 +1093,21 @@ export function App({ chat, options, onDone }: AppProps) {
   return (
     <Box flexDirection="column">
       {showLogPane ? (
-        <Box
-          flexDirection="column"
+        <Pane
+          title=" logging"
+          focused={logFocused}
           height={logOuterHeight}
-          overflow="hidden"
-          justifyContent="flex-start"
-          borderStyle="single"
-          borderColor={logFocused ? "cyan" : "gray"}
-        >
-          <Box height={1} width={innerWidth} flexShrink={0}>
-            <Text
-              backgroundColor={logFocused ? "cyan" : "gray"}
-              color="black"
-              wrap="truncate-end"
-            >
-              {titleBarText(" logging", innerWidth)}
-            </Text>
-          </Box>
-          {logGrid.map((row, slot) => (
-            <Box key={slot} height={1} width={innerWidth} flexShrink={0}>
-              <Text
-                {...(row.color !== undefined ? { color: row.color } : {})}
-                wrap="truncate-end"
-              >
-                {row.text === "" ? " " : row.text}
-              </Text>
-            </Box>
-          ))}
-        </Box>
+          innerWidth={innerWidth}
+          grid={logGrid}
+        />
       ) : null}
-      <Box
-        flexDirection="column"
+      <Pane
+        title=" chat"
+        focused={showLogPane && chatFocused}
         height={chatOuterHeight}
-        overflow="hidden"
-        justifyContent="flex-start"
-        borderStyle="single"
-        borderColor={showLogPane && chatFocused ? "cyan" : "gray"}
-      >
-        <Box height={1} width={innerWidth} flexShrink={0}>
-          <Text
-            backgroundColor={showLogPane && chatFocused ? "cyan" : "gray"}
-            color="black"
-            wrap="truncate-end"
-          >
-            {titleBarText(" chat", innerWidth)}
-          </Text>
-        </Box>
-        {chatGrid.map((row, slot) => (
-          <Box key={slot} height={1} width={innerWidth} flexShrink={0}>
-            <Text
-              {...(row.color !== undefined ? { color: row.color } : {})}
-              wrap="truncate-end"
-            >
-              {row.text === "" ? " " : row.text}
-            </Text>
-          </Box>
-        ))}
-      </Box>
+        innerWidth={innerWidth}
+        grid={chatGrid}
+      />
       <InputLine
         prompt={prompt}
         value={inputValue}

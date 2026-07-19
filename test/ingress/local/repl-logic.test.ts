@@ -56,7 +56,6 @@ function createFakeLocalChat(): LocalChat & {
   const postCalls: RecordedPost[] = [];
   const reactCalls: RecordedReact[] = [];
   let seqCounter = 0;
-  let tsCounter = 0;
 
   const ingress: Ingress = {
     start(_handler) {
@@ -73,7 +72,6 @@ function createFakeLocalChat(): LocalChat & {
   ): Promise<LoggedMessage> {
     postCalls.push({ text, options: postOptions });
     seqCounter += 1;
-    tsCounter += 1;
     const sender: Sender = {
       id: postOptions?.sender?.id ?? "U_LOCAL",
       isBot: postOptions?.sender?.isBot ?? false,
@@ -81,13 +79,14 @@ function createFakeLocalChat(): LocalChat & {
     };
     const message: LoggedMessage = {
       seq: seqCounter,
-      ts: `1700000000.${String(tsCounter).padStart(6, "0")}`,
+      ts: String(seqCounter),
       channelId: postOptions?.channelId ?? "local",
       ...(postOptions?.threadTs !== undefined
         ? { threadTs: postOptions.threadTs }
         : {}),
       text,
       sender,
+      ...(postOptions?.mentionsBot === true ? { mentionsBot: true } : {}),
     };
     log.push(message);
     events.emit("message", message);
@@ -168,11 +167,11 @@ describe("initialReplState / promptText", () => {
       isDm: false,
     };
     expect(promptText(base)).toBe("#C1 U1> ");
-    expect(promptText({ ...base, isDm: true })).toBe("#C1 dm U1> ");
+    expect(promptText({ ...base, isDm: true })).toBe("#C1(dm) U1> ");
     expect(promptText({ ...base, isBot: true })).toBe("#C1 U1(bot)> ");
   });
 
-  it("promptText は threadSeq があれば thread:[N]、なければ thread:[ts] を出す", () => {
+  it("promptText は threadSeq があれば ↳[N]、なければ ↳[ts] を出す", () => {
     const base: ReplState = {
       channelId: "C1",
       userId: "U1",
@@ -180,11 +179,35 @@ describe("initialReplState / promptText", () => {
       isDm: false,
     };
     expect(promptText({ ...base, threadTs: "170.5", threadSeq: 3 })).toBe(
-      "#C1 U1 thread:[3]> ",
+      "#C1 U1 ↳[3]> ",
     );
     expect(promptText({ ...base, threadTs: "170.5" })).toBe(
-      "#C1 U1 thread:[170.5]> ",
+      "#C1 U1 ↳[170.5]> ",
     );
+  });
+
+  it("promptText は既定ユーザー U_LOCAL を you と表示する", () => {
+    expect(promptText(initialReplState("local"))).toBe("#local you> ");
+  });
+
+  it("promptText は isDm で #channel(dm) を出す", () => {
+    const base: ReplState = {
+      channelId: "local",
+      userId: "U_LOCAL",
+      isBot: false,
+      isDm: true,
+    };
+    expect(promptText(base)).toBe("#local(dm) you> ");
+  });
+
+  it("promptText は isBot で (bot) を付ける", () => {
+    const base: ReplState = {
+      channelId: "C1",
+      userId: "U2",
+      isBot: true,
+      isDm: false,
+    };
+    expect(promptText(base)).toBe("#C1 U2(bot)> ");
   });
 });
 
@@ -209,7 +232,7 @@ describe("resolveThreadRef", () => {
     const chat = createFakeLocalChat();
     await chat.post("hello", { channelId: "A" });
     const result = resolveThreadRef(chat, { kind: "seq", seq: 1 });
-    expect(result).toEqual({ ts: "1700000000.000001", channelId: "A" });
+    expect(result).toEqual({ ts: "1", channelId: "A" });
   });
 
   it("存在しない seq 参照はエラーを返す", () => {
@@ -267,7 +290,7 @@ describe("handleLine", () => {
       text: "reply to A",
       options: {
         channelId: "A",
-        threadTs: "1700000000.000001",
+        threadTs: "1",
         mentionsBot: false,
         sender: { id: "U_LOCAL", isBot: false },
         isDm: false,
@@ -296,7 +319,7 @@ describe("handleLine", () => {
     const result = await handleLine(chat, state, "!thread 1");
 
     expect(result).toEqual({ kind: "state-changed" });
-    expect(state.threadTs).toBe("1700000000.000001");
+    expect(state.threadTs).toBe("1");
     expect(state.threadSeq).toBe(1);
     // seq 参照先が別チャンネルなら、そのチャンネルへ移る。
     expect(state.channelId).toBe("A");
@@ -310,14 +333,14 @@ describe("handleLine", () => {
     const result = await handleLine(chat, state, "!t 1");
 
     expect(result).toEqual({ kind: "state-changed" });
-    expect(state.threadTs).toBe("1700000000.000001");
+    expect(state.threadTs).toBe("1");
   });
 
   it("thread: 生 ts 参照で入ると threadSeq は付かない", async () => {
     const chat = createFakeLocalChat();
     const state = initialReplState("A");
 
-    const result = await handleLine(chat, state, "!thread 170.5");
+    const result = await handleLine(chat, state, "!thread ts:170.5");
 
     expect(result).toEqual({ kind: "state-changed" });
     expect(state.threadTs).toBe("170.5");
@@ -332,7 +355,7 @@ describe("handleLine", () => {
 
     await handleLine(chat, state, "follow up");
 
-    expect(chat.postCalls[1]?.options?.threadTs).toBe("1700000000.000001");
+    expect(chat.postCalls[1]?.options?.threadTs).toBe("1");
   });
 
   it("thread: 入っていても明示 >N はそちらを優先する", async () => {
@@ -344,7 +367,7 @@ describe("handleLine", () => {
 
     await handleLine(chat, state, ">2 explicit");
 
-    expect(chat.postCalls[2]?.options?.threadTs).toBe("1700000000.000002");
+    expect(chat.postCalls[2]?.options?.threadTs).toBe("2");
   });
 
   it("thread: 未知の !thread 参照は error を返し state を変えない", async () => {
@@ -366,7 +389,10 @@ describe("handleLine", () => {
 
     const result = await handleLine(chat, state, "!thread");
 
-    expect(result).toEqual({ kind: "error", message: "usage: !thread <N|ts>" });
+    expect(result).toEqual({
+      kind: "error",
+      message: "usage: !thread <N|ts:X>",
+    });
   });
 
   it("leave: !leave は threadTs/threadSeq を消し state-changed を返す", async () => {
@@ -395,7 +421,7 @@ describe("handleLine", () => {
     expect(result).toEqual({ kind: "noop" });
     expect(chat.reactCalls).toEqual([
       {
-        ts: "1700000000.000001",
+        ts: "1",
         emoji: "eyes",
         options: { channelId: "A", sender: { id: "U_LOCAL", isBot: false } },
       },
@@ -508,42 +534,52 @@ describe("handleLine", () => {
 });
 
 describe("formatMessageLine", () => {
-  it("通常メッセージは [seq ts] who: text の形式で isSelf: false", async () => {
+  it("通常メッセージは [seq] who: text の形式で isSelf: false", async () => {
     const chat = createFakeLocalChat();
     const msg = await chat.post("hi", { sender: { id: "U1" } });
 
     const line = formatMessageLine(chat, msg);
 
     expect(line).toEqual({
-      text: "[1 1700000000.000001] U1: hi",
+      text: "[1] U1: hi",
       isSelf: false,
     });
   });
 
-  it("bot 投稿 (isSelf: true) は矢印 prefix + isSelf: true", async () => {
+  it("bot 投稿 (isSelf: true) は isSelf: true で ↳ にスレッド元 seq を出す", async () => {
     const chat = createFakeLocalChat();
     await chat.post("root", {});
     const botMsg: LoggedMessage = {
       seq: 2,
-      ts: "1700000000.000002",
+      ts: "2",
       channelId: "local",
-      threadTs: "1700000000.000001",
+      threadTs: "1",
       text: "reply",
       sender: { id: "U_BOT", isBot: true, isSelf: true },
     };
 
     const line = formatMessageLine(chat, botMsg);
 
-    expect(line.isSelf).toBe(true);
-    expect(line.text).toContain("⟵");
-    expect(line.text).toContain("(thread of [1])");
+    expect(line).toEqual({ text: "[2]↳1 U_BOT: reply", isSelf: true });
+  });
+
+  it("mentionsBot: true なら本文先頭に @bot を復元する", async () => {
+    const chat = createFakeLocalChat();
+    const msg = await chat.post("text", {
+      sender: { id: "U1" },
+      mentionsBot: true,
+    });
+
+    const line = formatMessageLine(chat, msg);
+
+    expect(line).toEqual({ text: "[1] U1: @bot text", isSelf: false });
   });
 
   it("files があれば file: 行を追記する", async () => {
     const chat = createFakeLocalChat();
     const msg: LoggedMessage = {
       seq: 1,
-      ts: "1700000000.000001",
+      ts: "1",
       channelId: "local",
       text: "with file",
       sender: { id: "U1", isBot: false, isSelf: false },
@@ -558,10 +594,10 @@ describe("formatMessageLine", () => {
 });
 
 describe("formatUpdateLine", () => {
-  it("update 行は (update [N]) 付きで isSelf: true", () => {
+  it("update 行は [N]↺ 付きで isSelf: true", () => {
     const msg: LoggedMessage = {
       seq: 3,
-      ts: "1700000000.000003",
+      ts: "3",
       channelId: "local",
       text: "progress...",
       sender: { id: "U_BOT", isBot: true, isSelf: true },
@@ -570,7 +606,7 @@ describe("formatUpdateLine", () => {
     const line = formatUpdateLine(msg);
 
     expect(line).toEqual({
-      text: "⟵ (update [3]) U_BOT: progress...",
+      text: "[3]↺ U_BOT: progress...",
       isSelf: true,
     });
   });
@@ -588,7 +624,7 @@ describe("formatReactionLine", () => {
 
     const line = formatReactionLine(chat, record);
 
-    expect(line).toEqual({ text: "⟵ :eyes: on [1]", isSelf: true });
+    expect(line).toEqual({ text: ":eyes: on [1]", isSelf: true });
   });
 
   it("ログにない ts はそのまま表示する", () => {
@@ -602,7 +638,7 @@ describe("formatReactionLine", () => {
     const line = formatReactionLine(chat, record);
 
     expect(line).toEqual({
-      text: "⟵ :tada: on 1700000000.999999",
+      text: ":tada: on 1700000000.999999",
       isSelf: true,
     });
   });
