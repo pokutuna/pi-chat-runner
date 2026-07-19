@@ -20,6 +20,7 @@ import {
   formatUpdateLine,
   handleLine,
   initialReplState,
+  metaCommandHighlightLength,
   promptText,
   resolveThreadRef,
   type ReplState,
@@ -148,6 +149,21 @@ function createFakeLocalChat(): LocalChat & {
     reactCalls,
   };
 }
+
+describe("metaCommandHighlightLength", () => {
+  it.each([
+    ["!help", 5],
+    ["!help x", 5],
+    ["!hel", 0],
+    ["!t 3", 2],
+    ["!channels", 9],
+    ["hello", 0],
+    [" !help", 0],
+    ["", 0],
+  ])("%s -> %i", (input, expected) => {
+    expect(metaCommandHighlightLength(input)).toBe(expected);
+  });
+});
 
 describe("initialReplState / promptText", () => {
   it("初期状態は isDm: false, isBot: false, userId: U_LOCAL", () => {
@@ -484,6 +500,15 @@ describe("handleLine", () => {
     const state = initialReplState("A");
 
     expect(await handleLine(chat, state, "!help")).toEqual({ kind: "help" });
+  });
+
+  it("channels: !channels は channels を返す", async () => {
+    const chat = createFakeLocalChat();
+    const state = initialReplState("A");
+
+    expect(await handleLine(chat, state, "!channels")).toEqual({
+      kind: "channels",
+    });
   });
 
   it("quit: !quit は quit を返す", async () => {

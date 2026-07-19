@@ -2,27 +2,25 @@
 // - formatLogLine: pino NDJSON を 1 論理行 (span 配列) へ整形する。pi (子
 //   プロセスの coding agent) 由来のログ (`pi event`/`pi stderr`) は [pi] タグ
 //   で強調し、eventType/stderr の line を head に昇格する。
-// - wrapSpans: span 列を表示幅ごとの複数 Row (LogSpan[][]) へ折り返す
-//   (グラフェム単位、境界をまたいでも色/bold を維持する。ログペインの折り返し
-//   表示用)。
-// - wrapToRows: string-width によるグラフェム単位の折り返し (East Asian
-//   Wide/絵文字を正しい幅で数える) + 改行/制御文字の正規化。残像化防止のため
-//   「論理行 → 端末幅で折った Row 配列」への変換が正しいこと (chat ペイン用)。
+// - wrapSpans: span 列を表示幅ごとの複数 Row (Span[][]) へ折り返す
+//   (グラフェム単位、境界をまたいでも色/bold を維持する。string-width による
+//   実測で East Asian Wide/絵文字を正しい幅で数える。log/chat 両ペインの
+//   折り返し表示用)。
 
 import stringWidth from "string-width";
 import { describe, expect, it } from "vitest";
 
 import {
   formatLogLine,
-  type LogEntry,
-  type LogSpan,
+  type Line,
+  normalizeToLogicalLines,
+  type Span,
   titleBarText,
   wrapSpans,
-  wrapToRows,
 } from "../../../src/ingress/local/repl.js";
 
 /** span を連結した文字列で内容検証するためのヘルパ。 */
-const flat = (entry: LogEntry): string => entry.map((s) => s.text).join("");
+const flat = (entry: Line): string => entry.map((s) => s.text).join("");
 
 describe("formatLogLine", () => {
   it("パース失敗 (非 JSON) は raw をそのまま 1 span で返す", () => {
@@ -171,7 +169,7 @@ describe("formatLogLine", () => {
 
 describe("wrapSpans", () => {
   /** Row を連結した文字列で内容検証するためのヘルパ。 */
-  const flatRow = (row: LogSpan[]): string => row.map((s) => s.text).join("");
+  const flatRow = (row: Span[]): string => row.map((s) => s.text).join("");
 
   it("幅内は 1 Row にまとまる", () => {
     const spans = [{ text: "abc", color: "red" }];
@@ -227,65 +225,51 @@ describe("wrapSpans", () => {
     const rows = wrapSpans(spans, 1);
     expect(rows.map(flatRow)).toEqual(["\u{1F389}"]);
   });
-});
-
-describe("wrapToRows", () => {
-  it("width 以内の行はそのまま 1 要素", () => {
-    expect(wrapToRows("hello", 10)).toEqual(["hello"]);
-  });
-
-  it("ASCII を width で折る", () => {
-    expect(wrapToRows("abcdef", 3)).toEqual(["abc", "def"]);
-  });
-
-  it("全角は 2 幅として折る (width 4 = 全角 2 文字で 1 行)", () => {
-    expect(wrapToRows("あいうえ", 4)).toEqual(["あい", "うえ"]);
-  });
-
-  it("width をまたぐ全角は次行へ送る (1 文字が境界を割らない)", () => {
-    // width 3: 全角 "あ"(2) の次に "い"(2) は 4 で超えるので折る
-    expect(wrapToRows("あい", 3)).toEqual(["あ", "い"]);
-  });
-
-  it("width <= 0 は折らずそのまま返す", () => {
-    expect(wrapToRows("abc", 0)).toEqual(["abc"]);
-  });
-
-  it("空文字は空の 1 行を返す (高さ 1 を保つ)", () => {
-    expect(wrapToRows("", 10)).toEqual([""]);
-  });
 
   it("結合絵文字 (ZWJ シーケンス) は string-width の実測幅で 1 グラフェムとして扱う", () => {
     const family = "\u{1F468}‍\u{1F469}‍\u{1F467}‍\u{1F466}"; // string-width では幅 2 の 1 グラフェム
-    expect(wrapToRows(family, 2)).toEqual([family]);
+    expect(wrapSpans([{ text: family }], 2).map(flatRow)).toEqual([family]);
     // 幅 1 だと単独グラフェムでも収まらないが、無限ループにはならず単独行になる
-    expect(wrapToRows(family, 1)).toEqual([family]);
+    expect(wrapSpans([{ text: family }], 1).map(flatRow)).toEqual([family]);
   });
 
   it("絵文字を width で折る (幅 2 の絵文字 2 個は width 4 で 1 行)", () => {
-    expect(wrapToRows("\u{1F389}\u{1F389}\u{1F389}\u{1F389}", 4)).toEqual([
+    const spans = [{ text: "\u{1F389}\u{1F389}\u{1F389}\u{1F389}" }];
+    expect(wrapSpans(spans, 4).map(flatRow)).toEqual([
       "\u{1F389}\u{1F389}",
       "\u{1F389}\u{1F389}",
     ]);
   });
 
-  it("改行 (\\n, \\r\\n, \\r) を論理行として分割してから折り返す", () => {
-    expect(wrapToRows("a\nb", 10)).toEqual(["a", "b"]);
-    expect(wrapToRows("a\r\nb", 10)).toEqual(["a", "b"]);
-    expect(wrapToRows("a\rb", 10)).toEqual(["a", "b"]);
+  it("width をまたぐ全角は次行へ送る (1 文字が境界を割らない)", () => {
+    // width 3: 全角 "あ"(2) の次に "い"(2) は 4 で超えるので折る
+    const spans = [{ text: "あい" }];
+    expect(wrapSpans(spans, 3).map(flatRow)).toEqual(["あ", "い"]);
+  });
+});
+
+describe("normalizeToLogicalLines", () => {
+  // appendChat (repl.tsx) がテキストを Line へ変換する前段の正規化。改行/
+  // 制御文字が Line に混入すると、wrapSpans が返す Row 数と実際の描画行数が
+  // ズレて残像化するため、ここで必ず 1 行 = 改行なし文字列へ正規化する。
+
+  it("改行 (\\n, \\r\\n, \\r) で論理行に分割する", () => {
+    expect(normalizeToLogicalLines("a\nb")).toEqual(["a", "b"]);
+    expect(normalizeToLogicalLines("a\r\nb")).toEqual(["a", "b"]);
+    expect(normalizeToLogicalLines("a\rb")).toEqual(["a", "b"]);
   });
 
   it("tab は 4 スペースへ展開する", () => {
-    expect(wrapToRows("a\tb", 10)).toEqual(["a    b"]);
+    expect(normalizeToLogicalLines("a\tb")).toEqual(["a    b"]);
   });
 
   it("ANSI エスケープ・制御文字は除去する", () => {
-    expect(wrapToRows("\x1b[31mred\x1b[0m", 10)).toEqual(["red"]);
-    expect(wrapToRows("a\x07b", 10)).toEqual(["ab"]);
+    expect(normalizeToLogicalLines("\x1b[31mred\x1b[0m")).toEqual(["red"]);
+    expect(normalizeToLogicalLines("a\x07b")).toEqual(["ab"]);
   });
 
-  it("width <= 0 でも改行では論理行に分割する", () => {
-    expect(wrapToRows("a\nb", 0)).toEqual(["a", "b"]);
+  it("空文字はそのまま空文字の 1 要素を返す", () => {
+    expect(normalizeToLogicalLines("")).toEqual([""]);
   });
 });
 

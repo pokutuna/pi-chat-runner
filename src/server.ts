@@ -421,7 +421,12 @@ async function runLocal(argv: string[]): Promise<void> {
     logger: localLogger.child({ component: "server" }),
   });
 
-  await startRepl(chat, { initialChannelId: channelId, logStream });
+  await startRepl(chat, {
+    initialChannelId: channelId,
+    logStream,
+    listChannels: async () =>
+      (await loadChannelsFile(configPath)).channels.map((c) => c.channel),
+  });
   process.exit(0);
 }
 

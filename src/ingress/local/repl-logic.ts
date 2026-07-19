@@ -64,6 +64,11 @@ export interface ParsedHelp {
   kind: "help";
 }
 
+/** `!channels` — 設定ファイルの channels ブロックのエントリ一覧を表示する。 */
+export interface ParsedChannels {
+  kind: "channels";
+}
+
 /** `!thread N` / `!t N` — 指定スレッドに入る (以降の通常投稿がそのスレッドへ)。 */
 export interface ParsedThread {
   kind: "thread";
@@ -81,6 +86,7 @@ export type ParsedLine =
   | ParsedPost
   | ParsedReact
   | ParsedChannel
+  | ParsedChannels
   | ParsedDm
   | ParsedUser
   | ParsedThread
@@ -158,6 +164,31 @@ function parseThreadReply(trimmed: string): ParsedLine {
   return { kind: "post", text: restTrimmed, mentionsBot: false, thread };
 }
 
+/** メタコマンドとして認識するコマンド名の一覧 (parseMeta の case と揃える)。 */
+const META_COMMANDS = new Set([
+  "!react",
+  "!channel",
+  "!channels",
+  "!dm",
+  "!user",
+  "!thread",
+  "!t",
+  "!leave",
+  "!quit",
+  "!help",
+]);
+
+/** 入力行の先頭が有効なメタコマンドなら、色付けすべき先頭文字数 (=!COMMAND
+ * の長さ) を返す。無効なら 0。先頭トークン (最初の空白まで、または行末まで)
+ * が既知メタコマンドに完全一致するときだけその長さを返す (前方一致は 0)。
+ * 先頭に空白がある入力欄の生値もそのまま渡される前提なので、その場合も 0。 */
+export function metaCommandHighlightLength(input: string): number {
+  if (!input.startsWith("!")) return 0;
+  const spaceIndex = input.indexOf(" ");
+  const cmd = spaceIndex === -1 ? input : input.slice(0, spaceIndex);
+  return META_COMMANDS.has(cmd) ? cmd.length : 0;
+}
+
 function parseMeta(trimmed: string): ParsedLine {
   const parts = trimmed.split(/\s+/);
   const cmd = parts[0];
@@ -187,6 +218,8 @@ function parseMeta(trimmed: string): ParsedLine {
       }
       return { kind: "channel", channelId };
     }
+    case "!channels":
+      return { kind: "channels" };
     case "!dm": {
       const arg = parts[1];
       if (arg === "on") return { kind: "dm", on: true };
@@ -230,6 +263,13 @@ function parseMeta(trimmed: string): ParsedLine {
   }
 }
 
+/** 起動時にチャットペインへ出す短い案内。詳細な文法は !help (HELP_TEXT) へ誘導する。 */
+export const WELCOME_TEXT = `\
+Display: [N] = message number, ↳N = thread (e.g. [4]↳2 = [4] is a reply in thread of [2])
+Post: text | @bot text (Tab completes @bot) | >N text (reply in thread of N)
+Keys: Tab cycles focus (focused pane marked *), C-p C-n / mouse wheel to scroll
+Type !help for the full command list`;
+
 export const HELP_TEXT = `\
 Display: [N] = message number, ↳N = thread (e.g. [4]↳2 = [4] is a reply in thread of [2])
 Syntax (N = message number [N]):
@@ -242,10 +282,12 @@ Syntax (N = message number [N]):
   !leave              leave thread, back to channel
   !react <N|ts:X> <e> react (e: eyes or :eyes:)
   !channel <id>       switch posting channel
+  !channels           list channels in config
   !dm on|off          toggle conversation.isDm
   !user <id> [--bot]  switch sender (--bot=isBot)
   !quit               quit (Ctrl-D too)
   !help               show this list
+  Unknown /commands are posted as-is (for runner chat commands like /new)
 Focus: Tab cycles input/log/chat (focused pane marked *), Esc returns to input
 Scroll: arrows / C-p C-n / PageUp-Down on the focused pane, mouse wheel on any pane`;
 
@@ -324,6 +366,7 @@ export type HandleLineResult =
   | { kind: "noop" }
   | { kind: "error"; message: string }
   | { kind: "help" }
+  | { kind: "channels" }
   | { kind: "quit" }
   | { kind: "state-changed" };
 
@@ -345,6 +388,9 @@ export async function handleLine(
 
     case "help":
       return { kind: "help" };
+
+    case "channels":
+      return { kind: "channels" };
 
     case "quit":
       return { kind: "quit" };

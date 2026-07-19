@@ -26,8 +26,10 @@ import {
   HELP_TEXT,
   handleLine,
   initialReplState,
+  metaCommandHighlightLength,
   promptText,
   type ReplState,
+  WELCOME_TEXT,
 } from "./repl-logic.js";
 import type { LocalChat } from "./types.js";
 
@@ -40,32 +42,33 @@ export interface StartReplOptions {
   /** ログ捕捉用。pino の destination として渡された PassThrough 等から NDJSON
    * 行を読み取り、ログペインに表示する。省略時はログペインを表示しない。 */
   logStream?: NodeJS.ReadableStream;
+  /** `!channels` の一覧を返す。設定ファイルの channels ブロックのエントリ名
+   * (channel フィールド。"default" / "dm" も含む) を返す想定。呼ぶたびに
+   * 設定ファイルを読み直す実装を渡すこと (channels ブロックは「メッセージ
+   * ごとに再読込」という設計思想のため)。省略時は !channels がエラー表示に
+   * なる。 */
+  listChannels?: () => Promise<string[]>;
 }
 
-// ── チャットペインの行 ───────────────────────────────────────────────────
-
-interface ChatLine {
-  text: string;
-  color?: "cyan" | "red";
-}
-
-const CHAT_WINDOW = 50;
-
-// ── ログペインの行 ───────────────────────────────────────────────────────
+// ── 行の表現 (log/chat 共通) ─────────────────────────────────────────────
 //
-// ログペインは level/tag/head/fields を色分けするため、単一の text/color
-// ではなく span (LogSpan) の配列 (LogEntry) として持つ。1 エントリは画面幅で
-// 複数 Row に折り返して表示する (wrapSpans。chat ペインの wrapToRows と同じ
-// 「描画前に端末幅の Row 配列へ平坦化する」方式)。これにより長いログが
-// 画面右端で切れず、末尾まで読める。
+// log ペインは level/tag/head/fields を色分けするため、単一の text/color
+// ではなく span (Span) の配列 (Line) として行を持つ。chat ペインも同じ表現
+// を使う (1-span の Line は文字列行の上位互換)。1 行は画面幅で複数 Row に
+// 折り返して表示する (wrapSpans。「描画前に端末幅の Row 配列へ平坦化する」
+// 方式)。これにより長い行が画面右端で切れず、末尾まで読める。
 
-export interface LogSpan {
+export interface Span {
   text: string;
   color?: string;
   bold?: boolean;
 }
 
-export type LogEntry = LogSpan[];
+export type Line = Span[];
+
+// chat ペインのウィンドウは行分割後の Line 単位 (旧実装は折り返し前の論理行
+// 単位で 50 だったが、HELP_TEXT 1 回で 18 行前後を消費するため引き上げる)。
+const CHAT_WINDOW = 200;
 
 const LOG_WINDOW = 200;
 
@@ -123,6 +126,22 @@ function formatRawLine(raw: string): string {
     .trim();
 }
 
+/** テキストを「1 端末行に対応する論理行」の配列へ正規化する。改行
+ * (`\r\n`/`\r`/`\n`) で分割し、tab はスペースへ展開、ANSI エスケープや
+ * その他の制御文字は除去する (これらを残すと 1 論理行が複数物理行になり、
+ * Row 数 (wrapSpans の戻り値の要素数) と実際の描画行数がズレて残像化する)。
+ * chat ペインへの追加 (appendChat) がテキストを Line へ変換する際に使う。 */
+export function normalizeToLogicalLines(text: string): string[] {
+  return text
+    .split(/\r\n|\r|\n/)
+    .map((line) =>
+      line
+        .replaceAll("\t", "    ")
+        .replace(ANSI_ESCAPE_RE, "")
+        .replace(CONTROL_CHARS_RE, ""),
+    );
+}
+
 /** pi (子プロセスとして起動する coding agent) 由来のログかどうかを判定し、
  * tag ("pi" 固定) と head を決める。それ以外 (runner 自身のログ) は
  * component を tag、msg を head として扱う。 */
@@ -158,7 +177,7 @@ function normalizeHead(head: string): string {
  * 呼び出し側の wrapSpans が担う)。level/tag ([pi] または [component])/
  * head/fields をそれぞれ色分けした span にする。パース失敗・非オブジェクト
  * 時は formatRawLine で 1 span に畳んで返す。 */
-export function formatLogLine(raw: string): LogEntry {
+export function formatLogLine(raw: string): Line {
   let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
@@ -186,7 +205,7 @@ export function formatLogLine(raw: string): LogEntry {
     .map(([k, v]) => `${k}=${renderFieldValue(v)}`)
     .join(" ");
 
-  const spans: LogSpan[] = [{ text: levelName, color: levelColor }];
+  const spans: Span[] = [{ text: levelName, color: levelColor }];
   spans.push({ text: ` [${tag}]`, color: tagColor });
   if (normalizedHead !== "") {
     spans.push({
@@ -200,20 +219,20 @@ export function formatLogLine(raw: string): LogEntry {
   return spans;
 }
 
-/** span 列を表示幅 width ごとの複数 Row (各 Row は LogSpan[]) へ折り返す
+/** span 列を表示幅 width ごとの複数 Row (各 Row は Span[]) へ折り返す
  * (グラフェム単位、string-width 実測。clampSpans の旧実装と同じ流儀)。span の
  * 境界をまたいでも色/bold 属性は維持する (span を分割して次 Row へ続ける)。
  * width に収まらない単独グラフェム (幅 2 の絵文字で width 1 等) でも
  * 無限ループにはならず、そのグラフェム単独で 1 Row になる。width <= 0 の
  * ときは折り返さず `[spans]` を返す。空 spans (`[]`) は高さ 1 を保つため
  * `[[]]` を返す。 */
-export function wrapSpans(spans: LogSpan[], width: number): LogSpan[][] {
+export function wrapSpans(spans: Span[], width: number): Span[][] {
   if (width <= 0) return [spans];
   if (spans.length === 0) return [[]];
 
   const segmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
-  const rows: LogSpan[][] = [];
-  let currentRow: LogSpan[] = [];
+  const rows: Span[][] = [];
+  let currentRow: Span[] = [];
   let currentText = "";
   let currentWidth = 0;
   let currentAttrs: { color?: string; bold?: boolean } = {};
@@ -267,6 +286,10 @@ interface InputLineProps {
   prompt: string;
   value: string;
   cursor: number;
+  /** 入力欄にフォーカスがあるか。フォーカス中はプロンプトを cyan で強調し、
+   * カーソルの反転セルを表示する。非フォーカス時は反転セルを出さない
+   * (出したままだと入力欄がアクティブに見えて紛らわしい)。 */
+  focused: boolean;
   /** 入力欄の可視幅 (prompt を除いた残り列数)。入力が収まらない場合は
    * cursor が常に見えるようグラフェム単位でスライドさせる。undefined
    * (幅不明。非TTY 等) のときは切り詰めない。 */
@@ -312,7 +335,7 @@ function computeVisibleWindow(
  * 出す。入力行はペイン崩れ (2 行目への持ち越し) を防ぐため必ず 1 端末行に
  * 収める — 表示幅が width を超える場合は cursor を含む窓だけを描画する
  * (cursor は常に可視)。 */
-function InputLine({ prompt, value, cursor, width }: InputLineProps) {
+function InputLine({ prompt, value, cursor, focused, width }: InputLineProps) {
   const graphemes = [
     ...new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(
       value,
@@ -327,112 +350,58 @@ function InputLine({ prompt, value, cursor, width }: InputLineProps) {
   const visible = graphemes.slice(start, end);
   const cursorInWindow = cursor - start;
   const before = visible.slice(0, cursorInWindow).join("");
+  const cursorChar = visible[cursorInWindow] ?? " ";
   const after = visible.slice(cursorInWindow + 1).join("");
+
+  // 有効なメタコマンド (!COMMAND) の先頭部分だけ magenta で色付けする。
+  // 絶対 index (ウィンドウオフセット込み) < highlightLen が対象。
+  const highlightLen = metaCommandHighlightLength(value);
+  const beforeHighlightLen = Math.max(
+    0,
+    Math.min(before.length, highlightLen - start),
+  );
+  const beforeHighlighted = before.slice(0, beforeHighlightLen);
+  const beforeRest = before.slice(beforeHighlightLen);
+  const cursorHighlighted = cursor < highlightLen;
+
   return (
     <Box height={1} overflow="hidden" flexShrink={0}>
-      <Text bold wrap="truncate-end">
+      <Text bold {...(focused ? { color: "cyan" } : {})} wrap="truncate-end">
         {prompt}
       </Text>
-      <Text wrap="truncate-end">{before}</Text>
-      <Text inverse wrap="truncate-end">
-        {visible[cursorInWindow] ?? " "}
+      {beforeHighlighted !== "" && (
+        <Text color="magenta" wrap="truncate-end">
+          {beforeHighlighted}
+        </Text>
+      )}
+      <Text wrap="truncate-end">{beforeRest}</Text>
+      <Text
+        {...(focused ? { inverse: true } : {})}
+        {...(cursorHighlighted ? { color: "magenta" } : {})}
+        wrap="truncate-end"
+      >
+        {cursorChar}
       </Text>
       <Text wrap="truncate-end">{after}</Text>
     </Box>
   );
 }
 
-// ── 折り返し (自前) ─────────────────────────────────────────────────────────
+// ── 折り返し ───────────────────────────────────────────────────────────────
 //
 // ink の自動 wrap に任せると「論理行 1 = 端末行 1」の前提が崩れ、slice した
 // 論理行数がペインの height (行数) を超えて overflow="hidden" のクリップと
 // ink のフレーム差分が食い違い、前フレームの文字が残像化する (log/chat 両
-// ペインで観測)。そこで論理行を描画前に端末幅で「行」へ畳み、slice/描画は
-// その行単位で行う。1 行 = 端末 1 行が保証され、残像が出ない。
+// ペインで観測)。そこで論理行を描画前に端末幅で Row (= wrapSpans の戻り値の
+// 各要素) へ畳み、slice/描画はその Row 単位で行う。1 Row = 端末 1 行が
+// 保証され、残像が出ない (log/chat とも Line (= Span[]) を wrapSpans に
+// かけて Row 配列を得る、同一の経路)。
 //
 // 加えて、論理行に埋め込まれた改行 (`\n` 等) を畳まずに 1 Row 内へ残すと、
 // その Row 文字列自体が端末上で複数の物理行として描画されてしまい、ここでも
 // 「Row 数 (JS 側のカウント) < 実際の物理行数」というズレが起きて残像化する。
-// そのため wrapToRows は幅で折るだけでなく、改行/制御文字の正規化も担う。
-// (CONTROL_CHARS_RE / ANSI_ESCAPE_RE はログ整形の formatRawLine と共有)
-
-/** テキストを「1 端末行に対応する論理行」の配列へ正規化する。改行
- * (`\r\n`/`\r`/`\n`) で分割し、tab はスペースへ展開、ANSI エスケープや
- * その他の制御文字は除去する (これらを残すと 1 論理行が複数物理行になり、
- * Row 数と実際の描画行数がズレて残像化する)。 */
-function normalizeToLogicalLines(text: string): string[] {
-  return text
-    .split(/\r\n|\r|\n/)
-    .map((line) =>
-      line
-        .replaceAll("\t", "    ")
-        .replace(ANSI_ESCAPE_RE, "")
-        .replace(CONTROL_CHARS_RE, ""),
-    );
-}
-
-/** 1 つの論理行 (改行・制御文字を含みうる生テキスト) を、表示幅 width に
- * 収まる「行」の配列へ畳む。まず改行等で複数の論理行へ正規化し、各々を
- * `Intl.Segmenter` でグラフェム単位に分割、string-width で実測しながら
- * width を超えないよう積算する (1 グラフェムが width を超える場合でも
- * 無限ループにはならず、そのグラフェム単独で 1 行になる)。width <= 0 の
- * ときは折り返さず正規化済みの論理行をそのまま返す。 */
-export function wrapToRows(text: string, width: number): string[] {
-  const logicalLines = normalizeToLogicalLines(text);
-  if (width <= 0) return logicalLines;
-
-  const rows: string[] = [];
-  const segmenter = new Intl.Segmenter(undefined, {
-    granularity: "grapheme",
-  });
-  for (const line of logicalLines) {
-    if (line === "") {
-      rows.push("");
-      continue;
-    }
-    let current = "";
-    let currentWidth = 0;
-    for (const { segment: grapheme } of segmenter.segment(line)) {
-      const w = stringWidth(grapheme);
-      if (currentWidth + w > width && current !== "") {
-        rows.push(current);
-        current = "";
-        currentWidth = 0;
-      }
-      current += grapheme;
-      currentWidth += w;
-    }
-    rows.push(current);
-  }
-  return rows;
-}
-
-/** 描画単位の 1 行 (端末 1 行に対応)。論理行 1 つが折り返しで複数の Row に
- * 展開される。スロット単位描画 (下記) では React key は slot index を使うため
- * Row 自体はもう key を持たない。 */
-interface Row {
-  text: string;
-  color?: string;
-}
-
-/** 論理行の配列を、表示幅 width で折り返した Row の配列へ平坦化する。色は
- * 元の論理行から引き継ぐ。空文字の論理行も高さ 1 の空行として 1 Row 残す。 */
-function toRows(
-  lines: readonly { text: string; color?: string }[],
-  width: number,
-): Row[] {
-  const rows: Row[] = [];
-  for (const line of lines) {
-    const wrapped = wrapToRows(line.text, width);
-    for (const rowText of wrapped) {
-      rows.push({
-        text: rowText,
-        ...(line.color !== undefined ? { color: line.color } : {}),
-      });
-    }
-  }
-  return rows;
-}
+// そのため改行/制御文字の正規化 (normalizeToLogicalLines) は各行を Line に
+// 変換する時点 (appendChat) で必ず行う。
 
 // ── スクロール ─────────────────────────────────────────────────────────────
 //
@@ -484,10 +453,9 @@ export function titleBarText(title: string, width: number): string {
 // (justifyContent="flex-end" + slice した可変長配列を描画) が残像の主因
 // だったため、これをやめる。
 
-/** グリッドの 1 スロットの内容。log/chat どちらも「1 スロット = span 列」に
- * 統一する (chat の Row {text, color} は 1-span 行 `[{ text, color }]` に
- * 変換して渡す)。 */
-type GridRow = LogSpan[];
+/** グリッドの 1 スロットの内容。log/chat どちらも wrapSpans が返す Row
+ * (Span[]) そのものを渡すため、変換なしで統一できる。 */
+type GridRow = Span[];
 
 const BLANK_GRID_ROW: GridRow = [];
 
@@ -609,8 +577,8 @@ export function App({ chat, options, onDone }: AppProps) {
   );
 
   const [prompt, setPrompt] = useState(() => promptText(stateRef.current));
-  const [chatLines, setChatLines] = useState<ChatLine[]>([]);
-  const [logEntries, setLogEntries] = useState<LogEntry[]>([]);
+  const [chatLines, setChatLines] = useState<Line[]>([]);
+  const [logEntries, setLogEntries] = useState<Line[]>([]);
   const [inputValue, setInputValue] = useState("");
   const [cursor, setCursor] = useState(0);
   const [terminalRows, setTerminalRows] = useState(stdout.rows);
@@ -656,30 +624,38 @@ export function App({ chat, options, onDone }: AppProps) {
     };
   }, [isRawModeSupported, stdout]);
 
-  const appendChat = (text: string, color?: ChatLine["color"]): void => {
-    const line: ChatLine = {
-      text,
-      ...(color !== undefined ? { color } : {}),
-    };
+  /** chat ペインへ 1 論理行 (改行を含みうる生テキスト) を追加する。まず
+   * normalizeToLogicalLines で改行/tab/制御文字を正規化した「1 端末行に
+   * 対応する論理行」の配列に分解し、各々を Line (Span[]) にして push する
+   * (空文字の論理行は空配列 `[]`。これは wrapSpans/toGrid が高さ 1 の空行
+   * として扱う形と同じ)。折り返し (wrapSpans) は log と共通の描画直前の
+   * 処理に委ねる (ここでは行わない)。 */
+  const appendChat = (text: string, color?: "cyan" | "red"): void => {
+    const newLines: Line[] = normalizeToLogicalLines(text).map((lineText) =>
+      lineText === ""
+        ? []
+        : [{ text: lineText, ...(color !== undefined ? { color } : {}) }],
+    );
     setChatLines((prev) => {
-      const next = [...prev, line];
+      const next = [...prev, ...newLines];
       return next.length > CHAT_WINDOW
         ? next.slice(next.length - CHAT_WINDOW)
         : next;
     });
     // offset は Row (折り返し済み端末行) 単位だが、この append 呼び出し側は
-    // 論理行しか扱わず、追加した 1 論理行が折り返し後に何 Row になるかを
-    // 知らない (innerWidth はレンダー側の値)。そのため「スクロールバック中は
-    // 1 論理行 = +1 Row」という誤った仮定で offset を進めるとズレて描画が
-    // 乱れる (旧実装のバグ) — 折り返しで複数行になる CJK/長文だと特に顕著。
-    // 追従中 (offset 0) はそのまま 0 を維持し、スクロールバック中 (offset > 0)
-    // は何もせずそのまま据え置く。据え置いた offset は render 側で毎回
-    // clampOffset により Row 数の変化に合わせてクランプされるため、範囲外には
-    // ならない (行が増えるほど「見ている絶対位置」は下にずれていく形になるが、
-    // 完全な位置追従は行わないベストエフォートとして許容する)。
+    // Line (折り返し前) しか扱わず、追加した 1 Line が折り返し後に何 Row に
+    // なるかを知らない (innerWidth はレンダー側の値)。そのため「スクロール
+    // バック中は 1 Line = +1 Row」という誤った仮定で offset を進めるとズレて
+    // 描画が乱れる (旧実装のバグ) — 折り返しで複数行になる CJK/長文だと
+    // 特に顕著。追従中 (offset 0) はそのまま 0 を維持し、スクロールバック中
+    // (offset > 0) は何もせずそのまま据え置く。据え置いた offset は render
+    // 側で毎回 clampOffset により Row 数の変化に合わせてクランプされるため、
+    // 範囲外にはならない (行が増えるほど「見ている絶対位置」は下にずれて
+    // いく形になるが、完全な位置追従は行わないベストエフォートとして許容
+    // する)。
   };
 
-  const appendLog = (entry: LogEntry): void => {
+  const appendLog = (entry: Line): void => {
     setLogEntries((prev) => {
       const next = [...prev, entry];
       return next.length > LOG_WINDOW
@@ -690,9 +666,9 @@ export function App({ chat, options, onDone }: AppProps) {
     // ヒューリスティックはやめて据え置く (render 側の clampOffset に任せる)。
   };
 
-  // HELP_TEXT を起動時に一度表示 + chat.events 購読 (message/update/reaction)
+  // WELCOME_TEXT を起動時に一度表示 + chat.events 購読 (message/update/reaction)
   useEffect(() => {
-    appendChat(HELP_TEXT);
+    appendChat(WELCOME_TEXT);
 
     const onMessage = (msg: Parameters<typeof formatMessageLine>[1]) => {
       const line = formatMessageLine(chat, msg);
@@ -764,6 +740,20 @@ export function App({ chat, options, onDone }: AppProps) {
           case "help":
             appendChat(HELP_TEXT);
             return;
+          case "channels": {
+            if (options.listChannels === undefined) {
+              appendChat("channel list not available", "red");
+              return;
+            }
+            const channels = await options.listChannels();
+            const lines = channels
+              .map((c) =>
+                c === stateRef.current.channelId ? `${c} (current)` : c,
+              )
+              .map((line) => `  ${line}`);
+            appendChat(["channels in config:", ...lines].join("\n"));
+            return;
+          }
           case "quit":
             requestFinish();
             return;
@@ -834,11 +824,11 @@ export function App({ chat, options, onDone }: AppProps) {
   // が取れない (非TTY) 場合は広め (弱い折り返し) にする。
   const innerWidth =
     terminalCols !== undefined ? Math.max(1, terminalCols - 2 - 1) : 80;
-  // ログの各エントリ (span 列) を端末幅で複数 Row へ折り返し平坦化する
-  // (chat の toRows と同じ方式)。これで offset/viewport の単位が chat と
-  // 同じ Row (端末 1 行) になり、長いログも折り返して最後まで読める。
+  // log/chat とも Line (Span[]) を端末幅で複数 Row へ折り返し平坦化する
+  // (同一の wrapSpans を通す)。これで offset/viewport の単位が両ペインで
+  // 揃って Row (端末 1 行) になり、長い行も折り返して最後まで読める。
   const logRows = logEntries.flatMap((e) => wrapSpans(e, innerWidth));
-  const chatRows = toRows(chatLines, innerWidth);
+  const chatRows = chatLines.flatMap((l) => wrapSpans(l, innerWidth));
 
   // スクロール位置は最新 Row 数に応じてクランプ (行が減った/端末が縮んだ場合に
   // offset が範囲外にならないようにする)。描画に使う値であり state は更新
@@ -855,6 +845,19 @@ export function App({ chat, options, onDone }: AppProps) {
   const focusRing: FocusTarget[] = showLogPane
     ? ["input", "log", "chat"]
     : ["input", "chat"];
+
+  // ペインのスクロール共通処理。キー操作 (useInput 内、focusedTarget で選ぶ)
+  // とマウスホイール (y 座標で選ぶ) の両方から呼ぶ。offset は Row (折り返し
+  // 済みの端末 1 行) 単位で、delta を加えたうえで clampOffset により
+  // [0, maxOffset] へ丸める (総 Row 数・viewport は log/chat で異なるため
+  // pane ごとに選び直す)。
+  const scrollPane = (pane: "log" | "chat", delta: number): void => {
+    const isLog = pane === "log";
+    const setOffset = isLog ? setLogOffset : setChatOffset;
+    const total = isLog ? logRows.length : chatRows.length;
+    const viewport = isLog ? logViewport : chatViewport;
+    setOffset((o) => clampOffset(total, viewport, o + delta));
+  };
 
   // 入力欄の編集 (文字挿入/カーソル移動/kill 系) + 行確定 (Enter) + フォーカス
   // 切替 (Tab/Shift-Tab/Escape) + ペインのスクロール操作。raw mode が効く
@@ -887,11 +890,8 @@ export function App({ chat, options, onDone }: AppProps) {
           // レイアウトは端末全面 (log ペイン: 1..logOuterHeight 行、以降は
           // chat ペイン + 入力欄) なので y でペインを選ぶ。
           const isLogPane = showLogPane && y <= logOuterHeight;
-          const setOffset = isLogPane ? setLogOffset : setChatOffset;
-          const total = isLogPane ? logRows.length : chatRows.length;
-          const viewport = isLogPane ? logViewport : chatViewport;
           const delta = btn === "64" ? 1 : -1;
-          setOffset((o) => clampOffset(total, viewport, o + delta));
+          scrollPane(isLogPane ? "log" : "chat", delta);
         }
         return;
       }
@@ -1025,26 +1025,22 @@ export function App({ chat, options, onDone }: AppProps) {
 
       // ── ペインのスクロール操作 (focusedTarget === "log" | "chat") ──
       // 上下矢印/PageUp/PageDown/Ctrl-P/Ctrl-N のみ有効。文字入力は無視する。
-      const isLog = focusedTarget === "log";
-      const setOffset = isLog ? setLogOffset : setChatOffset;
-      // offset は Row (折り返し済みの端末 1 行) 単位。
-      const total = isLog ? logRows.length : chatRows.length;
-      const viewport = isLog ? logViewport : chatViewport;
-      const clamp = (o: number): number => clampOffset(total, viewport, o);
+      const pane = focusedTarget === "log" ? "log" : "chat";
+      const viewport = pane === "log" ? logViewport : chatViewport;
       if (key.upArrow || (key.ctrl && input === "p")) {
-        setOffset((o) => clamp(o + 1));
+        scrollPane(pane, 1);
         return;
       }
       if (key.downArrow || (key.ctrl && input === "n")) {
-        setOffset((o) => clamp(o - 1));
+        scrollPane(pane, -1);
         return;
       }
       if (key.pageUp) {
-        setOffset((o) => clamp(o + viewport));
+        scrollPane(pane, viewport);
         return;
       }
       if (key.pageDown) {
-        setOffset((o) => clamp(o - viewport));
+        scrollPane(pane, -viewport);
         return;
       }
       // その他のキー (文字入力等) はここでは何もしない。
@@ -1057,27 +1053,16 @@ export function App({ chat, options, onDone }: AppProps) {
 
   // 各ペインを固定 viewportHeight スロットのグリッドへ組み立てる。followTail
   // (offset 0) のときは新着が下に来るよう上を空行で埋め、スクロールバック中は
-  // 下を空行で埋める (詳細は toGrid のコメント参照)。log/chat とも Row 側で
-  // 既に折り返し済み (幅内) のため、ここでの追加の切り詰めは不要。
+  // 下を空行で埋める (詳細は toGrid のコメント参照)。log/chat とも Row (=
+  // wrapSpans の戻り値の要素、GridRow と同じ Span[] 表現) 側で既に折り返し
+  // 済み (幅内) のため、ここでの追加の変換・切り詰めは不要。
   const logGrid = toGrid(
     visibleSlice(logRows, logViewport, logOffsetClamped),
     logViewport,
     logOffsetClamped === 0,
   );
   const chatGrid = toGrid(
-    visibleSlice(chatRows, chatViewport, chatOffsetClamped).map(
-      (row): GridRow =>
-        // 空の論理行は空スロット扱いにして、グリッドの余白埋めと同じ描画
-        // (単一スペース) に揃える。
-        row.text === ""
-          ? BLANK_GRID_ROW
-          : [
-              {
-                text: row.text,
-                ...(row.color !== undefined ? { color: row.color } : {}),
-              },
-            ],
-    ),
+    visibleSlice(chatRows, chatViewport, chatOffsetClamped),
     chatViewport,
     chatOffsetClamped === 0,
   );
@@ -1112,6 +1097,7 @@ export function App({ chat, options, onDone }: AppProps) {
         prompt={prompt}
         value={inputValue}
         cursor={cursor}
+        focused={focusedTarget === "input"}
         {...(inputWidth !== undefined ? { width: inputWidth } : {})}
       />
     </Box>

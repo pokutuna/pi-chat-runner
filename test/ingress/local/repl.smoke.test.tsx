@@ -26,7 +26,10 @@ import { describe, expect, it } from "vitest";
 import { Reactions } from "../../../src/egress/reactions.js";
 import type { Sender } from "../../../src/ingress/chat-event.js";
 import type { Ingress } from "../../../src/ingress/ingress.js";
-import { HELP_TEXT } from "../../../src/ingress/local/repl-logic.js";
+import {
+  HELP_TEXT,
+  WELCOME_TEXT,
+} from "../../../src/ingress/local/repl-logic.js";
 import { App } from "../../../src/ingress/local/repl.js";
 import type {
   LocalChat,
@@ -139,7 +142,7 @@ async function flushAsync(): Promise<void> {
 }
 
 describe("App (ink smoke test)", () => {
-  it("起動時に HELP_TEXT がチャットペインに表示される", async () => {
+  it("起動時に WELCOME_TEXT がチャットペインに表示される", async () => {
     const chat = createFakeLocalChat();
     const input = new PassThrough();
     const output = new PassThrough();
@@ -153,9 +156,37 @@ describe("App (ink smoke test)", () => {
     );
     await flushAsync();
 
-    // HELP_TEXT は複数行あり、末尾追従 (offset 0) のペインは末尾の viewport
-    // 行分だけを表示する (フォールバックの端末サイズでは HELP_TEXT 全体より
+    // WELCOME_TEXT は複数行あり、末尾追従 (offset 0) のペインは末尾の viewport
+    // 行分だけを表示する (フォールバックの端末サイズでは WELCOME_TEXT 全体より
     // viewport が小さい)。そのため末尾行の先頭語で判定する。
+    const lastLine = WELCOME_TEXT.split("\n").at(-1);
+    expect(lastLine).toBeDefined();
+    const lastWord = (lastLine as string).split(/\s/)[0];
+    expect(lastWord).toBeDefined();
+    expect(lastFrame()).toContain(lastWord as string);
+
+    unmount();
+  });
+
+  it("!help すると HELP_TEXT の内容がチャットペインに表示される (非TTY)", async () => {
+    const chat = createFakeLocalChat();
+    const input = new PassThrough();
+    const output = new PassThrough();
+
+    const { lastFrame, unmount } = render(
+      <App
+        chat={chat}
+        options={{ initialChannelId: "local", input, output }}
+        onDone={() => {}}
+      />,
+    );
+    await flushAsync();
+
+    input.write("!help\n");
+    await flushAsync();
+
+    // HELP_TEXT も複数行あり、末尾追従のペインは末尾の viewport 行分だけを
+    // 表示するため、末尾行の先頭語で判定する。
     const lastLine = HELP_TEXT.split("\n").at(-1);
     expect(lastLine).toBeDefined();
     const lastWord = (lastLine as string).split(/\s/)[0];
@@ -381,15 +412,65 @@ describe("App (ink smoke test)", () => {
     // formatLogLine が `LEVEL [component] msg` に整形する
     expect(lastFrame()).toContain("[session]");
     expect(lastFrame()).toContain("gate triggered");
-    // チャットペイン (HELP_TEXT) と同居している = 上下分割で両方見えている。
+    // チャットペイン (WELCOME_TEXT) と同居している = 上下分割で両方見えている。
     // 末尾追従 (offset 0) のペインは末尾の viewport 行分だけを表示するため、
-    // HELP_TEXT の末尾行の先頭語で判定する (フォールバックの端末サイズでは
-    // HELP_TEXT 全体より viewport が小さい)。
-    const lastLine = HELP_TEXT.split("\n").at(-1);
+    // WELCOME_TEXT の末尾行の先頭語で判定する (フォールバックの端末サイズでは
+    // WELCOME_TEXT 全体より viewport が小さい)。
+    const lastLine = WELCOME_TEXT.split("\n").at(-1);
     expect(lastLine).toBeDefined();
     const lastWord = (lastLine as string).split(/\s/)[0];
     expect(lastWord).toBeDefined();
     expect(lastFrame()).toContain(lastWord as string);
+
+    unmount();
+  });
+
+  it("!channels は listChannels の一覧を current 付きで表示する", async () => {
+    const chat = createFakeLocalChat();
+    const input = new PassThrough();
+    const output = new PassThrough();
+
+    const { lastFrame, unmount } = render(
+      <App
+        chat={chat}
+        options={{
+          initialChannelId: "local",
+          input,
+          output,
+          listChannels: () => Promise.resolve(["default", "dm", "local"]),
+        }}
+        onDone={() => {}}
+      />,
+    );
+
+    input.write("!channels\n");
+    await flushAsync();
+
+    expect(lastFrame()).toContain("channels in config:");
+    expect(lastFrame()).toContain("default");
+    expect(lastFrame()).toContain("dm");
+    expect(lastFrame()).toContain("local (current)");
+
+    unmount();
+  });
+
+  it("!channels は listChannels 未指定だとエラーを表示する", async () => {
+    const chat = createFakeLocalChat();
+    const input = new PassThrough();
+    const output = new PassThrough();
+
+    const { lastFrame, unmount } = render(
+      <App
+        chat={chat}
+        options={{ initialChannelId: "local", input, output }}
+        onDone={() => {}}
+      />,
+    );
+
+    input.write("!channels\n");
+    await flushAsync();
+
+    expect(lastFrame()).toContain("channel list not available");
 
     unmount();
   });

@@ -157,6 +157,10 @@ describe("parseLine", () => {
     expect(parseLine("!channel").kind).toBe("error");
   });
 
+  it("!channels を channels 一覧表示として扱う", () => {
+    expect(parseLine("!channels")).toEqual({ kind: "channels" });
+  });
+
   it("!dm on / !dm off を dm 切替として扱う", () => {
     expect(parseLine("!dm on")).toEqual({ kind: "dm", on: true });
     expect(parseLine("!dm off")).toEqual({ kind: "dm", on: false });
