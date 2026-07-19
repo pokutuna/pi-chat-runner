@@ -7,6 +7,8 @@
 |---|---|
 | `compose.yaml` | Firestore エミュレータ (`FirestoreStateStore` のテスト専用) |
 | `compose.local-container.yaml` | UID 分離 + Node Permission Model を有効にした状態で、コンテナ内で Socket Mode を動かす検証用 |
+| `local.sh` | 検証用コンテナの build / tui / socket / down をまとめたランチャー |
+| `Dockerfile.dev-agent` | base イメージにローカル検証用の拡張 (`pi-smart-fetch` 等) をまとめて追加した `pi-chat-runner-dev:local` を作る |
 | `Dockerfile.cloud-run-verify` | `config/` を焼き込み、Cloud Run へ実機デプロイして動作確認するための使い捨てイメージ |
 | `config/` | 上記で使うローカル設定 (`agent.yaml` ほか)。実チャンネル ID を含むため git 管理外 (`.gitignore`) |
 | `drive-pi.ts` | Slack を介さず pi プロセスを直接駆動する使い捨てスクリプト |
@@ -27,14 +29,20 @@ FIRESTORE_EMULATOR_HOST=localhost:8080 pnpm test
 ## コンテナでのローカル検証 (UID 分離 + Permission Model)
 
 ```sh
-docker build -t pi-chat-runner:local .
-docker compose -f develop/compose.local-container.yaml --env-file .env.socket up
-docker compose -f develop/compose.local-container.yaml --env-file .env.socket down -v
+develop/local.sh build            # base (pi-chat-runner:local) + dev イメージ (pi-chat-runner-dev:local) をビルド
+develop/local.sh build --base-only  # base のみビルド
+
+develop/local.sh tui [channelId]  # コンテナ内 TUI (既定チャンネル: local)
+develop/local.sh socket           # Socket Mode で起動 (compose up)
+develop/local.sh down             # 停止 (-v で volume も消す: develop/local.sh down -v)
 ```
 
-`pi-smart-fetch` など native addon 拡張も確認したい場合は、先に
-`examples/smart-fetch-agent/Dockerfile` で `smart-fetch-agent:local` をビルドし、
-`compose.local-container.yaml` の `image:` をそちらに向ける。
+`local.sh build` は base (`pi-chat-runner:local`) と、`Dockerfile.dev-agent`
+でローカル検証用の拡張 (`pi-smart-fetch` 等) をまとめて追加した dev イメージ
+(`pi-chat-runner-dev:local`) を両方ビルドする。`compose.local-container.yaml`
+はこの `pi-chat-runner-dev:local` を参照する。
+
+単一拡張だけを使う最小構成の例は `examples/smart-fetch-agent/README.md` を参照。
 
 ## Cloud Run での実機検証
 

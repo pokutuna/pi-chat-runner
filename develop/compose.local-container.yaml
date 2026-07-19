@@ -1,12 +1,13 @@
 # チャンネル別 skill/extension の隔離確認用 (uid 分離 + Node Permission Model を
 # 本番相当で有効化してローカル Socket Mode を動かす)。ローカル専用・使い捨て。
 #
-# 起動: docker compose -f develop/compose.local-container.yaml --env-file .env.socket up
-# 停止: docker compose -f develop/compose.local-container.yaml down
+# 起動 (Socket Mode): develop/local.sh socket
+# 起動 (コンテナ内 TUI): develop/local.sh tui [channelId]
+# 停止: develop/local.sh down
 
 services:
   pi-chat-runner:
-    image: smart-fetch-agent:local
+    image: pi-chat-runner-dev:local
     environment:
       SLACK_MODE: ${SLACK_MODE}
       SLACK_APP_TOKEN: ${SLACK_APP_TOKEN}

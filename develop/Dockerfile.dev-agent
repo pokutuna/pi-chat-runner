@@ -1,0 +1,16 @@
+# ローカル検証用に拡張をまとめて入れる dev イメージ。examples/smart-fetch-agent は
+# 単一拡張の説明用の例だが、こちらはローカルでの動作確認専用に複数拡張を積む。
+ARG BASE_IMAGE=pi-chat-runner:local
+FROM ${BASE_IMAGE}
+
+# node:26-slim (base イメージの runtime stage) には corepack が無いため、base
+# イメージ自身の builder stage と同じ方法で pnpm を固定する: standalone
+# インストーラを使う。node:26-slim 同梱の npm (11.17.0) は `npm install -g` で
+# クラッシュする (arborist の packument-cache 初期化バグ) ため。
+ENV PNPM_HOME=/usr/local/share/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+RUN curl -fsSL https://get.pnpm.io/install.sh | env PNPM_VERSION=10.30.3 SHELL=/bin/sh ENV=/dev/null sh -
+
+# ローカル検証で使う拡張をまとめて /app/node_modules にインストールする。
+WORKDIR /app
+RUN pnpm add pi-smart-fetch @pokutuna/pi-google-genai
