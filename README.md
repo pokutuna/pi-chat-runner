@@ -218,7 +218,9 @@ pnpm run dev          # real Slack, Events API
 
 ### Without Slack: `dev:local`
 
-`dev:local` runs the whole pipeline — gate → inbox → session (real pi) → egress — against a stdin/stdout REPL. No Slack App or tokens required; put only the model credentials (e.g. `GOOGLE_CLOUD_PROJECT`) in `.env.local`. Config is read from `CONFIG_PATH` as usual: the `connector` section is ignored, and `channels`/`store`/`agent` apply as-is, so passing a real channel ID (`node dist/server.mjs local C0123456789`) exercises that channel's production config. The default channel ID is `local` — the example `agent.yaml` ships a matching entry.
+`dev:local` runs the whole pipeline — gate → inbox → session (real pi) → egress — against a terminal UI ([ink](https://github.com/vadimdemedes/ink)) split left/right into a log pane (structured pino logs) and a chat pane (conversation + input), keeping the two readable instead of interleaving on one stdout. Each pane tails its latest output; arrow keys / PageUp-Down scroll back and Tab switches which pane scrolls. No Slack App or tokens required; put only the model credentials (e.g. `GOOGLE_CLOUD_PROJECT`) in `.env.local`. Config is read from `CONFIG_PATH` as usual: the `connector` section is ignored, and `channels`/`store`/`agent` apply as-is, so passing a real channel ID (`node dist/server.mjs local C0123456789`) exercises that channel's production config. The default channel ID is `local` — the example `agent.yaml` ships a matching entry.
+
+Chat pane interaction (log pane omitted for brevity):
 
 ```
 #local U_LOCAL> @bot investigate this alert

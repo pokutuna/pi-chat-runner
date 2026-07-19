@@ -6,7 +6,8 @@ import { describe, expect, it } from "vitest";
 import { Reactions } from "../../../src/egress/reactions.js";
 import type { Sender } from "../../../src/ingress/chat-event.js";
 import type { Ingress } from "../../../src/ingress/ingress.js";
-import { parseLine, startRepl } from "../../../src/ingress/local/repl.js";
+import { parseLine } from "../../../src/ingress/local/repl-logic.js";
+import { startRepl } from "../../../src/ingress/local/repl.js";
 import type {
   LocalChat,
   LocalChatOutputEvents,

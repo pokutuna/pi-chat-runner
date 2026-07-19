@@ -9,10 +9,12 @@
 
 import { mkdirSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
+import { PassThrough } from "node:stream";
 import { fileURLToPath } from "node:url";
 
 import { Firestore } from "@google-cloud/firestore";
 import { WebClient } from "@slack/web-api";
+import pino from "pino";
 
 import type { BridgeOptions } from "./bridge.js";
 import { startBridge } from "./bridge.js";
@@ -160,55 +162,55 @@ function buildPiPermissionConfig(
 function missingConnectorConfig(configPath: string): never {
   console.error("Missing or incomplete connector.slack config");
   console.error("");
-  console.error(
-    `起動には ${configPath} の connector.slack ブロックが必要です:`,
-  );
+  console.error(`${configPath} needs a connector.slack block to start:`);
   console.error("");
   console.error("connector:");
   console.error("  slack:");
   console.error(
-    "    mode: ${env.SLACK_MODE:-socket}         # socket | events (既定 socket。architecture.md §1)",
+    "    mode: ${env.SLACK_MODE:-socket}         # socket | events (default socket; architecture.md §1)",
   );
   console.error(
-    "    botToken: ${env.SLACK_BOT_TOKEN}        # 必須 (xoxb-...)",
+    "    botToken: ${env.SLACK_BOT_TOKEN}        # required (xoxb-...)",
   );
-  console.error("    botUserId: ${env.SLACK_BOT_USER_ID}     # 必須 (U...)");
+  console.error(
+    "    botUserId: ${env.SLACK_BOT_USER_ID}     # required (U...)",
+  );
   console.error("    socket:");
   console.error(
-    "      appToken: ${env.SLACK_APP_TOKEN}      # socket 時必須 (xapp-...)",
+    "      appToken: ${env.SLACK_APP_TOKEN}      # required in socket mode (xapp-...)",
   );
   console.error("    events:");
   console.error(
-    "      signingSecret: ${env.SLACK_SIGNING_SECRET}  # events 時必須",
+    "      signingSecret: ${env.SLACK_SIGNING_SECRET}  # required in events mode",
   );
   console.error(
-    "      port: ${env.PORT:-8080}               # events 時の listen ポート",
-  );
-  console.error("");
-  console.error("任意 (agent.yaml でも設定可。詳細は config.md §6):");
-  console.error(
-    "  PI_AGENT_UID/GID    pi を落とす実行 uid/gid (session-runtime.md §6 の UID 分離。両方セットで有効。agent.yaml の agent.runtime.uid/gid でも指定可)",
-  );
-  console.error(
-    "  PI_AGENT_HOME       pi 子プロセスへ常に HOME として渡すディレクトリ (既定 /home/agent。agent.yaml の agent.runtime.home でも指定可)",
-  );
-  console.error(
-    "  PI_PERMISSION_MODE  0 で Node Permission Model 起動を無効化 (既定 ON。agent.yaml の agent.runtime.permissionMode: false でも無効化可)",
-  );
-  console.error(
-    "  TURN_TIMEOUT_MS     1 ターンの上限 ms (既定 600000 = 10 分。超過で pi を kill してセッションを畳む)",
-  );
-  console.error(
-    "  PROGRESS_NOTICE_INTERVAL_MS  長時間ターンの進捗通知の間隔 ms (既定 30000。0 で無効化)",
-  );
-  console.error(
-    "  上記 TURN_TIMEOUT_MS/PROGRESS_NOTICE_INTERVAL_MS は設定ファイル (CONFIG_PATH) の agent ブロックでも設定可 (env が優先)。pi へ渡す追加 env は agent.env で明示列挙する",
+    "      port: ${env.PORT:-8080}               # listen port in events mode",
   );
   console.error("");
-  console.error("例 (.env ファイル推奨):");
-  console.error("  cp .env.example .env  # 値を埋める");
+  console.error("Optional (can also be set in agent.yaml; see config.md §6):");
   console.error(
-    "  pnpm run dev          # --env-file-if-exists=.env で読み込まれる",
+    "  PI_AGENT_UID/GID    uid/gid pi runs as (UID separation, session-runtime.md §6; both must be set. Also settable via agent.runtime.uid/gid in agent.yaml)",
+  );
+  console.error(
+    "  PI_AGENT_HOME       directory always passed as HOME to the pi child process (default /home/agent. Also settable via agent.runtime.home in agent.yaml)",
+  );
+  console.error(
+    "  PI_PERMISSION_MODE  set to 0 to disable the Node Permission Model (default ON. Also settable via agent.runtime.permissionMode: false in agent.yaml)",
+  );
+  console.error(
+    "  TURN_TIMEOUT_MS     per-turn limit in ms (default 600000 = 10 min; pi is killed and the session ends if exceeded)",
+  );
+  console.error(
+    "  PROGRESS_NOTICE_INTERVAL_MS  interval in ms between progress notices on long turns (default 30000; 0 disables)",
+  );
+  console.error(
+    "  TURN_TIMEOUT_MS/PROGRESS_NOTICE_INTERVAL_MS above can also be set in the config file's (CONFIG_PATH) agent block (env takes precedence). Extra env passed to pi is listed explicitly in agent.env",
+  );
+  console.error("");
+  console.error("Example (.env file recommended):");
+  console.error("  cp .env.example .env  # fill in the values");
+  console.error(
+    "  pnpm run dev          # loaded via --env-file-if-exists=.env",
   );
   process.exit(1);
 }
@@ -374,7 +376,15 @@ async function buildCommonBridgeOptions(configPath: string): Promise<{
  * startBridge に web を渡さず、poster/reactions/userResolver/fetchMessage を
  * LocalChat から注入する (bridge.ts の 2 点の変更で web なし起動が可能になった)。
  * startBridge (eventSource.start が resolve 次第すぐ返る) の後に REPL を起動し、
- * REPL 終了 (!quit / Ctrl-D) で exit(0) する。 */
+ * REPL 終了 (!quit / Ctrl-D) で exit(0) する。
+ *
+ * ink 化 (repl.tsx) に伴い、REPL 起動後は構造化ログとチャット画面が同じ
+ * stdout に混在すると読みにくい。local mode 専用に pino の destination を
+ * PassThrough に差し替えた logger を作り、startBridge にはその logger を
+ * (buildCommonBridgeOptions が返す options.logger の代わりに) 渡し、同じ
+ * PassThrough を startRepl の logStream としてログペインに表示する。
+ * rootLogger (通常の Slack 起動パス) 自体はそのまま stdout に出続ける —
+ * この差し替えは runLocal 内に閉じる。 */
 async function runLocal(argv: string[]): Promise<void> {
   const channelId = argv[3] ?? DEFAULT_LOCAL_CHANNEL_ID;
   const configPath = process.env.CONFIG_PATH ?? DEFAULT_CONFIG_PATH;
@@ -382,7 +392,15 @@ async function runLocal(argv: string[]): Promise<void> {
   const { store, storeConfig, options } =
     await buildCommonBridgeOptions(configPath);
 
-  logger.info(
+  const chat = createLocalChat({ defaultChannelId: channelId });
+
+  const logStream = new PassThrough();
+  const localLogger = pino(
+    { level: process.env.LOG_LEVEL ?? "info" },
+    logStream,
+  );
+
+  localLogger.child({ component: "server" }).info(
     {
       storeBackend: storeConfig.backend,
       configPath,
@@ -390,8 +408,6 @@ async function runLocal(argv: string[]): Promise<void> {
     },
     "local mode: state store configured",
   );
-
-  const chat = createLocalChat({ defaultChannelId: channelId });
 
   await startBridge({
     eventSource: chat.ingress,
@@ -402,9 +418,10 @@ async function runLocal(argv: string[]): Promise<void> {
     userResolver: chat.userResolver,
     fetchMessage: chat.fetchMessage,
     ...options,
+    logger: localLogger.child({ component: "server" }),
   });
 
-  await startRepl(chat, { initialChannelId: channelId });
+  await startRepl(chat, { initialChannelId: channelId, logStream });
   process.exit(0);
 }
 

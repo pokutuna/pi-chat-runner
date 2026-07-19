@@ -43,13 +43,18 @@
     "@slack/web-api": "^7.18.0",
     "better-sqlite3": "^12.11.1",
     "hono": "^4.12.27",
+    "ink": "^7.1.0",
     "pino": "^10.3.1",
+    "react": "^19.2.7",
+    "string-width": "^8.2.0",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^26.1.0",
+    "@types/react": "^19.2.17",
+    "ink-testing-library": "^4.0.0",
     "oxfmt": "^0.57.0",
     "oxlint": "^1.72.0",
     "pino-pretty": "^13.1.3",

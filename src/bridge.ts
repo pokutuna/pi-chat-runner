@@ -217,8 +217,13 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
   const runner = new SessionRunner({
     configSource,
     store,
-    router: new EgressRouter({ poster, formatter: toMrkdwn }),
+    router: new EgressRouter({
+      poster,
+      formatter: toMrkdwn,
+      logger: logger.child({ component: "egress" }),
+    }),
     reactions,
+    logger: logger.child({ component: "session" }),
     // mentionFormat は必須 (SessionRunner はプラットフォーム中立で既定値を
     // 持たない)。bridge.ts は Slack 専用モジュールなので、Slack の mrkdwn
     // mention 記法をここで注入する
