@@ -5,7 +5,7 @@
 // I/O (channels.yaml の読み込み・stdout への出力) は server.ts が担い、この
 // モジュールは ChannelsFile を受け取って文字列を返す純関数だけを持つ (テスト容易性)。
 
-import { resolveSessionPolicy } from "../session/runner.js";
+import { resolveSessionPolicy } from "../session/policy.js";
 import type { ChannelDoc, ChannelsFile, WhenNode } from "./channel-doc.js";
 import {
   DEFAULT_CHANNEL,

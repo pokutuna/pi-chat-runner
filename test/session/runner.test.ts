@@ -28,12 +28,6 @@ import type {
   InboundMessage,
   ReactionEvent,
 } from "../../src/ingress/chat-event.js";
-import type {
-  FetchedMessage,
-  FetchMessage,
-  MentionFormat,
-  PiPermissionConfig,
-} from "../../src/session/runner.js";
 import {
   computeKickDelayMs,
   isIdleExpired,
@@ -41,9 +35,15 @@ import {
   replyThreadKeyOf,
   resolveSessionPolicy,
   type SessionPolicy,
-  SessionRunner,
   sessionKeyOf,
+} from "../../src/session/policy.js";
+import type { MentionFormat } from "../../src/session/prompt.js";
+import type {
+  FetchedMessage,
+  FetchMessage,
+  PiPermissionConfig,
 } from "../../src/session/runner.js";
+import { SessionRunner } from "../../src/session/runner.js";
 import { InMemoryStateStore } from "../../src/store/state/backends/memory.js";
 import { inboxItemId } from "../../src/store/state/inbox-item.js";
 import type { StateStore } from "../../src/store/state/interfaces.js";

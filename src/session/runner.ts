@@ -10,21 +10,9 @@
 // Step 3 相当のローカル置きっぱなし)。turn timeout (Step 6) もここで実装する
 // (session-runtime.md §6「ターンにタイムアウトを設け、超過したら pi を kill」)。
 
-import { existsSync } from "node:fs";
-import {
-  chmod,
-  chown,
-  lstat,
-  mkdir,
-  readdir,
-  readFile,
-  realpath,
-  rename,
-  stat,
-} from "node:fs/promises";
+import { lstat, realpath } from "node:fs/promises";
 import { hostname } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 import type { ClassifierClient } from "../classifier/client.js";
 import type { ChannelDoc } from "../config/channel-doc.js";
@@ -54,27 +42,37 @@ import {
   extractTurnErrors,
   extractUsageTotals,
   piEventLogFields,
-  preview,
   type UsageTotals,
 } from "./pi-events.js";
+import {
+  computeKickDelayMs,
+  renderEvent,
+  renderItems,
+  replyThreadKeyOf,
+  resolveSessionPolicy,
+  type SessionPolicy,
+  sessionKeyOf,
+} from "./policy.js";
+import { progressEmoji, toolArgsPreview } from "./progress.js";
+import {
+  ACK_NOTICE_TEXT,
+  buildSystemPrompt,
+  DISABLE_NOTICE_TEXT,
+  ENABLE_NOTICE_TEXT,
+  type MentionFormat,
+  prependContext,
+  REJECT_NOTICE_TEXT,
+} from "./prompt.js";
 import { isAgentEnd, isToolExecutionEnd, isToolExecutionStart } from "./rpc.js";
-import { buildPiPermissionOptions, PiProcess } from "./runtime.js";
-import { rotatedSessionFile, SESSION_FILE } from "./session-file.js";
-
-/** app 共通プロンプトのプラットフォーム中立な固定部分。ChannelDoc.systemPrompt は
- * これへの追記分 (architecture.md §2)。mention 記法の説明は mentionFormat に依存する
- * ため別関数 (mentionInstruction) で組み立て、buildSystemPrompt で結合する */
-const APP_SYSTEM_PROMPT = [
-  "You are an assistant running inside a chat thread.",
-  "Your response reaches the user ONLY through the reply(thread_key, text) tool;",
-  "plain assistant text is never delivered.",
-  "If no response is needed, simply do not call reply.",
-].join(" ");
-
-/** ユーザーへの言及をレンダリングする関数 (返信本文に埋め込む記法)。
- * プラットフォームごとに記法が異なるため SessionRunnerOptions では必須
- * (bridge が利用先プラットフォームの記法を渡す。bridge 以外の利用者は自分で実装を渡す) */
-export type MentionFormat = (userId: string) => string;
+import { PiProcess } from "./runtime.js";
+import {
+  buildSpawnOptions,
+  loadMemoryIndex,
+  prepareWorkdir,
+  resolveBuiltinExtensionPaths,
+  resolveBuiltinMemorySkillPath,
+  warnPolicyMismatches,
+} from "./spawn.js";
 
 /** reaction の対象メッセージ本文を取得する port (session-model.md §5「人間による
  * リアクション起動」)。bridge が Slack conversations.replies/history で実装する。
@@ -90,95 +88,6 @@ export interface FetchedMessage {
   threadTs?: string;
   /** 発言者 (表示名解決は任意)。 */
   userId?: string;
-}
-
-/** mention 記法の説明文を組み立てる。mentionFormat の出力例をそのまま
- * システムプロンプトへ埋め込み、実際の記法をエージェントに示す */
-function mentionInstruction(mentionFormat: MentionFormat): string {
-  return (
-    "Users appear as `name (USER_ID)`; to mention one in a reply, write " +
-    `${mentionFormat("USER_ID")} (not the plain name).`
-  );
-}
-
-/** 組み込み extension のファイル名 (リポジトリ/パッケージ直下の extensions/)。
- * reply は唯一の返信経路、permission-gate は事故防止層 (config.md §5) で、どの
- * プラットフォームで使う場合も常時注入する — プラットフォーム非依存なので呼び出し側に
- * 渡させず SessionRunner 自身が解決する。export は標準機能として同様に扱う。
- * pi が --extension で TS ソースを直接ロードするためビルド対象外。 */
-const BUILTIN_EXTENSION_NAMES = [
-  "reply.ts",
-  "permission-gate.ts",
-  "export.ts",
-] as const;
-
-/** 組み込み extension の絶対パスを解決する。extensions/ はソースツリーでもパッケージ
- * 配布物 (package.json files) でもルート直下にあるが、このモジュール自身の位置が
- * tsx 実行時 (src/session/) とバンドル後 (dist/ 直下) で深さが変わるため、候補を
- * 実在チェックで選ぶ。見つからなければ配置が壊れているので fail-loud。 */
-function resolveBuiltinExtensionPaths(): string[] {
-  for (const rel of ["../extensions/", "../../extensions/"]) {
-    const dir = fileURLToPath(new URL(rel, import.meta.url));
-    if (existsSync(join(dir, BUILTIN_EXTENSION_NAMES[0]))) {
-      return BUILTIN_EXTENSION_NAMES.map((name) => join(dir, name));
-    }
-  }
-  throw new Error(
-    `built-in extensions not found relative to ${import.meta.url} (expected an "extensions/" directory at the package root)`,
-  );
-}
-
-/** 組み込み memory skill (リポジトリ/パッケージ直下の builtin-skills/memory/) の
- * 絶対パスを解決する (docs/design/memory.md)。shared 有効時のみ使われる。
- * ルート直下の skills/ (利用者が $AGENT_HOME に焼き込む全チャンネル共通 skill の口。
- * Dockerfile 参照) とは別物 — そちらに置くと pi の HOME 自動発見で全チャンネルに
- * 効いてしまい、ChannelDoc.memory の opt-out が効かない。配置と解決規則は
- * resolveBuiltinExtensionPaths と同じ — ソースツリーとバンドル後で深さが変わるため
- * 候補を実在チェックで選び、見つからなければ fail-loud。 */
-function resolveBuiltinMemorySkillPath(): string {
-  for (const rel of [
-    "../builtin-skills/memory",
-    "../../builtin-skills/memory",
-  ]) {
-    const dir = fileURLToPath(new URL(rel, import.meta.url));
-    if (existsSync(join(dir, "SKILL.md"))) {
-      return dir;
-    }
-  }
-  throw new Error(
-    `built-in memory skill not found relative to ${import.meta.url} (expected "builtin-skills/memory/SKILL.md" at the package root)`,
-  );
-}
-
-/** チャンネル別の追加 skill / extension パス (ChannelDoc.skills / .extensions,
- * config.md §2) を検証し realpath で正規化する。イメージに焼き込んだパスを指す
- * 想定なので、実在しないパスは設定ミスとして fail-loud で throw する。
- * extension は pi の --extension がディレクトリを受けないため .ts/.js に限る。 */
-async function resolveChannelResourcePaths(
-  paths: string[] | undefined,
-  kind: "skills" | "extensions",
-): Promise<string[]> {
-  if (paths === undefined || paths.length === 0) return [];
-  return await Promise.all(
-    paths.map(async (path) => {
-      if (
-        kind === "extensions" &&
-        !path.endsWith(".ts") &&
-        !path.endsWith(".js")
-      ) {
-        throw new Error(
-          `channel extensions entry must be a .ts/.js file: ${path}`,
-        );
-      }
-      try {
-        return await realpath(path);
-      } catch (err) {
-        throw new Error(`channel ${kind} path not found: ${path}`, {
-          cause: err,
-        });
-      }
-    }),
-  );
 }
 
 /** Node Permission Model 有効化の静的パラメタ (session-runtime.md §6)。
@@ -326,236 +235,13 @@ interface PendingKick {
   channelId: string;
 }
 
-/** session.mode / reply.mode の実効値 (doc 未設定時の既定込み。session-model.md §3) */
-export interface SessionPolicy {
-  sessionMode: "thread" | "channel";
-  replyMode: "thread" | "flat";
-}
-
-/** ChannelDoc.session / ChannelDoc.reply からポリシーを導出する。DM は既定
- * session: channel, reply: flat (session-model.md §3 「DM は予約名 dm の既定」) */
-export function resolveSessionPolicy(
-  doc: ChannelDoc | null,
-  isDm: boolean,
-): SessionPolicy {
-  return {
-    sessionMode: doc?.session?.mode ?? (isDm ? "channel" : "thread"),
-    replyMode: doc?.reply?.mode ?? (isDm ? "flat" : "thread"),
-  };
-}
-
-/** セッション (文脈) キーの導出。sessionMode "thread" は現行 threadKeyOf と同じ
- * (channelId:threadTs ?? メッセージ ts)、"channel" は channelId のみ
- * (session-model.md §3) */
-export function sessionKeyOf(
-  event: InboundMessage,
-  policy: SessionPolicy,
-): string {
-  if (policy.sessionMode === "channel") {
-    return event.conversation.channelId;
-  }
-  return `${event.conversation.channelId}:${event.conversation.threadTs ?? event.id}`;
-}
-
-/** 返信宛先キーの導出。メッセージごとに発行し、sessionKey とは独立に
- * トリガーメッセージの位置を指す (session-model.md §3) */
-export function replyThreadKeyOf(event: InboundMessage): string {
-  return `${event.conversation.channelId}:${event.conversation.threadTs ?? event.id}`;
-}
-
-/** イベント 1 件のプロンプト描画 (session-runtime.md §4 の renderEvent)。
- * threadKey 指定時は from/time/thread_key をラベル付きで列挙し、エージェントが
- * reply 時にどの宛先へ返すべきか、いつのメッセージかを判別できるようにする
- * (session-model.md §3)。time は ISO 8601 (タイムゾーン付き) で曖昧さをなくす。 */
-// 表示名だけにすると pi が mention (`<@U123>`) を組み立てられなくなるため、
-// UserID は常に併記する
-export function renderEvent(event: InboundMessage, threadKey?: string): string {
-  const sender =
-    event.sender.displayName !== undefined
-      ? `${event.sender.displayName} (${event.sender.id})`
-      : event.sender.id;
-  const time = event.timestamp.toISOString();
-  const lines = [`from: ${sender}`, `time: ${time}`];
-  if (threadKey !== undefined) lines.push(`thread_key: ${threadKey}`);
-  return `${lines.join("\n")}\n---\n${event.text}`;
-}
-
-function renderItems(items: InboxItem[]): string {
-  return items
-    .map((item) => renderEvent(item.event, replyThreadKeyOf(item.event)))
-    .join("\n\n");
-}
-
-/** workdir の session.jsonl が既に存在するか (pi が既存 transcript を読んで
- * 文脈継続するかどうかの判定。restore 後に評価すれば保存棚からの復元も拾える)。 */
-async function transcriptExists(sessionPath: string): Promise<boolean> {
-  try {
-    await stat(sessionPath);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/** 前回活動時刻から idleResetMinutes を超えたかどうかの判定 (session-model.md §3:
- * 時間はキーに入れず、リセットポリシーとして updated_at に対して評価する)。
- * 純関数として export しテストする */
-export function isIdleExpired(
-  lastUpdatedAt: Date,
-  idleResetMinutes: number,
-  now: number,
-): boolean {
-  return now - lastUpdatedAt.getTime() > idleResetMinutes * 60_000;
-}
-
-/** debounce の kick までの残り ms を求める (連投バーストの間、静まるまで kick を
- * 遅らせるための純関数)。「最後のメッセージ + debounceSec」まで延ばすが、
- * 「最初の滞留メッセージ + debounceSec*3」(hard cap) を超えない — 早い方を採用し、
- * 負なら 0 (即 kick) を返す */
-export function computeKickDelayMs(args: {
-  nowMs: number;
-  firstPendingAtMs: number;
-  debounceSec: number;
-}): number {
-  const { nowMs, firstPendingAtMs, debounceSec } = args;
-  const slideUntil = nowMs + debounceSec * 1000;
-  const hardCapUntil = firstPendingAtMs + debounceSec * 3 * 1000;
-  const until = Math.min(slideUntil, hardCapUntil);
-  return Math.max(0, until - nowMs);
-}
-
-/** channel モードの idle リセット (session-model.md §3): workdir 直下の
- * session.jsonl が存在すれば session-<epoch ms>.jsonl にリネームして世代交代する。
- * pi は transcript が無ければ新規会話として開始する。workdir の他のファイルは残す */
-async function rotateTranscript(workdir: string, now: number): Promise<void> {
-  const from = join(workdir, SESSION_FILE);
-  const to = join(workdir, rotatedSessionFile(now));
-  try {
-    await rename(from, to);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw err;
-  }
-}
-
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-/** 進捗通知でツール名ごとに絵文字を出し分ける (progress-notice.md)。
- * reply は呼び出し元 (tool_execution_start ハンドラ) で除外済みなのでここには
- * 来ない。分類が当たらないツールは既定の :gear: にフォールバックする。bash は
- * 頻出のため呼び出しごとに候補からランダムに1つ選び、単調な見た目にならない
- * ようにする */
-function progressEmoji(toolName: string): string {
-  switch (toolName) {
-    case "bash":
-      return (
-        BASH_EMOJIS[Math.floor(Math.random() * BASH_EMOJIS.length)] ??
-        ":computer:"
-      );
-    case "read":
-    case "grep":
-    case "find":
-    case "ls":
-      return ":mag:";
-    case "write":
-    case "edit":
-      return ":memo:";
-    default:
-      return ":gear:";
-  }
-}
-
-const BASH_EMOJIS = [
-  ":computer:",
-  ":keyboard:",
-  ":zap:",
-  ":gear:",
-  ":hammer_and_wrench:",
-  ":rocket:",
-  ":robot_face:",
-  ":satellite:",
-];
-
-/** pi 組み込みツール (bash/read/write/edit/grep/find/ls) の主要な引数キー1つの
- * 値だけを取り出す。JSON.stringify のキー名込み表示 (`{"command":"..."}`) は
- * 進捗通知としては冗長なため。組み込み以外の (extension 由来の) ツールは
- * キー構成を把握できないので preview() の汎用フォールバックに委ねる */
-function toolArgsPreview(
-  toolName: string,
-  args: unknown,
-  maxChars: number,
-): string {
-  const key = BUILTIN_TOOL_PRIMARY_ARG_KEY[toolName];
-  if (key === undefined) return preview(args, maxChars);
-  const value =
-    typeof args === "object" && args !== null
-      ? (args as Record<string, unknown>)[key]
-      : undefined;
-  return value === undefined ? "" : preview(value, maxChars);
-}
-
-const BUILTIN_TOOL_PRIMARY_ARG_KEY: Record<string, string> = {
-  bash: "command",
-  read: "path",
-  ls: "path",
-  write: "path",
-  edit: "path",
-  grep: "pattern",
-  find: "pattern",
-};
-
-/** dir 配下 (dir 自身含む) を再帰的に chown する。workdir 専用 — UID 分離時、
- * restore で root 所有のままコピーされたファイルを agent 所有に揃えるための
- * 最小実装 (エントリ数が少ない workdir 前提。fs.cp に uid/gid オプションは
- * 無いためコピー後にここで chown する)。
- * シンボリックリンクは辿らずスキップする: pi が workdir 内に /data 等への
- * リンクを仕込み、次の restore 後に root の Runner がリンク先を chown して
- * 所有権を奪われる経路を防ぐ (リンク自体の所有者は挙動に影響しない) */
-async function chownRecursive(
-  dir: string,
-  uid: number,
-  gid: number,
-): Promise<void> {
-  await chown(dir, uid, gid);
-  let entries: string[];
-  try {
-    entries = await readdir(dir);
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") return;
-    throw err;
-  }
-  for (const entry of entries) {
-    const path = join(dir, entry);
-    const info = await lstat(path).catch(() => null);
-    if (info === null || info.isSymbolicLink()) continue;
-    if (info.isDirectory()) {
-      await chownRecursive(path, uid, gid);
-    } else {
-      await chown(path, uid, gid);
-    }
-  }
 }
 
 /** /new コマンドのマーカー書き込み用 lease TTL (session-model.md §6)。実行中との
  * 交錯を避けるためだけの短時間ロックなので、通常の kick 用 leaseTtlMs より短くてよい */
 const NEW_COMMAND_LEASE_TTL_MS = 10_000;
-
-/** /new コマンドの拒否通知 (実行中セッションへは v1 の割り切りで交錯させない、
- * session-model.md §6)。abnormalShutdown の noticeText と同じ mrkdwn 絵文字スタイル */
-const REJECT_NOTICE_TEXT =
-  ":warning: セッションが実行中のため、いまは /new できません。完了後にもう一度送ってください";
-
-/** /new コマンド (rest なし) の受理通知 */
-const ACK_NOTICE_TEXT = ":new: 次のメッセージから新しいセッションを開始します";
-
-/** /disable コマンドの受理通知 (session-model.md §5) */
-const DISABLE_NOTICE_TEXT =
-  ":no_bell: このチャンネルでの起動を無効化しました。`/enable` (bot へのメンション付き) で再開できます";
-
-/** /enable コマンドの受理通知 (session-model.md §5) */
-const ENABLE_NOTICE_TEXT = ":bell: このチャンネルでの起動を有効化しました";
 
 export class SessionRunner {
   private readonly sessions = new Map<string, SessionRecord>();
@@ -1428,269 +1114,50 @@ export class SessionRunner {
   ): Promise<void> {
     const { channelId, threadTs, workdir, policy } = record;
 
-    // session.mode=thread かつ reply.mode=flat は文脈が切れるのに返事だけ散らばる
-    // 非推奨な組み合わせ。動作は許可するので warn のみ (session-model.md §3)
-    if (policy.sessionMode === "thread" && policy.replyMode === "flat") {
-      this.logger.warn(
-        { sessionKey, channelId },
-        "session.mode=thread with reply.mode=flat is discouraged (session-model.md §3)",
-      );
-    }
-    // idleResetMinutes / maxTranscriptKb は channel モード専用 (session-model.md §3)。
-    // thread モードで設定されていても効果がないため warn して無視する
-    if (
-      policy.sessionMode === "thread" &&
-      (doc?.session?.idleResetMinutes !== undefined ||
-        doc?.session?.maxTranscriptKb !== undefined)
-    ) {
-      this.logger.warn(
-        { sessionKey, channelId },
-        "session.idleResetMinutes / maxTranscriptKb are only effective with session.mode=channel; ignored",
-      );
-    }
-    // affinity は mode=channel では自明に成立 (同一 sessionKey) するため意味を持たない。
-    // windowSec も scope=channel 以外では読まれない (session-model.md §3)
-    const affinity = doc?.session?.affinity;
-    if (affinity?.scope === "channel" && policy.sessionMode === "channel") {
-      this.logger.warn(
-        { sessionKey, channelId },
-        "session.affinity.scope=channel is redundant with session.mode=channel; ignored",
-      );
-    }
-    if (
-      affinity?.windowSec !== undefined &&
-      affinity.windowSec > 0 &&
-      affinity.scope !== "channel"
-    ) {
-      this.logger.warn(
-        { sessionKey, channelId },
-        "session.affinity.windowSec is only effective with scope=channel; ignored",
-      );
-    }
+    warnPolicyMismatches(this.logger, sessionKey, channelId, policy, doc);
 
-    // 同 sessionKey は常に同じ workdir/session.jsonl を使う。再 trigger 時は
-    // 同じパスで再 spawn され、pi が JSONL を読んで文脈を継続する (再開の専用フローなし)
-    await mkdir(workdir, { recursive: true });
-    await this.workdirStorage.restore(sessionKey, workdir);
-    // チャンネル共有ディレクトリ (docs/design/shared.md)。sessionKey ではなく
-    // channelId 単位で復元し、スレッド (セッション) を跨いで持ち越す。skills/ は
-    // 空でも常に作る — pi の --skill は空ディレクトリを黙って無視するので配線は
-    // 無条件でよく、agent は mkdir なしで skill を置ける
-    const sharedStorage = this.sharedStorage;
-    const sharedDir =
-      sharedStorage !== undefined
-        ? this.sharedStagingDir(channelId)
-        : undefined;
-    if (sharedStorage !== undefined && sharedDir !== undefined) {
-      await mkdir(join(sharedDir, "skills"), { recursive: true });
-      await sharedStorage.restore(channelId, sharedDir);
-    }
-    // 世代交代 (session-model.md §3, §6): manual (/new マーカー) → idle 超過 →
-    // transcript サイズ超過の優先順位で、いずれか 1 回だけ transcript を
-    // 世代交代する。previous は idle 判定にも使うため、ここで常時 1 回だけ fetch
-    // して使い回す。rotate は chown より前 (rotate されたファイルの所有権も
-    // chown で揃うため)
-    const previous = await this.store.sessions.get(sessionKey);
-    let rotated = false;
-    // manual は session.mode に依存しない (thread モードでも効く) — idle/size が
-    // channel モード限定なのとは異なる、明示的なユーザー意図のため (session-model.md §6)
-    if (previous?.rotateRequestedAt !== undefined) {
-      const now = Date.now();
-      await rotateTranscript(workdir, now);
-      rotated = true;
-      this.logger.info({ sessionKey }, "manual reset: transcript rotated");
-      // マーカーをクリアして put し直す (exactOptionalPropertyTypes: true のため
-      // rotateRequestedAt を持つプロパティ自体を作らない)
-      const { rotateRequestedAt: _rotateRequestedAt, ...cleared } = previous;
-      await this.store.sessions.put(sessionKey, cleared);
-    }
-    // idleResetMinutes / maxTranscriptKb は channel モード専用 (session-model.md §3)
-    if (policy.sessionMode === "channel") {
-      const idleResetMinutes = doc?.session?.idleResetMinutes;
-      if (!rotated && idleResetMinutes !== undefined && previous !== null) {
-        const now = Date.now();
-        if (isIdleExpired(previous.updatedAt, idleResetMinutes, now)) {
-          await rotateTranscript(workdir, now);
-          rotated = true;
-          this.logger.info(
-            {
-              sessionKey,
-              idleResetMinutes,
-              idleMs: now - previous.updatedAt.getTime(),
-            },
-            "idle reset: transcript rotated",
-          );
-        }
-      }
-      const maxTranscriptKb = doc?.session?.maxTranscriptKb;
-      if (!rotated && maxTranscriptKb !== undefined) {
-        const info = await stat(join(workdir, SESSION_FILE)).catch((err) => {
-          if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
-          throw err;
-        });
-        if (info !== null && info.size > maxTranscriptKb * 1024) {
-          const now = Date.now();
-          await rotateTranscript(workdir, now);
-          this.logger.info(
-            { sessionKey, maxTranscriptKb, sizeBytes: info.size },
-            "size reset: transcript rotated",
-          );
-        }
-      }
-    }
-    // UID 分離 (session-runtime.md §6) が有効なら、workdir を agent 所有 0700 に
-    // する。mkdir は Runner (root) 実行なので root 所有で作られ、restore で
-    // コピーされたファイルも root 所有になる — agent uid で書き込めるよう
-    // restore 後に再帰的に chown する (root だけが chown できるので、この処理は
-    // uid オプションが設定されているときだけ行う)
-    if (this.agentUid !== undefined && this.agentGid !== undefined) {
-      await chownRecursive(workdir, this.agentUid, this.agentGid);
-      await chmod(workdir, 0o700);
-      // shared staging も同じ理由で agent 所有 0700 に揃える (restore のコピーは
-      // root 所有で置かれる)
-      if (sharedDir !== undefined) {
-        await chownRecursive(sharedDir, this.agentUid, this.agentGid);
-        await chmod(sharedDir, 0o700);
-      }
-    }
-    // agentHome は常に pi の HOME になるため、存在しなければここで作る
-    // (Dockerfile の useradd --create-home + COPY --chown で作成済みならほぼ
-    // no-op だが、PI_AGENT_HOME で既定と異なるパスを指定した場合に備える)。
-    // 所有権の規則は「Runner (root) が作ったものだけ chown する」— 既存の
-    // home には一切触れない。mkdir(recursive) は新規作成時だけ作成した
-    // パスを返すため、それを使って新規作成時のみ chown/chmod する
-    // (home 全体を毎回再帰的に stat/chown する必要はない。既存 home 配下に
-    // 読み取り専用マウントがあっても衝突しない)
-    const createdHome = await mkdir(this.agentHome, { recursive: true });
-    if (
-      createdHome !== undefined &&
-      this.agentUid !== undefined &&
-      this.agentGid !== undefined
-    ) {
-      await chown(this.agentHome, this.agentUid, this.agentGid);
-      await chmod(this.agentHome, 0o700);
-    }
-    // pi は cwd を canonicalize してから trust probe / migration の existsSync を
-    // 行う (dist/core/trust-manager.js の normalizeCwd)。macOS では /tmp が
-    // /private/tmp への symlink のため、allow パス・cwd・HOME も realpath で
-    // 正規化して渡さないと Permission Model の判定と食い違い pi が即死する
-    // (Linux では通常 no-op)
-    const workdirReal = await realpath(workdir);
-    const agentHomeReal = await realpath(this.agentHome);
-    const sharedDirReal =
-      sharedDir !== undefined ? await realpath(sharedDir) : undefined;
-    const sessionPath = join(workdirReal, SESSION_FILE);
-    const resumed = await transcriptExists(sessionPath);
+    // workdir/shared の mkdir + restore、transcript 世代交代、UID 分離、
+    // agentHome 作成、realpath 正規化 (session-runtime.md §1, §6)
+    const { workdirReal, agentHomeReal, sharedDirReal, sessionPath, resumed } =
+      await prepareWorkdir({
+        sessionKey,
+        channelId,
+        workdir,
+        policy,
+        doc,
+        sessions: this.store.sessions,
+        workdirStorage: this.workdirStorage,
+        sharedStorage: this.sharedStorage,
+        sharedStagingDir: (id) => this.sharedStagingDir(id),
+        agentUid: this.agentUid,
+        agentGid: this.agentGid,
+        agentHome: this.agentHome,
+        logger: this.logger,
+      });
 
-    // 利用者が拡張イメージに焼き込んだ extension を skill と同じ規約で拾う場所
-    // (session-runtime.md §5)。pi の --extension はディレクトリを直接受け付けない
-    // ため、直下の .ts/.js を個別に列挙して渡す。ディレクトリが無ければ何も
-    // 足さない (ベースイメージのみの利用者はこのディレクトリを持たない)
-    const agentExtensionsDir = join(agentHomeReal, ".pi/agent/extensions");
-    const agentExtensionFiles = await readdir(agentExtensionsDir)
-      .then((names) =>
-        names
-          .filter((name) => name.endsWith(".ts") || name.endsWith(".js"))
-          .map((name) => join(agentExtensionsDir, name)),
-      )
-      .catch(() => []);
-    // チャンネル別の追加 skill / extension (config.md §2)。相対パスは ConfigSource が
-    // 設定ファイル基準で絶対化済み。イメージに焼いたパスを指す想定なので、存在しなければ
-    // 設定ミスとして fail-loud で落とす (黙って無効のまま動くと「skill が効かない」の
-    // 調査が辛い)。realpath は workdir/HOME と同じ理由 (macOS /tmp symlink) の正規化
-    const channelSkillPaths = await resolveChannelResourcePaths(
-      doc?.skills,
-      "skills",
-    );
-    const channelExtensionFiles = await resolveChannelResourcePaths(
-      doc?.extensions,
-      "extensions",
-    );
-    // memory 機能 (組み込み skill + MEMORY.md 注入) の有効判定。shared 有効かつ
-    // doc.memory !== false のとき (config.md §2)
-    const memoryEnabled =
-      sharedDirReal !== undefined &&
-      doc?.memory !== false &&
-      this.memorySkillPath !== undefined;
-    // shared skills (存在は上の mkdir で保証済み) と組み込み memory skill
-    const sharedSkillPaths =
-      sharedDirReal !== undefined
-        ? [
-            join(sharedDirReal, "skills"),
-            ...(memoryEnabled && this.memorySkillPath !== undefined
-              ? [this.memorySkillPath]
-              : []),
-          ]
-        : [];
-    const skillPaths = [...channelSkillPaths, ...sharedSkillPaths];
-    const extensionPaths = [
-      ...this.extensionPaths,
-      ...agentExtensionFiles,
-      ...channelExtensionFiles,
-    ];
+    // extension/skill パス解決 + Node Permission Model オプション組み立て
+    // (session-runtime.md §5, §6)
+    const { extensionPaths, skillPaths, memoryEnabled, permission } =
+      await buildSpawnOptions({
+        agentHomeReal,
+        workdirReal,
+        sharedDirReal,
+        doc,
+        builtinExtensionPaths: this.extensionPaths,
+        memorySkillPath: this.memorySkillPath,
+        piPermission: this.piPermission,
+      });
 
     const model = doc?.model;
     // 常に HOME を agentHome に上書きする (Runner 自身の HOME は継承しない)。
     // extraEnv で HOME を上書きする (buildPiEnv は extraEnv が PATH/HOME を
     // 上書きできる実装になっている)
     const extraEnv = { ...this.extraEnv, HOME: agentHomeReal };
-    // Node Permission Model (session-runtime.md §6, pi-tools-and-sandbox.md
-    // 「リーズナブルな sandbox レイヤ案」) が opt-in で有効なら、pi 本体の
-    // JS 実装ツール (read/write/edit/grep) の fs アクセスをこのセッションの
-    // workdir/home に閉じ込める。home は pi 子プロセスに渡す HOME (常に agentHome)
-    // と揃える — ズレると pi 起動時の ~/.pi probe (auth.json migration 等) が
-    // ERR_ACCESS_DENIED になり pi が exit 1 で即死する
-    const home = agentHomeReal;
-    // extension (reply / permission-gate) は appDir 包括許可の廃止に伴い、
-    // 各ファイルの所在ディレクトリを個別に read 許可する (write は与えない —
-    // 読めるが書けない)。ディレクトリ単位なので重複していても Set で 1 回に畳む
-    const extensionReadDirs = [
-      ...new Set(extensionPaths.map((p) => dirname(p))),
-    ];
-    // shared staging は workdir/home の外にある唯一の agent 書き込み先。
-    // ディレクトリ自体の read は ls (readdir) に要る
-    const sharedPermissionWrite =
-      sharedDirReal !== undefined ? [`${sharedDirReal}/*`] : [];
-    const sharedPermissionRead =
-      sharedDirReal !== undefined ? [sharedDirReal, `${sharedDirReal}/*`] : [];
-    const permission =
-      this.piPermission !== undefined
-        ? buildPiPermissionOptions({
-            entrypoint: this.piPermission.entrypoint,
-            nodeModulesDir: this.piPermission.nodeModulesDir,
-            workdir: workdirReal,
-            home,
-            extraWrite: [
-              ...(this.piPermission.extraWrite ?? []),
-              ...sharedPermissionWrite,
-            ],
-            extraRead: [
-              ...extensionReadDirs.map((dir) => `${dir}/*`),
-              // skill は pi がディレクトリごと再帰で読む (SKILL.md 探索 + 参照
-              // ファイル)。readdir にディレクトリ自体の read も要るため両方許可する
-              ...skillPaths.flatMap((dir) => [dir, `${dir}/*`]),
-              ...sharedPermissionRead,
-              ...(this.piPermission.extraRead ?? []),
-            ],
-            ...(this.piPermission.allowAddons !== undefined
-              ? { allowAddons: this.piPermission.allowAddons }
-              : {}),
-          })
-        : undefined;
     // memory の索引 (MEMORY.md) は skill 発火 (agent の自発的な read) に頼らず
     // system prompt に常時注入する (docs/design/memory.md §2)。1 行 1 メモリの
     // 短い索引という規約 (SKILL.md の Save 手順) が前提で、肥大化はしない想定。
     // 本文ファイルは引き続き skill 経由でオンデマンドに read させる
-    const memoryIndex = memoryEnabled
-      ? await readFile(
-          join(sharedDirReal, "memory", "MEMORY.md"),
-          "utf-8",
-        ).catch((err) => {
-          if ((err as NodeJS.ErrnoException).code === "ENOENT")
-            return undefined;
-          throw err;
-        })
-      : undefined;
+    const memoryIndex = await loadMemoryIndex(memoryEnabled, sharedDirReal);
     const proc = new PiProcess({
       sessionPath,
       extensionPaths,
@@ -2302,52 +1769,4 @@ export class SessionRunner {
       this.logger.warn({ sessionKey, label, err }, "failed to add reaction");
     }
   }
-}
-
-/** shared 有効時に system prompt へ足す説明 (docs/design/shared.md §3)。
- * 使い方の規約 (memory の書き方) は組み込み memory skill 側が担い、ここでは
- * ディレクトリの存在と性質だけ知らせる */
-const SHARED_DIR_PROMPT =
-  "../shared/ (relative to your working directory) is a channel-wide " +
-  "persistent directory: files there survive across sessions and threads " +
-  "in this channel. Skills placed under ../shared/skills/ are loaded " +
-  "automatically in future sessions.";
-
-/** memory の索引 (MEMORY.md) をそのまま system prompt に注入するための前置き
- * (docs/design/memory.md §2)。索引は常時見える化し、本文ファイルの read は
- * 引き続き組み込み skill 側の判断に委ねる (skill 発火に頼らないのは索引だけ) */
-const MEMORY_INDEX_PROMPT_HEADER =
-  "The following is this channel's memory index " +
-  "(../shared/memory/MEMORY.md), listing durable facts learned in past " +
-  "sessions. Read the linked file under ../shared/memory/ only if it looks " +
-  "relevant to the current task:";
-
-/** app 共通 + mention 記法の説明 + shared の説明 + memory 索引 +
- * ChannelDoc.systemPrompt + thread_key の指示 (session-runtime.md §2) */
-function buildSystemPrompt(
-  sessionKey: string,
-  doc: ChannelDoc | null,
-  mentionFormat: MentionFormat,
-  sharedEnabled: boolean,
-  memoryIndex?: string,
-): string {
-  const parts = [APP_SYSTEM_PROMPT, mentionInstruction(mentionFormat)];
-  if (sharedEnabled) parts.push(SHARED_DIR_PROMPT);
-  if (memoryIndex !== undefined && memoryIndex.trim() !== "") {
-    parts.push(`${MEMORY_INDEX_PROMPT_HEADER}\n\n${memoryIndex.trim()}`);
-  }
-  if (doc?.systemPrompt !== undefined) parts.push(doc.systemPrompt.trim());
-  parts.push(
-    "Each incoming message is annotated with its thread_key. When calling " +
-      "the reply tool, use the thread_key of the message you are replying to " +
-      "(the most recent one if replying generally). " +
-      `Fallback thread_key for this session: ${sessionKey}`,
-  );
-  return parts.join("\n\n");
-}
-
-function prependContext(body: string, doc: ChannelDoc | null): string {
-  const context = doc?.context;
-  if (context === undefined || context.length === 0) return body;
-  return `参考情報:\n${context.map((c) => c.trim()).join("\n\n")}\n\n${body}`;
 }
