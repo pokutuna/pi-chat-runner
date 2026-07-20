@@ -14,69 +14,57 @@ See [docs/design/README.md](docs/design/README.md) for the design.
 
 ## Components
 
-One pipeline, top to bottom. Boxes are components (shaded ones are persistent stores), edge labels name the data handed between stages, and notes describe each component's job.
+One pipeline, top to bottom. Boxes are components, cylinders are persistent stores, and blue rounded nodes are the outside world (the chat platform, the pi child process); edge labels name the data handed between stages, and notes describe each component's job.
 
 ```mermaid
+%%{init: {"flowchart": {"wrappingWidth": 320}}}%%
 flowchart TB
-    ChatIn(["Chat (e.g. Slack)"])
-    ChatOut(["Chat (e.g. Slack)"])
-    Store[("SessionStore / LeaseStore /<br/>ChannelStateStore / WorkdirStorage")]
+    ChatIn(["Chat (e.g. Slack)"]):::external
+    ChatOut(["Chat (e.g. Slack)"]):::external
+    State[(State)]
+    Workdir[("WorkdirStorage<br/>(session filesystem,<br/>local dir or GCS)")]
 
     EventSource[EventSource]
     Gate[Gate]
-    Inbox[(InboxStore)]
+    Inbox[(Inbox)]
     Runner[SessionRunner]
     Runtime[SessionRuntime]
     Egress[Egress]
+    Pi(["pi-coding-agent<br/>(child process)"]):::external
 
     NoteES("normalizes raw platform events"):::note
     NoteGate("decides whether to trigger a session"):::note
-    NoteInbox("durable, dedupe'd queue of accepted events"):::note
+    NoteInbox("Inbox: deduped event queue<br/>State: session info / channel toggle"):::note
     NoteRunner("acquires the lease, drains the inbox, kicks a turn"):::note
-    NoteRuntime("spawns and drives the pi child process via RPC"):::note
+    NoteRuntime("drives one agent turn in the restored workdir"):::note
+    NotePi("runs with the prompt / skills / extensions the host injects; reply is a tool call the host relays"):::note
     NoteEgress("resolves the destination, formats, chunks"):::note
 
     ChatIn -->|raw event| EventSource
     EventSource -->|ChatEvent| Gate
     Gate -->|"ChatEvent (accepted only)"| Inbox
     Inbox -->|InboxItem| Runner
-    Runner -->|turn input| Runtime
-    Runtime -->|"reply(thread_key, text, files?)"| Egress
+    Runner -->|"turn input<br/>(messages + session)"| Runtime
+    Runtime -->|"spawn + RPC"| Pi
+    Pi -->|"reply(thread_key, text, files?)"| Egress
     Egress -->|outgoing message| ChatOut
-    Runner -.-|"lease / session pointer /<br/>workdir restore+flush"| Store
+    State -.->|"lease / session info /<br/>channel state"| Runner
+    Runner -.-|"restore / flush per turn"| Workdir
+    Workdir -.-|"cwd (restored copy)"| Pi
 
     %% notes form an invisible parallel column, each aligned with its component's rank.
     %% NoteAnchor (hidden) keeps the note column independent of the main chain so
     %% the main chain's edges stay straight.
     NoteAnchor[ ]:::hidden
     NoteAnchor ~~~ NoteES
-    NoteES ~~~ NoteGate ~~~ NoteInbox ~~~ NoteRunner ~~~ NoteRuntime ~~~ NoteEgress
+    NoteES ~~~ NoteGate ~~~ NoteInbox ~~~ NoteRunner ~~~ NoteRuntime ~~~ NotePi ~~~ NoteEgress
 
     classDef note fill:#fff3b8,stroke:#b59a3b,color:#333,stroke-dasharray:3 3
+    classDef external fill:#d9edf7,stroke:#4a7fa5,color:#333
     classDef hidden fill:none,stroke:none,color:transparent
 ```
 
-Each stage only knows the interface of its neighbor, not which implementation is behind it. `SessionRunner` restores the workdir via `WorkdirStorage` before a turn; new vs. resume follows from whether a transcript exists after restore.
-
-| Directory | Role |
-|---|---|
-| `src/ingress/` | Platform-neutral abstractions + implementations: Slack under `slack/`, stdin/stdout REPL for local dev under `local/` |
-| `src/gate/` | Trigger Gate abstraction + implementations under `gates/` |
-| `src/config/` | Channel configuration (YAML) loading and schema |
-| `src/classifier/` | LLM client backing the classifier Gate |
-| `src/session/` | Session orchestration: `runner.ts` (registry, gating, kick), `active-session.ts` (per-session state machine), `spawn.ts`/`runtime.ts` (pi process + RPC), plus policy/prompt/progress helpers |
-| `src/store/` | Persistence: `state/` (DB) and `workdir.ts` (workdir archival) |
-| `src/egress/` | thread_key resolution, mrkdwn formatting, message chunking, reactions |
-| `extensions/` | Extensions injected into pi: `reply.ts`, `permission-gate.ts`, `export.ts` (HTML session export) |
-| `home/` | Baked into the base image as `/home/agent` (default `settings.json`, etc.) |
-| `skills/` | Baked into the base image as `/home/agent/.pi/agent/skills/` (sample skills for pi; empty by default) |
-| `examples/config/` | Sample channel configuration and prompts |
-| `examples/service.yaml` | Cloud Run deployment template (copy and edit) |
-| `examples/slack-app-manifest.socket.yaml` | Slack App manifest template, Socket Mode |
-| `examples/slack-app-manifest.http.yaml` | Slack App manifest template, Events API |
-| `examples/gc-logging-agent/` | Sample extension image (`FROM` the base image) adding gcloud/duckdb/uv and a logging-investigation skill |
-| `examples/smart-fetch-agent/` | Sample extension image adding the `pi-smart-fetch` extension (URL fetch + summarize) for one channel |
-| `develop/` | This repo's own local dev tooling: `local.sh`, `compose.yaml`, `drive-pi.ts` |
+Each stage only knows the interface of its neighbor, not which implementation is behind it. `SessionRunner` restores the workdir via `WorkdirStorage` before a turn; new vs. resume follows from whether a transcript exists after restore. `StateStore` feeds `SessionRunner`'s decisions — whether to run at all (channel mute), which instance runs (lease), and which session a message joins (session info, affinity pointer); the outcome travels down the pipeline as the session part of the turn input.
 
 A real deployment (your own Slack App, your own Cloud Run service) lives in a separate repo that extends the base image with `FROM` and fills in the `examples/` templates with real values — see [docs/design/session-runtime.md](docs/design/session-runtime.md) §5.
 
@@ -86,9 +74,9 @@ There are three ways to use this project, from least to most integration effort.
 
 ### 1. Run the published container image as-is
 
-Deploy the base image directly — published to `ghcr.io/pokutuna/pi-chat-runner` on each tagged release (see `.github/workflows/docker-publish.yaml`) — e.g. to Cloud Run (see `examples/service.yaml`), and only supply config: a single `agent.yaml` (connection/store/agent runtime + per-channel triggers/prompts/models), plus a Slack App from one of the `examples/slack-app-manifest.*.yaml` templates. No image build required.
+Deploy the base image directly — published to `ghcr.io/pokutuna/pi-chat-runner` on each tagged release (see `.github/workflows/docker-publish.yaml`) — e.g. to Cloud Run (see `examples/service.yaml`), and only supply config: a single `agent.yaml` (connector/store/agent runtime + per-channel triggers/prompts/models), plus a Slack App from one of the `examples/slack-app-manifest.*.yaml` templates. No image build required.
 
-This gets you mention/keyword/classifier/reaction triggers, threaded replies, and persistence — but only the CLI tools baked into the base image (`git`/`curl`/`jq`/`ripgrep`/`fd`) and whatever skills/extensions ship in `skills/`/`extensions/` (empty by default).
+This gets you mention/keyword/classifier/reaction triggers, threaded replies, and persistence — but only the CLI tools baked into the base image (`git`/`curl`/`jq`/`ripgrep`/`fd`) and whatever skills/extensions ship in the image's agent home (`$AGENT_HOME/.pi/agent/{skills,extensions}` — empty in the base image beyond the built-in reply/permission-gate/export extensions, which are always injected).
 
 You can go a bit further without rebuilding, by bind-mounting extra files onto the running container instead of baking them into the image — pi discovers skills and extensions by directory, not by build-time manifest:
 
@@ -170,7 +158,7 @@ Text commands, sent as a chat message, control a channel without touching config
 - `/new` — cut the session: the next trigger starts with clean context. `/new <text>` kicks a new session with that text immediately. Rejected while a session is running.
 - `/enable` / `/disable` — per-channel kill switch (default enabled). While disabled, all triggers are silently dropped; `/enable` recovers. State persists in the channel-state store.
 
-Commands are exact-match, human-senders only, and apply only to messages that pass the Gate — in a mention-gated channel send `@bot /new` (which also keeps Slack's client from capturing a bare leading `/` as its own slash command).
+Commands are exact-match (except `/new <text>`), human-senders only, and normally apply to messages that pass the Gate — in a mention-gated channel send `@bot /new` (which also keeps Slack's client from capturing a bare leading `/` as its own slash command).
 
 ## Configuration
 
@@ -217,7 +205,7 @@ channels:
         - and: [{ kind: sender, is: bot }, { kind: keyword, pattern: "ALERT|CRITICAL" }]
 ```
 
-DB defaults to in-memory (`store.backend: memory` in `agent.yaml`); set it to `sqlite` (default path `/tmp/pi-chat-runner/state.db`) or `firestore` for persistence. Workdir archival defaults to no-op unless `archiveDir` is set. See [docs/design/persistence.md](docs/design/persistence.md).
+DB defaults to in-memory (`store.backend: memory` in `agent.yaml`); set it to `sqlite` (default path `/tmp/pi-chat-runner/state.db`) or `firestore` for persistence. Workdir archival defaults to no-op unless the `WORKDIR_ARCHIVE_DIR` env var is set. See [docs/design/persistence.md](docs/design/persistence.md).
 
 See [`examples/config/agent.yaml`](examples/config/agent.yaml) for an annotated template. Full schema and semantics: [docs/design/config.md](docs/design/config.md).
 
@@ -252,7 +240,7 @@ Chat commands (`@bot /new` etc.) flow through as normal message text. Full gramm
 
 ### Against real Slack
 
-Set Slack credentials in `.env.socket` (Socket Mode) or `.env` (Events API); create the Slack App from the `examples/slack-app-manifest.*.yaml` templates. What only real Slack can verify — actual mrkdwn rendering, file uploads, rate limits — needs this layer.
+Create a Slack App from the `examples/slack-app-manifest.*.yaml` templates and put its credentials in the env file your dev script reads — the variable names are the `${env.*}` references in `examples/config/agent.yaml`. Whether the connector uses Socket Mode or the Events API is Slack-connector config (`connector.slack.mode`), invisible to the rest of the pipeline. What only real Slack can verify — actual mrkdwn rendering, file uploads, rate limits — needs this layer.
 
 ### Checks
 
