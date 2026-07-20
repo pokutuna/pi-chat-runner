@@ -14,33 +14,49 @@ See [docs/design/README.md](docs/design/README.md) for the design.
 
 ## Components
 
+One pipeline, top to bottom. Boxes are components (shaded ones are persistent stores), edge labels name the data handed between stages, and notes describe each component's job.
+
+```mermaid
+flowchart TB
+    ChatIn(["Chat (e.g. Slack)"])
+    ChatOut(["Chat (e.g. Slack)"])
+    Store[("SessionStore / LeaseStore /<br/>ChannelStateStore / WorkdirStorage")]
+
+    EventSource[EventSource]
+    Gate[Gate]
+    Inbox[(InboxStore)]
+    Runner[SessionRunner]
+    Runtime[SessionRuntime]
+    Egress[Egress]
+
+    NoteES("normalizes raw platform events"):::note
+    NoteGate("decides whether to trigger a session"):::note
+    NoteInbox("durable, dedupe'd queue of accepted events"):::note
+    NoteRunner("acquires the lease, drains the inbox, kicks a turn"):::note
+    NoteRuntime("spawns and drives the pi child process via RPC"):::note
+    NoteEgress("resolves the destination, formats, chunks"):::note
+
+    ChatIn -->|raw event| EventSource
+    EventSource -->|ChatEvent| Gate
+    Gate -->|"ChatEvent (accepted only)"| Inbox
+    Inbox -->|InboxItem| Runner
+    Runner -->|turn input| Runtime
+    Runtime -->|"reply(thread_key, text, files?)"| Egress
+    Egress -->|outgoing message| ChatOut
+    Runner -.-|"lease / session pointer /<br/>workdir restore+flush"| Store
+
+    %% notes form an invisible parallel column, each aligned with its component's rank.
+    %% NoteAnchor (hidden) keeps the note column independent of the main chain so
+    %% the main chain's edges stay straight.
+    NoteAnchor[ ]:::hidden
+    NoteAnchor ~~~ NoteES
+    NoteES ~~~ NoteGate ~~~ NoteInbox ~~~ NoteRunner ~~~ NoteRuntime ~~~ NoteEgress
+
+    classDef note fill:#fff3b8,stroke:#b59a3b,color:#333,stroke-dasharray:3 3
+    classDef hidden fill:none,stroke:none,color:transparent
 ```
-Chat (e.g. Slack)
-│  ChatEvent
-▼
-EventSource: receives raw events, normalizes to ChatEvent
-│  ChatEvent
-▼
-Gate: decides whether to trigger a session
-│  ChatEvent (accepted only)
-▼
-InboxStore: durable, dedupe'd queue of accepted events
-│  InboxItem
-▼
-SessionRunner: acquires lease, drains inbox, kicks a turn
-│                └─ Store: SessionStore / LeaseStore / ChannelStateStore / WorkdirStorage
-│                   restores workdir via WorkdirStorage; new vs. resume follows
-│                   from whether a transcript exists after restore
-│  turn input
-▼
-SessionRuntime: spawns and drives pi via RPC (pi)
-│  reply(thread_key, text, files?)
-▼
-Egress: resolves thread_key to a destination, formats to mrkdwn, chunks long replies
-│  outgoing message
-▼
-Chat (e.g. Slack)
-```
+
+Each stage only knows the interface of its neighbor, not which implementation is behind it. `SessionRunner` restores the workdir via `WorkdirStorage` before a turn; new vs. resume follows from whether a transcript exists after restore.
 
 | Directory | Role |
 |---|---|
@@ -48,7 +64,7 @@ Chat (e.g. Slack)
 | `src/gate/` | Trigger Gate abstraction + implementations under `gates/` |
 | `src/config/` | Channel configuration (YAML) loading and schema |
 | `src/classifier/` | LLM client backing the classifier Gate |
-| `src/session/` | Spawning pi, RPC, orchestration |
+| `src/session/` | Session orchestration: `runner.ts` (registry, gating, kick), `active-session.ts` (per-session state machine), `spawn.ts`/`runtime.ts` (pi process + RPC), plus policy/prompt/progress helpers |
 | `src/store/` | Persistence: `state/` (DB) and `workdir.ts` (workdir archival) |
 | `src/egress/` | thread_key resolution, mrkdwn formatting, message chunking, reactions |
 | `extensions/` | Extensions injected into pi: `reply.ts`, `permission-gate.ts`, `export.ts` (HTML session export) |
@@ -60,7 +76,7 @@ Chat (e.g. Slack)
 | `examples/slack-app-manifest.http.yaml` | Slack App manifest template, Events API |
 | `examples/gc-logging-agent/` | Sample extension image (`FROM` the base image) adding gcloud/duckdb/uv and a logging-investigation skill |
 | `examples/smart-fetch-agent/` | Sample extension image adding the `pi-smart-fetch` extension (URL fetch + summarize) for one channel |
-| `develop/` | This repo's own local dev tooling: `compose.yaml`, `drive-pi.ts` |
+| `develop/` | This repo's own local dev tooling: `local.sh`, `compose.yaml`, `drive-pi.ts` |
 
 A real deployment (your own Slack App, your own Cloud Run service) lives in a separate repo that extends the base image with `FROM` and fills in the `examples/` templates with real values — see [docs/design/session-runtime.md](docs/design/session-runtime.md) §5.
 
@@ -218,7 +234,7 @@ pnpm run dev          # real Slack, Events API
 
 ### Without Slack: `dev:local`
 
-`dev:local` runs the whole pipeline — gate → inbox → session (real pi) → egress — against a terminal UI ([ink](https://github.com/vadimdemedes/ink)) split top/bottom into a log pane (structured pino logs; pi-agent events are tagged `[pi]`, runner components `[session]` etc.) and a chat pane (conversation + input), keeping the two readable instead of interleaving on one stdout. Each pane tails its latest output; arrow keys / C-p C-n / PageUp-Down scroll the focused pane (Tab cycles focus, the focused pane is marked `*`), and the mouse wheel scrolls the pane under the cursor. No Slack App or tokens required; put only the model credentials (e.g. `GOOGLE_CLOUD_PROJECT`) in `.env.local`. Config is read from `CONFIG_PATH` as usual: the `connector` section is ignored, and `channels`/`store`/`agent` apply as-is, so passing a real channel ID (`node dist/server.mjs local C0123456789`) exercises that channel's production config. The default channel ID is `local` — the example `agent.yaml` ships a matching entry.
+`dev:local` runs the whole pipeline — gate → inbox → session (real pi) → egress — against a terminal UI ([ink](https://github.com/vadimdemedes/ink)) split top/bottom into a log pane (structured pino logs; pi-agent events are tagged `[pi]`, runner components `[session]` etc.) and a chat pane (conversation + input), keeping the two readable instead of interleaving on one stdout. Each pane tails its latest output; arrow keys / PageUp-Down scroll the focused pane (Tab cycles focus, the focused pane is marked `*`), C-p / C-n recall input history, and the mouse wheel scrolls the pane under the cursor. No Slack App or tokens required; put only the model credentials (e.g. `GOOGLE_CLOUD_PROJECT`) in `.env.local`. Config is read from `CONFIG_PATH` as usual: the `connector` section is ignored, and `channels`/`store`/`agent` apply as-is, so passing a real channel ID (`node dist/server.mjs local C0123456789`) exercises that channel's production config. The default channel ID is `local` — the example `agent.yaml` ships a matching entry.
 
 Chat pane interaction (log pane omitted for brevity):
 
