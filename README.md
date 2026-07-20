@@ -6,15 +6,14 @@ See [docs/design/README.md](docs/design/README.md) for the design.
 
 ## Overview
 
-- The session boundary is a `thread_key`, a conversation scope determined by config
-- The agent replies only through the `reply` tool; the host owns the actual destination
-- Per-channel trigger conditions, prompts, and models are declared in YAML — a message mention, keyword, or LLM classifier, or an emoji reaction on an existing message, can kick a session. Posts from other bots (e.g. alerting webhooks) can trigger too via per-channel opt-in (`trigger.allowBots`); the bot's own posts never do
-- Chat commands (`/new`, `/enable`, `/disable`) reset or mute a channel from within the chat — see [Chat Commands](#chat-commands)
-- DB (inbox / session / lease / channel-state) and workdir archival are independent, swappable backends
+- Mention the bot — or match a keyword, an emoji reaction, or an alerting webhook's post — and a pi session starts working right in that thread
+- It's a conversation: steer it while it runs, follow up after it answers, come back later — context and files survive
+- Prompts, models, triggers, and skills are per-channel YAML; [chat commands](#chat-commands) (`/new`, `/enable`, `/disable`) control a channel from inside the chat
+- Serverless-friendly: Cloud Run + Firestore + GCS with scale-to-zero, or in-memory / SQLite / local dirs for dev — or embed it as a library
 
 ## Components
 
-One pipeline, top to bottom. Boxes are components, cylinders are persistent stores, and blue rounded nodes are the outside world (the chat platform, the pi child process); edge labels name the data handed between stages, and notes describe each component's job.
+One pipeline, top to bottom. Boxes are components, cylinders are persistent stores, and blue rounded nodes are the outside world (the chat platform, the pi child process); edge labels name the data handed between stages, and notes describe each component's job. A **turn** is one run of the agent over the messages drained from the inbox — one conversational round-trip in the chat.
 
 ```mermaid
 %%{init: {"flowchart": {"wrappingWidth": 320}}}%%
@@ -67,6 +66,28 @@ flowchart TB
 Each stage only knows the interface of its neighbor, not which implementation is behind it. `SessionRunner` restores the workdir via `WorkdirStorage` before a turn; new vs. resume follows from whether a transcript exists after restore. `StateStore` feeds `SessionRunner`'s decisions — whether to run at all (channel mute), which instance runs (lease), and which session a message joins (session info, affinity pointer); the outcome travels down the pipeline as the session part of the turn input.
 
 A real deployment (your own Slack App, your own Cloud Run service) lives in a separate repo that extends the base image with `FROM` and fills in the `examples/` templates with real values — see [docs/design/session-runtime.md](docs/design/session-runtime.md) §5.
+
+## Core Concepts
+
+### Session
+
+A session is one conversation with the agent, with its own transcript and workdir. `session.mode` picks what counts as one conversation: `thread` (default) — a session grows out of a single message and its thread; `channel` — the channel's whole message stream is one continuous session (the DM default). `/new` cuts a session manually; channel-mode sessions also rotate on idle time (`idleResetMinutes`) or transcript size (`maxTranscriptKb`).
+
+### Turn
+
+One run of the agent over the drained inbox messages — one round-trip in the chat. Messages posted while a turn is running are steered into it mid-flight; follow-ups shortly after it ends join the same session (`session.affinity`), and bursts are debounced into one turn. A later trigger on the same session resumes with the transcript and workdir restored.
+
+### Trigger and Gate
+
+Per-channel trigger conditions decide which messages start a turn: mention, keyword, LLM classifier, emoji reaction, or sender kind, composable with `and`/`or`. Posts from other bots (e.g. alerting webhooks) can trigger via per-channel opt-in (`trigger.allowBots`); the bot's own posts never do. Everything else flows past without waking the agent.
+
+### Reply destination
+
+The agent replies only through the `reply(thread_key, text, files?)` tool; the host resolves `thread_key` to an actual destination, so the pi process holds no chat credentials. Session and reply destination are independent axes: inside a thread, replies always stay in that thread; for channel-surface triggers, `reply.mode` decides between opening a thread (`thread`, default) and posting flat (`flat`, the DM default).
+
+### Workdir and storage
+
+Each session works in its own filesystem, restored before a turn and flushed after it (to a local dir or GCS); files the agent writes there can be attached to replies. Skills and extensions live on the filesystem too — bake them into the image's agent home (`$AGENT_HOME/.pi/agent/{skills,extensions}`) or point per-channel config (`skills:` / `extensions:`) at them. Storage has two levels: the per-session workdir, and an optional channel-shared area (`SHARED_DIR`) that persists across sessions and backs the built-in memory skill.
 
 ## Usage Patterns
 
