@@ -25,18 +25,14 @@ import {
   piEventLogFields,
   type UsageTotals,
 } from "./pi-events.js";
-import {
-  renderEvent,
-  renderItems,
-  replyThreadKeyOf,
-  type SessionPolicy,
-} from "./policy.js";
-import { progressEmoji, toolArgsPreview } from "./progress.js";
+import { renderEvent, renderItems, type SessionPolicy } from "./policy.js";
+import { ProgressNotice } from "./progress.js";
 import {
   buildSystemPrompt,
   type MentionFormat,
   prependContext,
 } from "./prompt.js";
+import { registerReplyDestination } from "./reply-destination.js";
 import { isAgentEnd, isToolExecutionEnd, isToolExecutionStart } from "./rpc.js";
 import { PiProcess, type PiPermissionOptions } from "./runtime.js";
 
@@ -140,23 +136,10 @@ export class ActiveSession {
    * リセットし、agent_end 冒頭でクリアする。セッション終了パスでも必ずクリアする
    * (session-runtime.md §6 の turn timeout) */
   #turnTimeoutTimer: NodeJS.Timeout | undefined;
-  /** 進捗通知タイマー (progress-notice.md)。prompt/steer 送信ごとにリセットし、
-   * agent_end 冒頭でクリアする (turnTimeoutTimer と同じ寿命管理) */
-  #progressNoticeTimer: NodeJS.Timeout | undefined;
-  /** 直近に開始した、または直近に完了したツール呼び出し。tool_execution_start/end の
-   * 購読だけで更新する (LLM 呼び出し・session.jsonl を経由しない、progress-notice.md)。
-   * emoji は tool_execution_start 時点で確定させる (bash は候補からランダムに選ぶため、
-   * タイマー発火のたびに選び直すと同じ呼び出し中に表示が変わってしまう)。reply は
-   * 進捗表示の対象外なのでここには反映されない (progress-notice.md) */
-  #currentTool:
-    | { name: string; emoji: string; argsPreview: string }
-    | undefined;
-  /** このセッションでの tool_execution_start 累計回数 (progress-notice.md の
-   * 進捗表示用。ターンをまたいで積算する)。reply は対象外なので含めない */
-  #toolCallCount = 0;
-  /** 直前に進捗通知として送信したテキスト (progress-notice.md)。同じ内容なら
-   * tick をスキップし、Slack API を呼ばない (状況が進んでいないのに更新し続けない) */
-  #lastProgressNoticeText: string | undefined;
+  /** 進捗通知 (progress-notice.md)。タイマーの寿命は turnTimeoutTimer と同じく
+   * prompt/steer 送信ごとに reset、agent_end 冒頭で clear。currentTool/toolCallCount/
+   * lastText の状態は内部に閉じる */
+  readonly #progress: ProgressNotice;
   /** 直近の agent_end から集計した usage の累計 (agent_end.messages は毎回全履歴
    * を返すため、ターンごとの増分ではなくセッション累計になる) */
   #usageTotals?: UsageTotals;
@@ -175,7 +158,6 @@ export class ActiveSession {
   readonly #lingerMs: number;
   readonly #turnTimeoutMs: number;
   readonly #leaseTtlMs: number;
-  readonly #progressNoticeIntervalMs: number;
   readonly #logger: Logger;
 
   constructor(options: ActiveSessionOptions) {
@@ -197,8 +179,13 @@ export class ActiveSession {
     this.#lingerMs = options.lingerMs;
     this.#turnTimeoutMs = options.turnTimeoutMs;
     this.#leaseTtlMs = options.leaseTtlMs;
-    this.#progressNoticeIntervalMs = options.progressNoticeIntervalMs;
     this.#logger = options.logger;
+    this.#progress = new ProgressNotice({
+      sessionKey: options.sessionKey,
+      router: options.router,
+      intervalMs: options.progressNoticeIntervalMs,
+      logger: options.logger,
+    });
   }
 
   get state(): "starting" | "running" | "lingering" | "stopping" {
@@ -282,12 +269,7 @@ export class ActiveSession {
         // 進捗として残るのを避ける。ターン最初のツールが reply なら currentTool
         // は undefined のままで ":thinking_face: ... (step 0)" 側の表示になる
         if (piEvent.toolName !== "reply") {
-          this.#toolCallCount += 1;
-          this.#currentTool = {
-            name: piEvent.toolName,
-            emoji: progressEmoji(piEvent.toolName),
-            argsPreview: toolArgsPreview(piEvent.toolName, piEvent.args, 60),
-          };
+          this.#progress.onToolStart(piEvent.toolName, piEvent.args);
         }
       }
       if (isToolExecutionEnd(piEvent)) {
@@ -313,7 +295,7 @@ export class ActiveSession {
               // タイマーが再発火し、進捗メッセージを消費済みなら (古いツール名のまま)
               // 跡地に新規投稿し、消費対象が無かった短いターンでも reply 完了後に
               // ノイズとなる進捗メッセージを新規投稿してしまう (progress-notice.md)
-              this.#clearProgressNotice();
+              this.#progress.clear();
             })
             .catch((err) => {
               this.#logger.warn(
@@ -341,7 +323,7 @@ export class ActiveSession {
         // 進捗タイマーは agent_end を受けた時点で即止める。onAgentEnd の
         // teardown まで待つと、その間の await の隙間でタイマー tick がもう一件
         // 発火し、deliver 済みの reply の後に古いツール名で新規投稿してしまう
-        this.#clearProgressNotice();
+        this.#progress.clear();
         void this.#onAgentEnd(proc).catch((err) => {
           this.#logger.warn({ sessionKey, err }, "agent_end handling failed");
         });
@@ -383,11 +365,8 @@ export class ActiveSession {
         this.#process === proc &&
         this.#state !== "stopping"
       ) {
-        this.#disposed = true;
-        this.#host.remove(this);
-        this.#stopRenewTimer();
-        this.#clearTurnTimeout();
-        this.#clearProgressNotice();
+        this.#dispose();
+        this.#clearAllTimers();
         void this.#router.clearProgress(sessionKey).catch((err) => {
           this.#logger.warn({ sessionKey, err }, "clear progress failed");
         });
@@ -448,20 +427,24 @@ export class ActiveSession {
     let body: string;
     if (items.length > 0) {
       for (const i of items) {
-        this.#registerReplyDestination(i.event, policy);
+        registerReplyDestination(this.#router, i.event, policy);
         this.#promptedIds.add(i.id);
       }
       body = renderItems(items);
     } else {
       // drain が空 (Store 実装の遅延など)。トリガーイベントに直接フォールバック
       // するが、ack 対象には含める (二重 prompt を防ぐ)
-      const triggerKey = this.#registerReplyDestination(triggerEvent, policy);
+      const triggerKey = registerReplyDestination(
+        this.#router,
+        triggerEvent,
+        policy,
+      );
       this.#promptedIds.add(inboxItemId(triggerEvent));
       body = renderEvent(triggerEvent, triggerKey);
     }
     this.#turnEpoch += 1;
     this.#resetTurnTimeout();
-    this.#resetProgressNotice();
+    this.#progress.reset();
     proc.prompt(prependContext(body, doc));
 
     await this.#store.sessions.put(sessionKey, {
@@ -489,11 +472,8 @@ export class ActiveSession {
    * 呼び出し元 (runner) が現行と同じ順序で続けて行う。best-effort — stop の失敗は
    * spawn 途中の失敗などで起こりうるので飲み込む */
   async abort(): Promise<void> {
-    this.#disposed = true;
-    this.#host.remove(this);
-    this.#stopRenewTimer();
-    this.#clearTurnTimeout();
-    this.#clearProgressNotice();
+    this.#dispose();
+    this.#clearAllTimers();
     await this.#router.clearProgress(this.sessionKey);
     try {
       await this.#process?.stop();
@@ -515,42 +495,18 @@ export class ActiveSession {
     if (pending.length > 0) {
       // steer 前に宛先登録 (session-model.md §3 の境界規則)
       for (const p of pending) {
-        this.#registerReplyDestination(p.event, this.policy);
+        registerReplyDestination(this.#router, p.event, this.policy);
       }
       for (const p of pending) this.#promptedIds.add(p.id);
       this.#turnEpoch += 1;
       this.#resetTurnTimeout();
-      this.#resetProgressNotice();
+      this.#progress.reset();
       proc.steer(renderItems(pending));
       this.#logger.info(
         { sessionKey, items: pending.length },
         "session steered",
       );
     }
-  }
-
-  /** reply 宛先の登録 (メッセージごと。session-model.md §3)。境界規則:
-   * スレッド内のトリガーは reply.mode に関わらずそのスレッドへ返す。
-   * reply.mode が効くのはチャンネル直下トリガーの返信先だけ */
-  #registerReplyDestination(
-    event: InboundMessage,
-    policy: SessionPolicy,
-  ): string {
-    const channelId = event.conversation.channelId;
-    const key = replyThreadKeyOf(event);
-    if (event.conversation.threadTs !== undefined) {
-      this.#router.register(key, {
-        channelId,
-        threadTs: event.conversation.threadTs,
-      });
-    } else if (policy.replyMode === "thread") {
-      // 新スレッドを起こす (トリガーメッセージ自身を thread root にする)
-      this.#router.register(key, { channelId, threadTs: event.id });
-    } else {
-      // フラット (チャンネル直下)
-      this.#router.register(key, { channelId });
-    }
-    return key;
   }
 
   /** reply の files (agent が渡した workdir 相対パス) を workdirReal 基準の絶対パスへ
@@ -673,13 +629,10 @@ export class ActiveSession {
       updatedAt: new Date(),
     });
     await proc.stop();
-    this.#stopRenewTimer();
-    this.#clearTurnTimeout();
-    this.#clearProgressNotice();
+    this.#clearAllTimers();
     await this.#router.clearProgress(sessionKey);
     await this.#store.leases.release(this.#lease);
-    this.#disposed = true;
-    this.#host.remove(this);
+    this.#dispose();
     // windowSec の起点 (session-model.md §3。以降このレーンは窓内なら resume 合流できる)
     await this.#host.markEnded(this.channelId, sessionKey);
     this.#logger.info(
@@ -765,9 +718,7 @@ export class ActiveSession {
     if (this.#disposed || this.#process !== proc) return;
 
     this.#state = "stopping";
-    this.#stopRenewTimer();
-    this.#clearTurnTimeout();
-    this.#clearProgressNotice();
+    this.#clearAllTimers();
 
     // register 済み (kick で必ず register している) なので deliver できる。
     // 通知の配達が失敗してもセッションの畳み込みは続ける
@@ -804,8 +755,7 @@ export class ActiveSession {
     );
     // activeSessionCount (テストの waitFor 等) がこのログの後で 0 になるよう、
     // Map からの削除はクリーンアップ完了後に行う
-    this.#disposed = true;
-    this.#host.remove(this);
+    this.#dispose();
     await this.#host.markEnded(this.channelId, sessionKey);
   }
 
@@ -818,7 +768,7 @@ export class ActiveSession {
     );
     if (items.length === 0) return false;
     for (const i of items) {
-      this.#registerReplyDestination(i.event, this.policy);
+      registerReplyDestination(this.#router, i.event, this.policy);
       this.#promptedIds.add(i.id);
     }
     this.#turnEpoch += 1;
@@ -826,7 +776,7 @@ export class ActiveSession {
     // trySteerExisting が steer せず enqueue のみで残していたものを含む
     this.#state = "running";
     this.#resetTurnTimeout();
-    this.#resetProgressNotice();
+    this.#progress.reset();
     proc.prompt(renderItems(items));
     this.#logger.info({ sessionKey, items: items.length }, "session continued");
     return true;
@@ -851,11 +801,8 @@ export class ActiveSession {
           "lease renew failed; stopping session without flush",
         );
         this.#state = "stopping";
-        this.#disposed = true;
-        this.#host.remove(this);
-        this.#stopRenewTimer();
-        this.#clearTurnTimeout();
-        this.#clearProgressNotice();
+        this.#dispose();
+        this.#clearAllTimers();
         await this.#router.clearProgress(sessionKey);
         await this.#process?.stop();
         await this.#host.markEnded(this.channelId, sessionKey);
@@ -899,46 +846,23 @@ export class ActiveSession {
     }
   }
 
-  /** 進捗通知タイマーをリセットする (prompt/steer 送信ごとに呼ぶ。既存タイマーが
-   * あれば止めて張り直す)。turnTimeoutTimer と同じ寿命管理パターン
-   * (progress-notice.md)。間隔ごとに currentTool のスナップショットを投稿/更新する */
-  #resetProgressNotice(): void {
-    const sessionKey = this.sessionKey;
-    this.#clearProgressNotice();
-    // 新しいターンの内容と比較できるよう、前ターン分の記憶は引き継がない
-    this.#lastProgressNoticeText = undefined;
-    // 前ターンの reply 配達で閉じた進捗レーン (router.ts progressClosed) を
-    // 新ターン開始時に再び開く。fire-and-forget — 失敗しても次の notifyProgress
-    // が warn を出すだけで、新ターンの進捗表示自体はタイマーが担う
-    void this.#router.reopenProgress(sessionKey).catch((err) => {
-      this.#logger.warn({ sessionKey, err }, "failed to reopen progress lane");
-    });
-    if (this.#progressNoticeIntervalMs === 0) return;
-    const timer = setInterval(() => {
-      const tool = this.#currentTool;
-      const count = this.#toolCallCount;
-      const text =
-        tool === undefined
-          ? `:thinking_face: ... (step ${count})`
-          : tool.argsPreview === ""
-            ? `${tool.emoji} \`${tool.name}\` ... (step ${count})`
-            : `${tool.emoji} \`${tool.name}\` \`${tool.argsPreview}\` ... (step ${count})`;
-      // 前回送信時から状況が進んでいなければ何もしない (Slack API を呼ばない)
-      if (text === this.#lastProgressNoticeText) return;
-      this.#lastProgressNoticeText = text;
-      this.#router.notifyProgress(sessionKey, text).catch((err) => {
-        this.#logger.warn({ sessionKey, err }, "progress notice failed");
-      });
-    }, this.#progressNoticeIntervalMs);
-    timer.unref();
-    this.#progressNoticeTimer = timer;
+  /** 全終了経路の共通後始末: 3 タイマー (renew / turn timeout / progress notice) を
+   * まとめて止める。どの経路でもこの 3 つは隣接して呼ばれるため無条件に畳める。
+   * progress レーンの clearProgress / lease の release / markEnded / ログは経路ごとに
+   * 位置も有無も異なる意図的な差異なのでここには含めない */
+  #clearAllTimers(): void {
+    this.#stopRenewTimer();
+    this.#clearTurnTimeout();
+    this.#progress.clear();
   }
 
-  #clearProgressNotice(): void {
-    if (this.#progressNoticeTimer !== undefined) {
-      clearInterval(this.#progressNoticeTimer);
-      this.#progressNoticeTimer = undefined;
-    }
+  /** レジストリからの離脱 (disposed フラグ + host.remove)。呼び出し位置は経路ごとに
+   * 異なる — abnormalShutdown はログ後 (activeSessionCount がログの後で 0 になるよう)、
+   * exit / renew 失敗 / abort は先頭側。activeSessionCount を観測するテストに影響する
+   * ので、各経路の現在位置から動かさないこと */
+  #dispose(): void {
+    this.#disposed = true;
+    this.#host.remove(this);
   }
 
   /** リアクションは装飾なので、失敗してもセッションを止めない */

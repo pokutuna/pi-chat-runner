@@ -35,7 +35,6 @@ import { ActiveSession, type SessionHost } from "./active-session.js";
 import { type ChatCommand, parseCommand } from "./commands.js";
 import {
   computeKickDelayMs,
-  replyThreadKeyOf,
   resolveSessionPolicy,
   type SessionPolicy,
   sessionKeyOf,
@@ -47,6 +46,7 @@ import {
   type MentionFormat,
   REJECT_NOTICE_TEXT,
 } from "./prompt.js";
+import { registerReplyDestination } from "./reply-destination.js";
 import {
   buildSpawnOptions,
   loadMemoryIndex,
@@ -298,7 +298,7 @@ export class SessionRunner implements SessionHost {
     if (cmd !== null && this.sessions.has(sessionKey)) {
       if (cmd.kind === "new") {
         // 実行中レーンとの交錯を避けるため、steer には流さず拒否通知を返す (v1 の割り切り)
-        const threadKey = this.registerReplyDestination(event, policy);
+        const threadKey = registerReplyDestination(this.router, event, policy);
         await this.deliverCommandNotice(
           sessionKey,
           threadKey,
@@ -501,7 +501,7 @@ export class SessionRunner implements SessionHost {
       NEW_COMMAND_LEASE_TTL_MS,
     );
     if (lease === null) {
-      const threadKey = this.registerReplyDestination(event, policy);
+      const threadKey = registerReplyDestination(this.router, event, policy);
       await this.deliverCommandNotice(
         sessionKey,
         threadKey,
@@ -560,7 +560,7 @@ export class SessionRunner implements SessionHost {
       return;
     }
 
-    const threadKey = this.registerReplyDestination(event, policy);
+    const threadKey = registerReplyDestination(this.router, event, policy);
     await this.deliverCommandNotice(sessionKey, threadKey, ACK_NOTICE_TEXT);
   }
 
@@ -593,7 +593,7 @@ export class SessionRunner implements SessionHost {
       enabled ? "channel enabled via command" : "channel disabled via command",
     );
 
-    const threadKey = this.registerReplyDestination(event, policy);
+    const threadKey = registerReplyDestination(this.router, event, policy);
     await this.deliverCommandNotice(
       sessionKey,
       threadKey,
@@ -1009,30 +1009,6 @@ export class SessionRunner implements SessionHost {
       await this.markSessionPointerEnded(channelId, sessionKey);
       this.logger.warn({ sessionKey, err }, "session kick failed");
     }
-  }
-
-  /** reply 宛先の登録 (メッセージごと。session-model.md §3)。境界規則:
-   * スレッド内のトリガーは reply.mode に関わらずそのスレッドへ返す。
-   * reply.mode が効くのはチャンネル直下トリガーの返信先だけ */
-  private registerReplyDestination(
-    event: InboundMessage,
-    policy: SessionPolicy,
-  ): string {
-    const channelId = event.conversation.channelId;
-    const key = replyThreadKeyOf(event);
-    if (event.conversation.threadTs !== undefined) {
-      this.router.register(key, {
-        channelId,
-        threadTs: event.conversation.threadTs,
-      });
-    } else if (policy.replyMode === "thread") {
-      // 新スレッドを起こす (トリガーメッセージ自身を thread root にする)
-      this.router.register(key, { channelId, threadTs: event.id });
-    } else {
-      // フラット (チャンネル直下)
-      this.router.register(key, { channelId });
-    }
-    return key;
   }
 
   /** チャンネル共有ディレクトリの staging パス (docs/design/shared.md §1)。
