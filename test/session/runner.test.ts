@@ -38,12 +38,9 @@ import {
   sessionKeyOf,
 } from "../../src/session/policy.js";
 import type { MentionFormat } from "../../src/session/prompt.js";
-import type {
-  FetchedMessage,
-  FetchMessage,
-  PiPermissionConfig,
-} from "../../src/session/runner.js";
+import type { FetchedMessage, FetchMessage } from "../../src/session/runner.js";
 import { SessionRunner } from "../../src/session/runner.js";
+import type { PiPermissionConfig } from "../../src/session/spawn.js";
 import { InMemoryStateStore } from "../../src/store/state/backends/memory.js";
 import { inboxItemId } from "../../src/store/state/inbox-item.js";
 import type { StateStore } from "../../src/store/state/interfaces.js";
@@ -2292,9 +2289,11 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     expect(h.poster.calls[0]?.threadTs).toBe(trigger.id);
     expect(h.poster.calls[0]?.text).toContain(":warning:");
 
-    // timeout 時は flush も ack もしない — 未 ack の item は inbox に残り、
-    // 次の kick で再実行される (session-runtime.md §6 の不変条件)
-    expect((await h.store.inbox.drain(threadKey)).length).toBe(1);
+    // timeout 時は flush しないが、このターンで prompt 済みだった item は
+    // ack して捨てる (retry しない。session-model.md §6)。異常終了はコマンド失敗・
+    // クラッシュと同じ規則で、残すと同じ重い入力を次 drain が拾って再 timeout する
+    // 毒ループになるため。ユーザーには ❌ と通知で伝わる
+    expect((await h.store.inbox.drain(threadKey)).length).toBe(0);
   });
 
   it("does not fire the turn timeout when agent_end arrives before turnTimeoutMs", async () => {

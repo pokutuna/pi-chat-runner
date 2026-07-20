@@ -27,8 +27,9 @@ import { SlackUserResolver } from "./ingress/slack/user-resolver.js";
 import { enrichEvent, type UserResolver } from "./ingress/user-resolver.js";
 import type { Logger } from "./logger.js";
 import { rootLogger } from "./logger.js";
-import type { FetchMessage, PiPermissionConfig } from "./session/runner.js";
+import type { FetchMessage } from "./session/runner.js";
 import { SessionRunner } from "./session/runner.js";
+import type { PiPermissionConfig } from "./session/spawn.js";
 import type { StateStore } from "./store/state/interfaces.js";
 import {
   createSharedStorage,

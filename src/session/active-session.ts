@@ -35,6 +35,7 @@ import {
 import { registerReplyDestination } from "./reply-destination.js";
 import { isAgentEnd, isToolExecutionEnd, isToolExecutionStart } from "./rpc.js";
 import { PiProcess, type PiPermissionOptions } from "./runtime.js";
+import type { PiPermissionConfig } from "./spawn.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -49,8 +50,42 @@ export interface SessionHost {
   markEnded(channelId: string, sessionKey: string): Promise<void>;
 }
 
-/** ActiveSession の構築に必要な依存一式。identity 一式・lease は runner
- * (acquireLeaseAndKick) が取得してから渡す */
+/** セッション横断で不変の依存・設定一式。SessionRunner のコンストラクタで
+ * options から一度だけ組み立て、以後は使い回す (SessionRunnerOptions の再梱包を
+ * kick / ActiveSession 構築のたびに繰り返さないための束ね役)。ActiveSession は
+ * これを `#ctx` 1 フィールドとして保持し、個々の値は展開しない。static* な値
+ * (mentionFormat/piBinary/piEntrypoint/agentUid/agentGid) は StartArgs にはもう
+ * 積まない — プロセス起動中に変わらないのでここから直接参照する */
+export interface SessionContext {
+  store: StateStore;
+  router: EgressRouter;
+  reactions: Reactions;
+  workdirStorage: WorkdirStorage;
+  sharedStorage: SharedStorage | undefined;
+  logger: Logger;
+  lingerMs: number;
+  turnTimeoutMs: number;
+  leaseTtlMs: number;
+  progressNoticeIntervalMs: number;
+  /** ユーザーへの言及をレンダリングする関数 (返信本文に埋め込む記法) */
+  mentionFormat: MentionFormat;
+  /** 明示的に差し替える pi バイナリ。テストや埋め込み用途向け */
+  piBinary: string | undefined;
+  /** 解決済みの pi 本体 entrypoint JS */
+  piEntrypoint: string | undefined;
+  /** allowlist (PATH/HOME) に追加で pi 子プロセスへ渡す env (kick 時に HOME を
+   * agentHomeReal で上書きしたものを都度合成するための素材) */
+  extraEnv: Record<string, string> | undefined;
+  /** pi 子プロセスの実行 uid/gid (両方指定時のみ有効) */
+  agentUid: number | undefined;
+  agentGid: number | undefined;
+  agentHome: string;
+  piPermission: PiPermissionConfig | undefined;
+}
+
+/** ActiveSession の構築に必要な依存一式。同一性 (sessionKey/channelId/threadTs/
+ * triggerTs/workdir/policy) と lease/host/sharedStagingDir はセッションごとに
+ * 決まる値、ctx はセッション横断の共有コンテキスト (SessionContext)。 */
 export interface ActiveSessionOptions {
   sessionKey: string;
   channelId: string;
@@ -64,23 +99,16 @@ export interface ActiveSessionOptions {
   /** このプロセスが保持する実行ロック。renew に失敗したら排他を失っている */
   lease: Lease;
   host: SessionHost;
-  store: StateStore;
-  router: EgressRouter;
-  reactions: Reactions;
-  workdirStorage: WorkdirStorage;
-  sharedStorage: SharedStorage | undefined;
   /** チャンネル共有ディレクトリの staging パス (docs/design/shared.md §1) */
   sharedStagingDir: string | undefined;
-  lingerMs: number;
-  turnTimeoutMs: number;
-  leaseTtlMs: number;
-  progressNoticeIntervalMs: number;
-  logger: Logger;
+  ctx: SessionContext;
 }
 
-/** start() に渡す、spawn 準備 (spawn.ts の関数群) の結果と PiProcess 生成に必要な
- * 設定。ActiveSession は spawn 準備を自分では持たない — runner の kick 相当が
- * prepareWorkdir / buildSpawnOptions / loadMemoryIndex を呼んだ結果を束ねて渡す */
+/** start() に渡す、spawn 準備 (spawn.ts の関数群) の結果と per-kick な設定。
+ * ActiveSession は spawn 準備を自分では持たない — runner の kick 相当が
+ * prepareWorkdir / buildSpawnOptions / loadMemoryIndex を呼んだ結果を束ねて渡す。
+ * mentionFormat/piBinary/piEntrypoint/agentUid/agentGid のような静的設定は
+ * ctx (SessionContext) 側にあるためここには含まない */
 export interface StartArgs {
   triggerEvent: InboundMessage;
   doc: ChannelDoc | null;
@@ -95,13 +123,9 @@ export interface StartArgs {
   /** kick 開始時点で session.jsonl が既に存在したか ("session started" ログ用) */
   resumed: boolean;
   model: string | undefined;
-  mentionFormat: MentionFormat;
-  /** allowlist に追加で pi 子プロセスへ渡す env (HOME=agentHomeReal を含む) */
+  /** allowlist に追加で pi 子プロセスへ渡す env (HOME=agentHomeReal を含む、
+   * per-kick に合成されたもの) */
   extraEnv: Record<string, string>;
-  piBinary: string | undefined;
-  piEntrypoint: string | undefined;
-  agentUid: number | undefined;
-  agentGid: number | undefined;
 }
 
 export class ActiveSession {
@@ -149,16 +173,8 @@ export class ActiveSession {
   #disposed = false;
 
   readonly #host: SessionHost;
-  readonly #store: StateStore;
-  readonly #router: EgressRouter;
-  readonly #reactions: Reactions;
-  readonly #workdirStorage: WorkdirStorage;
-  readonly #sharedStorage: SharedStorage | undefined;
   readonly #sharedStagingDir: string | undefined;
-  readonly #lingerMs: number;
-  readonly #turnTimeoutMs: number;
-  readonly #leaseTtlMs: number;
-  readonly #logger: Logger;
+  readonly #ctx: SessionContext;
 
   constructor(options: ActiveSessionOptions) {
     this.sessionKey = options.sessionKey;
@@ -170,21 +186,13 @@ export class ActiveSession {
     this.#startedAt = Date.now();
     this.#lease = options.lease;
     this.#host = options.host;
-    this.#store = options.store;
-    this.#router = options.router;
-    this.#reactions = options.reactions;
-    this.#workdirStorage = options.workdirStorage;
-    this.#sharedStorage = options.sharedStorage;
     this.#sharedStagingDir = options.sharedStagingDir;
-    this.#lingerMs = options.lingerMs;
-    this.#turnTimeoutMs = options.turnTimeoutMs;
-    this.#leaseTtlMs = options.leaseTtlMs;
-    this.#logger = options.logger;
+    this.#ctx = options.ctx;
     this.#progress = new ProgressNotice({
       sessionKey: options.sessionKey,
-      router: options.router,
-      intervalMs: options.progressNoticeIntervalMs,
-      logger: options.logger,
+      router: options.ctx.router,
+      intervalMs: options.ctx.progressNoticeIntervalMs,
+      logger: options.ctx.logger,
     });
   }
 
@@ -215,13 +223,10 @@ export class ActiveSession {
       memoryIndex,
       resumed,
       model,
-      mentionFormat,
       extraEnv,
-      piBinary,
-      piEntrypoint,
-      agentUid,
-      agentGid,
     } = args;
+    const { mentionFormat, piBinary, piEntrypoint, agentUid, agentGid } =
+      this.#ctx;
 
     const proc = new PiProcess({
       sessionPath,
@@ -247,7 +252,8 @@ export class ActiveSession {
       ...(agentGid !== undefined ? { gid: agentGid } : {}),
       ...(permission !== undefined ? { permission } : {}),
       // pi は正常時にも stderr へ出すことがあるため warn ではなく debug
-      logger: (line) => this.#logger.debug({ sessionKey, line }, "pi stderr"),
+      logger: (line) =>
+        this.#ctx.logger.debug({ sessionKey, line }, "pi stderr"),
     });
 
     proc.on("event", (piEvent) => {
@@ -255,7 +261,7 @@ export class ActiveSession {
       // 概要フィールドだけ出す。ストリーミング差分は null が返るのでログしない
       const logFields = piEventLogFields(piEvent);
       if (logFields !== null) {
-        this.#logger.debug(
+        this.#ctx.logger.debug(
           { sessionKey, eventType: piEvent.type, ...logFields },
           "pi event",
         );
@@ -280,7 +286,7 @@ export class ActiveSession {
           // にそれをそのまま poster へ流すと境界チェックを素通りしてしまう
           this.#resolveReplyFiles(sessionKey, workdirReal, payload.files)
             .then((files) =>
-              this.#router.deliver(
+              this.#ctx.router.deliver(
                 {
                   thread_key: payload.thread_key,
                   text: payload.text,
@@ -298,7 +304,7 @@ export class ActiveSession {
               this.#progress.clear();
             })
             .catch((err) => {
-              this.#logger.warn(
+              this.#ctx.logger.warn(
                 { sessionKey, threadKeyPayload: payload.thread_key, err },
                 "reply delivery failed",
               );
@@ -310,7 +316,7 @@ export class ActiveSession {
         // ターン内の LLM 呼び出し失敗は agent_end としては正常終了になるので、
         // ここで拾わないとログに一切残らない (pi-events.ts extractTurnErrors)
         for (const errorMessage of extractTurnErrors(piEvent)) {
-          this.#logger.error(
+          this.#ctx.logger.error(
             { sessionKey, errorMessage },
             "assistant turn ended with error",
           );
@@ -319,13 +325,16 @@ export class ActiveSession {
         // なくセッション累計 (pi-events.ts extractUsageTotals)
         const totals = extractUsageTotals(piEvent);
         this.#usageTotals = totals;
-        this.#logger.info({ sessionKey, ...totals }, "turn usage");
+        this.#ctx.logger.info({ sessionKey, ...totals }, "turn usage");
         // 進捗タイマーは agent_end を受けた時点で即止める。onAgentEnd の
         // teardown まで待つと、その間の await の隙間でタイマー tick がもう一件
         // 発火し、deliver 済みの reply の後に古いツール名で新規投稿してしまう
         this.#progress.clear();
         void this.#onAgentEnd(proc).catch((err) => {
-          this.#logger.warn({ sessionKey, err }, "agent_end handling failed");
+          this.#ctx.logger.warn(
+            { sessionKey, err },
+            "agent_end handling failed",
+          );
         });
       }
     });
@@ -333,7 +342,7 @@ export class ActiveSession {
       // success: true は prompt/steer の受理応答に過ぎない (agent_end が本当の
       // 終端)。debug ログのみで十分
       if (response.success) {
-        this.#logger.debug(
+        this.#ctx.logger.debug(
           { sessionKey, command: response.command },
           "pi command accepted",
         );
@@ -342,16 +351,19 @@ export class ActiveSession {
       // success: false は pi 側が「動けない」と判断したケース (認証エラー等)。
       // pi は生きたまま次コマンドを待つが、agent_end が来ないので何もしなければ
       // runner は永久に無音ハングする → ここで異常終了として扱いプロセスを止める
-      this.#logger.error(
+      this.#ctx.logger.error(
         { sessionKey, command: response.command, error: response.error },
         "pi command failed",
       );
       void this.#failSession(proc, response.error).catch((err) => {
-        this.#logger.warn({ sessionKey, err }, "failSession handling failed");
+        this.#ctx.logger.warn(
+          { sessionKey, err },
+          "failSession handling failed",
+        );
       });
     });
     proc.on("invalid", (raw, error) => {
-      this.#logger.debug(
+      this.#ctx.logger.debug(
         { sessionKey, raw: raw.slice(0, 500), error },
         "pi stdout line invalid",
       );
@@ -367,32 +379,34 @@ export class ActiveSession {
       ) {
         this.#dispose();
         this.#clearAllTimers();
-        void this.#router.clearProgress(sessionKey).catch((err) => {
-          this.#logger.warn({ sessionKey, err }, "clear progress failed");
+        void this.#ctx.router.clearProgress(sessionKey).catch((err) => {
+          this.#ctx.logger.warn({ sessionKey, err }, "clear progress failed");
         });
         // このターンで prompt 済みだった item は ack して捨てる。retry しない
         // (session-model.md §6)。捨てないと未 ack のまま inbox に残り、次の新規
         // イベントの drain が巻き込んで再 prompt するため、workdir/transcript を
         // 使い回す構造上「同じ入力で pi が再クラッシュし続ける」ループになりうる。
-        // 異常終了はユーザーに ❌ で伝わるので、必要なら本人が言い直せばよい
+        // 異常終了はユーザーに ❌ で伝わるので、必要なら本人が言い直せばよい。
+        // abnormalShutdown (failSession / timeoutSession) と同じ規則 — プロセスが
+        // 既に死んでいる分ここでは kill せず lease 解放から始める点だけが違う
         const toAck = [...this.#promptedIds];
         if (toAck.length > 0) {
-          void this.#store.inbox.ack(sessionKey, toAck).catch((err) => {
-            this.#logger.warn({ sessionKey, err }, "inbox ack failed");
+          void this.#ctx.store.inbox.ack(sessionKey, toAck).catch((err) => {
+            this.#ctx.logger.warn({ sessionKey, err }, "inbox ack failed");
           });
         }
-        void this.#store.leases.release(this.#lease).catch((err) => {
-          this.#logger.warn({ sessionKey, err }, "lease release failed");
+        void this.#ctx.store.leases.release(this.#lease).catch((err) => {
+          this.#ctx.logger.warn({ sessionKey, err }, "lease release failed");
         });
         void this.#host.markEnded(this.channelId, sessionKey);
-        this.#logger.warn(
+        this.#ctx.logger.warn(
           { sessionKey, code, signal },
           "pi exited unexpectedly",
         );
         // pi のクラッシュはユーザーから見えない (返信なしで無音になる) ので、
         // トリガーメッセージに ❌ を付けて失敗を伝える
         void this.#safeReact(
-          () => this.#reactions.addX(this.channelId, this.triggerTs),
+          () => this.#ctx.reactions.addX(this.channelId, this.triggerTs),
           sessionKey,
           "x",
         );
@@ -408,12 +422,12 @@ export class ActiveSession {
     // 通知を送るために必要)。sessionMode "channel" かつ replyMode "flat" ならチャンネル
     // 直下、それ以外はトリガーのスレッドへ (session-model.md §3)
     if (policy.sessionMode === "channel" && policy.replyMode === "flat") {
-      this.#router.register(sessionKey, { channelId });
+      this.#ctx.router.register(sessionKey, { channelId });
     } else {
-      this.#router.register(sessionKey, { channelId, threadTs });
+      this.#ctx.router.register(sessionKey, { channelId, threadTs });
     }
     await this.#safeReact(
-      () => this.#reactions.addEyes(channelId, this.triggerTs),
+      () => this.#ctx.reactions.addEyes(channelId, this.triggerTs),
       sessionKey,
       "eyes",
     );
@@ -421,13 +435,13 @@ export class ActiveSession {
     // enqueue 済みの入力 (spawn 準備中に積まれた分を含む) を束ねて初回 prompt にする。
     // トリガーイベント自身も enqueue 済みなので通常 drain 経由で届く。
     // ChannelDoc.context は初回のみ先頭に注入する (config.md §4)
-    const items = (await this.#store.inbox.drain(sessionKey)).filter(
+    const items = (await this.#ctx.store.inbox.drain(sessionKey)).filter(
       (i) => !this.#promptedIds.has(i.id),
     );
     let body: string;
     if (items.length > 0) {
       for (const i of items) {
-        registerReplyDestination(this.#router, i.event, policy);
+        registerReplyDestination(this.#ctx.router, i.event, policy);
         this.#promptedIds.add(i.id);
       }
       body = renderItems(items);
@@ -435,7 +449,7 @@ export class ActiveSession {
       // drain が空 (Store 実装の遅延など)。トリガーイベントに直接フォールバック
       // するが、ack 対象には含める (二重 prompt を防ぐ)
       const triggerKey = registerReplyDestination(
-        this.#router,
+        this.#ctx.router,
         triggerEvent,
         policy,
       );
@@ -447,14 +461,14 @@ export class ActiveSession {
     this.#progress.reset();
     proc.prompt(prependContext(body, doc));
 
-    await this.#store.sessions.put(sessionKey, {
+    await this.#ctx.store.sessions.put(sessionKey, {
       channelId,
       threadTs,
       triggerTs: this.triggerTs,
       status: "active",
       updatedAt: new Date(),
     });
-    this.#logger.info(
+    this.#ctx.logger.info(
       {
         sessionKey,
         workdir,
@@ -474,7 +488,7 @@ export class ActiveSession {
   async abort(): Promise<void> {
     this.#dispose();
     this.#clearAllTimers();
-    await this.#router.clearProgress(this.sessionKey);
+    await this.#ctx.router.clearProgress(this.sessionKey);
     try {
       await this.#process?.stop();
     } catch {
@@ -490,19 +504,19 @@ export class ActiveSession {
     const sessionKey = this.sessionKey;
     const proc = this.#process;
     if (proc === undefined) return;
-    const items = await this.#store.inbox.drain(sessionKey);
+    const items = await this.#ctx.store.inbox.drain(sessionKey);
     const pending = items.filter((i) => !this.#promptedIds.has(i.id));
     if (pending.length > 0) {
       // steer 前に宛先登録 (session-model.md §3 の境界規則)
       for (const p of pending) {
-        registerReplyDestination(this.#router, p.event, this.policy);
+        registerReplyDestination(this.#ctx.router, p.event, this.policy);
       }
       for (const p of pending) this.#promptedIds.add(p.id);
       this.#turnEpoch += 1;
       this.#resetTurnTimeout();
       this.#progress.reset();
       proc.steer(renderItems(pending));
-      this.#logger.info(
+      this.#ctx.logger.info(
         { sessionKey, items: pending.length },
         "session steered",
       );
@@ -528,7 +542,7 @@ export class ActiveSession {
       const rel = relative(workdirReal, abs);
       const inside = rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
       if (!inside) {
-        this.#logger.warn(
+        this.#ctx.logger.warn(
           { sessionKey, path: file },
           "reply file path escapes workdir; dropped",
         );
@@ -538,14 +552,14 @@ export class ActiveSession {
       try {
         fileStat = await lstat(abs);
       } catch {
-        this.#logger.warn(
+        this.#ctx.logger.warn(
           { sessionKey, path: file },
           "reply file does not exist; dropped",
         );
         continue;
       }
       if (!fileStat.isFile()) {
-        this.#logger.warn(
+        this.#ctx.logger.warn(
           { sessionKey, path: file },
           "reply file is a symlink or not a regular file; dropped",
         );
@@ -556,7 +570,7 @@ export class ActiveSession {
       const realInside =
         realRel !== "" && !realRel.startsWith("..") && !isAbsolute(realRel);
       if (!realInside) {
-        this.#logger.warn(
+        this.#ctx.logger.warn(
           { sessionKey, path: file },
           "reply file resolves outside workdir; dropped",
         );
@@ -588,17 +602,20 @@ export class ActiveSession {
     // ack 対象は flush 前のスナップショット — flush の await 中に steer が
     // promptedIds へ追加した item を「そのターンの flush 前」に ack しない
     const toAck = [...this.#promptedIds];
-    await this.#workdirStorage.flush(sessionKey, this.workdir);
+    await this.#ctx.workdirStorage.flush(sessionKey, this.workdir);
     // shared も同じ境界で棚へ書き戻す (docs/design/shared.md §2)。異常終了パス
     // (exit / abnormalShutdown / renew 失敗) で書き戻さないのは workdir と同じ理由
     if (
-      this.#sharedStorage !== undefined &&
+      this.#ctx.sharedStorage !== undefined &&
       this.#sharedStagingDir !== undefined
     ) {
-      await this.#sharedStorage.flush(this.channelId, this.#sharedStagingDir);
+      await this.#ctx.sharedStorage.flush(
+        this.channelId,
+        this.#sharedStagingDir,
+      );
     }
     if (toAck.length > 0) {
-      await this.#store.inbox.ack(sessionKey, toAck);
+      await this.#ctx.store.inbox.ack(sessionKey, toAck);
       for (const id of toAck) this.#promptedIds.delete(id);
     }
 
@@ -609,7 +626,7 @@ export class ActiveSession {
 
     // 4. linger: agent_end 直後に届いた追いメッセージを拾ってから終える。
     // この間レコードは Map に残す (新イベントは steer パスに入りうる)
-    await sleep(this.#lingerMs);
+    await sleep(this.#ctx.lingerMs);
     if (this.#disposed || this.#process !== proc) return;
     if (await this.#promptPending(proc)) return;
     if (this.#turnEpoch !== epoch) return;
@@ -617,11 +634,11 @@ export class ActiveSession {
     // 5. 終了処理。reply が 1 度も呼ばれなくても沈黙のまま ✅ を付けて終える
     this.#state = "stopping";
     await this.#safeReact(
-      () => this.#reactions.addCheck(this.channelId, this.triggerTs),
+      () => this.#ctx.reactions.addCheck(this.channelId, this.triggerTs),
       sessionKey,
       "check",
     );
-    await this.#store.sessions.put(sessionKey, {
+    await this.#ctx.store.sessions.put(sessionKey, {
       channelId: this.channelId,
       threadTs: this.threadTs,
       triggerTs: this.triggerTs,
@@ -630,12 +647,12 @@ export class ActiveSession {
     });
     await proc.stop();
     this.#clearAllTimers();
-    await this.#router.clearProgress(sessionKey);
-    await this.#store.leases.release(this.#lease);
+    await this.#ctx.router.clearProgress(sessionKey);
+    await this.#ctx.store.leases.release(this.#lease);
     this.#dispose();
     // windowSec の起点 (session-model.md §3。以降このレーンは窓内なら resume 合流できる)
     await this.#host.markEnded(this.channelId, sessionKey);
-    this.#logger.info(
+    this.#ctx.logger.info(
       {
         sessionKey,
         durationMs: Date.now() - this.#startedAt,
@@ -654,9 +671,8 @@ export class ActiveSession {
   /**
    * pi が response.success=false を返したときの異常終了処理 (例: Cloud Run で
    * ADC が見つからず認証エラーになるケース)。agent_end が来ない見込みなので
-   * ここで能動的にセッションを畳む。pi は生きたまま次コマンドを待っているだけなので
-   * graceful stop (proc.stop()) で十分止まる。クリーンアップの中身は abnormalShutdown
-   * に共通化している (timeoutSession と共有)
+   * ここで能動的にセッションを畳む。クリーンアップの中身は abnormalShutdown に
+   * 共通化している (timeoutSession と共有)
    */
   async #failSession(
     proc: PiProcess,
@@ -665,41 +681,35 @@ export class ActiveSession {
     await this.#abnormalShutdown(proc, {
       noticeText: `:warning: セッションが異常終了しました: ${error ?? "unknown error"}`,
       logMessage: "session failed",
-      stop: () => proc.stop(),
-      // 認証エラー等は再実行しても同じく失敗するので、このターンの入力は捨てる
-      dropPromptedItems: true,
     });
   }
 
   /**
-   * ターンタイムアウト (turnTimeoutMs 超過) の異常終了処理。pi が応答しない可能性がある
-   * ため graceful stop ではなく強制 kill する (session-runtime.md §6:
-   * 「プロセスは使い捨て設計なので kill してよい。inbox の入力は残るため再実行可能」)。
-   * クリーンアップの中身は failSession と共通 (abnormalShutdown)
+   * ターンタイムアウト (turnTimeoutMs 超過) の異常終了処理。クリーンアップの中身は
+   * failSession と共通 (abnormalShutdown)
    */
   async #timeoutSession(proc: PiProcess): Promise<void> {
-    this.#logger.error(
-      { sessionKey: this.sessionKey, turnTimeoutMs: this.#turnTimeoutMs },
+    this.#ctx.logger.error(
+      { sessionKey: this.sessionKey, turnTimeoutMs: this.#ctx.turnTimeoutMs },
       "turn timed out",
     );
     await this.#abnormalShutdown(proc, {
-      noticeText: `:warning: ターンがタイムアウトしました (${this.#turnTimeoutMs}ms)。セッションを終了します`,
+      noticeText: `:warning: ターンがタイムアウトしました (${this.#ctx.turnTimeoutMs}ms)。セッションを終了します`,
       logMessage: "session timed out",
-      // timeout は「重い処理で時間切れ」= 再実行で完了しうるため入力は残す (retry させる)
-      dropPromptedItems: false,
-      stop: () => {
-        proc.kill();
-        return Promise.resolve();
-      },
     });
   }
 
   /**
    * 異常終了の共通クリーンアップ (failSession / timeoutSession から呼ばれる)。
-   * exit ハンドラの「running のまま exit したら異常終了」と同じ後始末 (lease 解放 /
-   * renew・timeout タイマー停止 / Map から削除) を行うが、flush はしない (このターンの
-   * 入力は inbox に残したまま次回に再実行させる)。state を先に "stopping" にしておくことで、
-   * stop() が引き起こす exit イベントが二重にクリーンアップを走らせない
+   * exit ハンドラの「running のまま exit したら異常終了」と同じ後始末を行う:
+   * このターンで prompt 済みだった item を ack して捨て (retry しない)、lease を解放し、
+   * renew・timeout タイマーを止めて Map から削除する。flush はしない。
+   * 異常終了は種別 (command failed / turn timeout) によらずこのターンの入力を捨てる —
+   * 同じ入力を残すと次イベントの drain が巻き込んで同一 workdir/transcript で再び
+   * 失敗・timeout する毒ループになりうる。失敗は ❌ と通知でユーザーに伝わるので、
+   * 必要なら本人が言い直せばよい (session-model.md §6)。プロセスは使い捨て設計
+   * (session-runtime.md §6) なので常に kill でよい。state を先に "stopping" にしておく
+   * ことで、kill が引き起こす exit イベントが二重にクリーンアップを走らせない
    * (exit ハンドラは state !== "stopping" のときだけ動く)
    */
   async #abnormalShutdown(
@@ -707,11 +717,6 @@ export class ActiveSession {
     options: {
       noticeText: string;
       logMessage: string;
-      stop: () => Promise<void>;
-      /** このターンで prompt 済みだった item を ack して捨てるか (session-model.md §6)。
-       * command failed (認証エラー等、再実行しても同じく失敗) は捨てる。turn timeout は
-       * 「重い処理で時間切れ」= 再実行で完了しうるため残し、次イベントで拾い直させる */
-      dropPromptedItems: boolean;
     },
   ): Promise<void> {
     const sessionKey = this.sessionKey;
@@ -722,34 +727,33 @@ export class ActiveSession {
 
     // register 済み (kick で必ず register している) なので deliver できる。
     // 通知の配達が失敗してもセッションの畳み込みは続ける
-    await this.#router
+    await this.#ctx.router
       .deliver({ thread_key: sessionKey, text: options.noticeText }, sessionKey)
       .catch((err) => {
-        this.#logger.warn(
+        this.#ctx.logger.warn(
           { sessionKey, err },
           "failure notice delivery failed",
         );
       });
-    await this.#router.clearProgress(sessionKey);
+    await this.#ctx.router.clearProgress(sessionKey);
     await this.#safeReact(
-      () => this.#reactions.addX(this.channelId, this.triggerTs),
+      () => this.#ctx.reactions.addX(this.channelId, this.triggerTs),
       sessionKey,
       "x",
     );
 
-    if (options.dropPromptedItems) {
-      const toAck = [...this.#promptedIds];
-      if (toAck.length > 0) {
-        await this.#store.inbox.ack(sessionKey, toAck).catch((err) => {
-          this.#logger.warn({ sessionKey, err }, "inbox ack failed");
-        });
-      }
+    // このターンで prompt 済みだった item は ack して捨てる (retry しない)
+    const toAck = [...this.#promptedIds];
+    if (toAck.length > 0) {
+      await this.#ctx.store.inbox.ack(sessionKey, toAck).catch((err) => {
+        this.#ctx.logger.warn({ sessionKey, err }, "inbox ack failed");
+      });
     }
-    await this.#store.leases.release(this.#lease).catch((err) => {
-      this.#logger.warn({ sessionKey, err }, "lease release failed");
+    await this.#ctx.store.leases.release(this.#lease).catch((err) => {
+      this.#ctx.logger.warn({ sessionKey, err }, "lease release failed");
     });
-    await options.stop();
-    this.#logger.warn(
+    proc.kill();
+    this.#ctx.logger.warn(
       { sessionKey, durationMs: Date.now() - this.#startedAt },
       options.logMessage,
     );
@@ -763,12 +767,12 @@ export class ActiveSession {
    * promptedIds で除外する)。無ければ false */
   async #promptPending(proc: PiProcess): Promise<boolean> {
     const sessionKey = this.sessionKey;
-    const items = (await this.#store.inbox.drain(sessionKey)).filter(
+    const items = (await this.#ctx.store.inbox.drain(sessionKey)).filter(
       (i) => !this.#promptedIds.has(i.id),
     );
     if (items.length === 0) return false;
     for (const i of items) {
-      registerReplyDestination(this.#router, i.event, this.policy);
+      registerReplyDestination(this.#ctx.router, i.event, this.policy);
       this.#promptedIds.add(i.id);
     }
     this.#turnEpoch += 1;
@@ -778,7 +782,10 @@ export class ActiveSession {
     this.#resetTurnTimeout();
     this.#progress.reset();
     proc.prompt(renderItems(items));
-    this.#logger.info({ sessionKey, items: items.length }, "session continued");
+    this.#ctx.logger.info(
+      { sessionKey, items: items.length },
+      "session continued",
+    );
     return true;
   }
 
@@ -786,28 +793,31 @@ export class ActiveSession {
    * いる可能性があるため、flush せずプロセスを止める (書き戻さない) */
   #startRenewTimer(): void {
     const sessionKey = this.sessionKey;
-    const intervalMs = Math.max(1, Math.floor(this.#leaseTtlMs / 3));
+    const intervalMs = Math.max(1, Math.floor(this.#ctx.leaseTtlMs / 3));
     const timer = setInterval(() => {
       void (async () => {
         if (this.#disposed) return;
-        const ok = await this.#store.leases.renew(
+        const ok = await this.#ctx.store.leases.renew(
           this.#lease,
-          this.#leaseTtlMs,
+          this.#ctx.leaseTtlMs,
         );
         if (ok) return;
         if (this.#disposed) return;
-        this.#logger.error(
+        this.#ctx.logger.error(
           { sessionKey, owner: this.#lease.owner },
           "lease renew failed; stopping session without flush",
         );
         this.#state = "stopping";
         this.#dispose();
         this.#clearAllTimers();
-        await this.#router.clearProgress(sessionKey);
+        await this.#ctx.router.clearProgress(sessionKey);
         await this.#process?.stop();
         await this.#host.markEnded(this.channelId, sessionKey);
       })().catch((err) => {
-        this.#logger.error({ sessionKey, err }, "lease renew handling failed");
+        this.#ctx.logger.error(
+          { sessionKey, err },
+          "lease renew handling failed",
+        );
       });
     }, intervalMs);
     timer.unref();
@@ -829,12 +839,12 @@ export class ActiveSession {
       const proc = this.#process;
       if (proc === undefined) return;
       void this.#timeoutSession(proc).catch((err) => {
-        this.#logger.warn(
+        this.#ctx.logger.warn(
           { sessionKey: this.sessionKey, err },
           "timeoutSession handling failed",
         );
       });
-    }, this.#turnTimeoutMs);
+    }, this.#ctx.turnTimeoutMs);
     timer.unref();
     this.#turnTimeoutTimer = timer;
   }
@@ -874,7 +884,10 @@ export class ActiveSession {
     try {
       await fn();
     } catch (err) {
-      this.#logger.warn({ sessionKey, label, err }, "failed to add reaction");
+      this.#ctx.logger.warn(
+        { sessionKey, label, err },
+        "failed to add reaction",
+      );
     }
   }
 }

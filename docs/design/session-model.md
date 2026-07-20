@@ -555,10 +555,14 @@ mention のバイパス可否は debounce と非対称にする: debounce が me
 
   > 実装での判断 (2026-07): hermes と違い pi-chat-runner は能動的な再開ループを持たない
   > (起動時の自動再開スキャンも lease 失効ポーラも無く、再実行は必ず新規イベント受信が起点)。
-  > よってローリングウィンドウ式の guard は入れず、**異常終了時にそのターンで prompt 済みだった
-  > item を ack して捨てる** ([runner.ts](../../src/session/runner.ts) の `proc.on("exit")`)。
+  > よってローリングウィンドウ式の guard は入れず、**異常終了は種別 (コマンド失敗 / turn timeout /
+  > 予期しない exit) によらずこのターンで prompt 済みだった item を ack して捨てる**
+  > ([active-session.ts](../../src/session/active-session.ts) の `#abnormalShutdown` と `proc.on("exit")`)。
   > 捨てないと未 ack item が次イベントの drain に巻き込まれ、同一 workdir/transcript を使い回す
-  > 構造上「同じ入力で pi が再クラッシュし続ける」ループになりうる。retry は当面しない
+  > 構造上「同じ入力で pi が再クラッシュ・再 timeout し続ける」ループになりうる。timeout した
+  > 入力を残しても次の drain が同じ重い入力を拾って再び長ターン → また timeout という遅い毒ループに
+  > なるだけで、同じ入力は再び timeout する可能性が高く retry の価値が薄い。異常終了は ❌ と通知で
+  > ユーザーに伝わるので、必要なら本人が言い直せばよい。retry は当面しない
   > (一時エラーの自動回復より実装の単純さを優先。実害が出たら回数制限付き retry を検討)。
   > 未解決: transcript 破損や realpath 即死などセッション状態起因のクラッシュは、item を
   > 捨てても同 sessionKey が死に続けうる (transcript 掃除・セッション回転は未着手)。

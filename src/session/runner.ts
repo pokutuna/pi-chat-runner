@@ -31,7 +31,11 @@ import { rootLogger } from "../logger.js";
 import { inboxItemId } from "../store/state/inbox-item.js";
 import type { InboxItem, StateStore } from "../store/state/interfaces.js";
 import type { SharedStorage, WorkdirStorage } from "../store/workdir.js";
-import { ActiveSession, type SessionHost } from "./active-session.js";
+import {
+  ActiveSession,
+  type SessionContext,
+  type SessionHost,
+} from "./active-session.js";
 import { type ChatCommand, parseCommand } from "./commands.js";
 import {
   computeKickDelayMs,
@@ -50,6 +54,7 @@ import { registerReplyDestination } from "./reply-destination.js";
 import {
   buildSpawnOptions,
   loadMemoryIndex,
+  type PiPermissionConfig,
   prepareWorkdir,
   resolveBuiltinExtensionPaths,
   resolveBuiltinMemorySkillPath,
@@ -70,30 +75,6 @@ export interface FetchedMessage {
   threadTs?: string;
   /** 発言者 (表示名解決は任意)。 */
   userId?: string;
-}
-
-/** Node Permission Model 有効化の静的パラメタ (session-runtime.md §6)。
- * workdir / home はセッションごとに決まるため kick 時に buildPiPermissionOptions
- * へ都度渡す — ここに載るのはイメージ内で固定のパスだけ */
-export interface PiPermissionConfig {
-  /** pi 本体のエントリポイント JS の絶対パス (import.meta.resolve で自動検出する。
-   * server.ts 参照) */
-  entrypoint: string;
-  /** pi 本体・依存が入る npm パッケージの node_modules ルート (import.meta.resolve で
-   * 自動検出する。server.ts 参照) */
-  nodeModulesDir: string;
-  /** 追加で write を許可したいパス (例 "/tmp/*")。既定なし */
-  extraWrite?: string[];
-  /** 追加で read を許可したいパス (例 GOOGLE_APPLICATION_CREDENTIALS のファイル
-   * パス)。HOME を agentHome に固定するとローカルのユーザー ADC は HOME 経由で
-   * 見えなくなるため、明示指定されたファイルだけ個別に許可する用途。既定なし。
-   * extension (reply / permission-gate) の読み込みに必要な read 許可は kick 時に
-   * extensionPaths の dirname から自動導出してここへ足すため、呼び出し側が
-   * 明示する必要はない (appDir 包括許可の廃止に伴う対応) */
-  extraRead?: string[];
-  /** native addon (.node) を含む extension を使う場合の `--allow-addons` 付与。
-   * agent.runtime.allowAddons 由来 (config.md §6)。既定 false */
-  allowAddons?: boolean;
 }
 
 export interface SessionRunnerOptions {
@@ -184,38 +165,19 @@ export class SessionRunner implements SessionHost {
    * スレッド返信は通常の新規判定に落ちる) — 永続化は §6 の chat_ref 逆引き実装時 */
   private readonly threadAlias = new Map<string, string>();
   private readonly configSource: ConfigSource;
-  private readonly store: StateStore;
-  private readonly router: EgressRouter;
-  private readonly reactions: Reactions;
-  private readonly workdirStorage: WorkdirStorage;
-  private readonly sharedStorage: SharedStorage | undefined;
   /** 組み込み memory skill の絶対パス。shared 有効時のみ解決する (無効時 undefined) */
   private readonly memorySkillPath: string | undefined;
   private readonly extensionPaths: string[];
   private readonly workdirRoot: string;
-  private readonly piBinary: string | undefined;
-  private readonly piEntrypoint: string | undefined;
-  private readonly extraEnv: Record<string, string> | undefined;
-  private readonly agentUid: number | undefined;
-  private readonly agentGid: number | undefined;
-  private readonly agentHome: string;
-  private readonly piPermission: PiPermissionConfig | undefined;
-  private readonly leaseTtlMs: number;
-  private readonly progressNoticeIntervalMs: number;
-  private readonly lingerMs: number;
-  private readonly turnTimeoutMs: number;
   private readonly owner: string;
-  private readonly mentionFormat: MentionFormat;
-  private readonly logger: Logger;
   private readonly classifierClient: ClassifierClient | undefined;
+  /** セッション横断の依存・設定一式 (active-session.js の SessionContext)。
+   * options から一度だけ組み立て、ActiveSession の構築のたびに ctx ごと渡す —
+   * options.* を毎回 ActiveSessionOptions へ再梱包しない */
+  private readonly ctx: SessionContext;
 
   constructor(options: SessionRunnerOptions) {
     this.configSource = options.configSource;
-    this.store = options.store;
-    this.router = options.router;
-    this.reactions = options.reactions;
-    this.workdirStorage = options.workdirStorage;
-    this.sharedStorage = options.sharedStorage;
     // memory skill は書き先が ../shared/ なので shared 前提。有効時は boot で解決して
     // 配置壊れを fail-loud にする (チャンネル別の opt-out は kick 時に doc.memory で判定)
     this.memorySkillPath =
@@ -227,21 +189,28 @@ export class SessionRunner implements SessionHost {
     // 追加 extension は $AGENT_HOME/.pi/agent/extensions/ 規約で拾う (kick() 参照)
     this.extensionPaths = resolveBuiltinExtensionPaths();
     this.workdirRoot = options.workdirRoot ?? "/tmp/pi-chat-runner/sessions";
-    this.piBinary = options.piBinary;
-    this.piEntrypoint = options.piEntrypoint;
-    this.extraEnv = options.extraEnv;
-    this.agentUid = options.agentUid;
-    this.agentGid = options.agentGid;
-    this.agentHome = options.agentHome ?? "/home/agent";
-    this.piPermission = options.piPermission;
-    this.leaseTtlMs = options.leaseTtlMs ?? 60_000;
-    this.progressNoticeIntervalMs = options.progressNoticeIntervalMs ?? 5_000;
-    this.lingerMs = options.lingerMs ?? 3_000;
-    this.turnTimeoutMs = options.turnTimeoutMs ?? 600_000;
     this.owner = options.owner ?? `${hostname()}:${process.pid}`;
-    this.mentionFormat = options.mentionFormat;
-    this.logger = options.logger ?? rootLogger.child({ component: "session" });
     this.classifierClient = options.classifierClient;
+    this.ctx = {
+      store: options.store,
+      router: options.router,
+      reactions: options.reactions,
+      workdirStorage: options.workdirStorage,
+      sharedStorage: options.sharedStorage,
+      logger: options.logger ?? rootLogger.child({ component: "session" }),
+      lingerMs: options.lingerMs ?? 3_000,
+      turnTimeoutMs: options.turnTimeoutMs ?? 600_000,
+      leaseTtlMs: options.leaseTtlMs ?? 60_000,
+      progressNoticeIntervalMs: options.progressNoticeIntervalMs ?? 5_000,
+      mentionFormat: options.mentionFormat,
+      piBinary: options.piBinary,
+      piEntrypoint: options.piEntrypoint,
+      extraEnv: options.extraEnv,
+      agentUid: options.agentUid,
+      agentGid: options.agentGid,
+      agentHome: options.agentHome ?? "/home/agent",
+      piPermission: options.piPermission,
+    };
   }
 
   /** 実行中 (起動中含む) のセッション数。テスト・観測用 */
@@ -282,7 +251,7 @@ export class SessionRunner implements SessionHost {
     // bot 投稿 (自己エコーは bridge で除外済み) は allowBots opt-in の
     // channel でのみ gate 評価・steer に乗せる (session-model.md §5)
     if (event.sender.isBot && doc?.trigger?.allowBots !== true) {
-      this.logger.debug(
+      this.ctx.logger.debug(
         { channelId, sessionKey },
         "bot message ignored (allowBots not enabled)",
       );
@@ -298,13 +267,20 @@ export class SessionRunner implements SessionHost {
     if (cmd !== null && this.sessions.has(sessionKey)) {
       if (cmd.kind === "new") {
         // 実行中レーンとの交錯を避けるため、steer には流さず拒否通知を返す (v1 の割り切り)
-        const threadKey = registerReplyDestination(this.router, event, policy);
+        const threadKey = registerReplyDestination(
+          this.ctx.router,
+          event,
+          policy,
+        );
         await this.deliverCommandNotice(
           sessionKey,
           threadKey,
           REJECT_NOTICE_TEXT,
         );
-        this.logger.info({ sessionKey }, "session rotation rejected: running");
+        this.ctx.logger.info(
+          { sessionKey },
+          "session rotation rejected: running",
+        );
         return;
       }
       // enable/disable は状態書き込みのみでセッションと競合しないため、
@@ -318,7 +294,7 @@ export class SessionRunner implements SessionHost {
     // (session-model.md §5)。/new も disabled 中は無効
     const isToggleCommand = cmd !== null && cmd.kind !== "new";
     if (!isToggleCommand && (await this.isChannelDisabled(channelId))) {
-      this.logger.info(
+      this.ctx.logger.info(
         { channelId, sessionKey },
         "message ignored (channel disabled)",
       );
@@ -333,13 +309,13 @@ export class SessionRunner implements SessionHost {
     const when = this.resolveWhen(doc, isDm);
     const decision = await evaluateWhen(when, { event });
     if (!decision.trigger) {
-      this.logger.debug(
+      this.ctx.logger.debug(
         { channelId, sessionKey, reason: decision.reason },
         "gate not triggered",
       );
       return;
     }
-    this.logger.info(
+    this.ctx.logger.info(
       { channelId, sessionKey, reason: decision.reason },
       "gate triggered",
     );
@@ -378,7 +354,7 @@ export class SessionRunner implements SessionHost {
     // disabled 中は gate 評価 (classifier の LLM 呼び出し含む) 自体を行わず止める
     // (session-model.md §5)
     if (await this.isChannelDisabled(channelId)) {
-      this.logger.info(
+      this.ctx.logger.info(
         { channelId },
         "reaction trigger skipped (channel disabled)",
       );
@@ -388,7 +364,7 @@ export class SessionRunner implements SessionHost {
     const when = this.resolveWhen(doc, isDm);
     const decision = await evaluateWhen(when, { event });
     if (!decision.trigger) {
-      this.logger.debug(
+      this.ctx.logger.debug(
         { channelId, reason: decision.reason },
         "reaction gate not triggered",
       );
@@ -397,7 +373,7 @@ export class SessionRunner implements SessionHost {
 
     const fetched = await fetch(channelId, event.targetMessageId);
     if (fetched === null) {
-      this.logger.warn(
+      this.ctx.logger.warn(
         { channelId, targetMessageId: event.targetMessageId },
         "reaction target message not found",
       );
@@ -423,7 +399,7 @@ export class SessionRunner implements SessionHost {
       metadata: {},
     };
 
-    this.logger.info(
+    this.ctx.logger.info(
       { channelId, reason: decision.reason },
       "reaction gate triggered",
     );
@@ -460,9 +436,9 @@ export class SessionRunner implements SessionHost {
     const existing = this.sessions.get(sessionKey);
     if (existing === undefined) return false;
 
-    const fresh = await this.store.inbox.enqueue(sessionKey, item);
+    const fresh = await this.ctx.store.inbox.enqueue(sessionKey, item);
     if (!fresh) {
-      this.logger.debug(
+      this.ctx.logger.debug(
         { sessionKey, itemId: item.id },
         "inbox duplicate skip",
       );
@@ -495,36 +471,40 @@ export class SessionRunner implements SessionHost {
     event: InboundMessage,
     cmd: Extract<ChatCommand, { kind: "new" }>,
   ): Promise<void> {
-    const lease = await this.store.leases.acquire(
+    const lease = await this.ctx.store.leases.acquire(
       sessionKey,
       this.owner,
       NEW_COMMAND_LEASE_TTL_MS,
     );
     if (lease === null) {
-      const threadKey = registerReplyDestination(this.router, event, policy);
+      const threadKey = registerReplyDestination(
+        this.ctx.router,
+        event,
+        policy,
+      );
       await this.deliverCommandNotice(
         sessionKey,
         threadKey,
         REJECT_NOTICE_TEXT,
       );
-      this.logger.info(
+      this.ctx.logger.info(
         { sessionKey },
         "session rotation rejected: lease unavailable",
       );
       return;
     }
     try {
-      const existing = await this.store.sessions.get(sessionKey);
+      const existing = await this.ctx.store.sessions.get(sessionKey);
       if (existing !== null) {
         // updatedAt は据え置き — マーカー書き込みは「活動」ではないので
         // idle 判定を狂わせない (session-model.md §3)
-        await this.store.sessions.put(sessionKey, {
+        await this.ctx.store.sessions.put(sessionKey, {
           ...existing,
           rotateRequestedAt: new Date(),
         });
       } else {
         const threadTs = event.conversation.threadTs ?? event.id;
-        await this.store.sessions.put(sessionKey, {
+        await this.ctx.store.sessions.put(sessionKey, {
           channelId,
           threadTs,
           triggerTs: event.id,
@@ -534,9 +514,9 @@ export class SessionRunner implements SessionHost {
         });
       }
     } finally {
-      await this.store.leases.release(lease);
+      await this.ctx.store.leases.release(lease);
     }
-    this.logger.info({ sessionKey }, "session rotation requested");
+    this.ctx.logger.info({ sessionKey }, "session rotation requested");
 
     if (cmd.rest !== undefined) {
       const restEvent: InboundMessage = { ...event, text: cmd.rest };
@@ -560,7 +540,7 @@ export class SessionRunner implements SessionHost {
       return;
     }
 
-    const threadKey = registerReplyDestination(this.router, event, policy);
+    const threadKey = registerReplyDestination(this.ctx.router, event, policy);
     await this.deliverCommandNotice(sessionKey, threadKey, ACK_NOTICE_TEXT);
   }
 
@@ -568,7 +548,7 @@ export class SessionRunner implements SessionHost {
    * doc 不在 = enabled (既定)。DM 予約名でなく実 channelId で管理する
    * (メッセージ側は実 channelId で判定するため、ChannelDoc の DM 束ねとは別軸) */
   private async isChannelDisabled(channelId: string): Promise<boolean> {
-    return (await this.store.channels.get(channelId))?.enabled === false;
+    return (await this.ctx.store.channels.get(channelId))?.enabled === false;
   }
 
   /** /enable /disable コマンドの処理 (session-model.md §5)。gate をバイパスして
@@ -583,17 +563,17 @@ export class SessionRunner implements SessionHost {
     cmd: Extract<ChatCommand, { kind: "enable" | "disable" }>,
   ): Promise<void> {
     const enabled = cmd.kind === "enable";
-    await this.store.channels.put(channelId, {
+    await this.ctx.store.channels.put(channelId, {
       enabled,
       updatedAt: new Date(),
       updatedBy: event.sender.id,
     });
-    this.logger.info(
+    this.ctx.logger.info(
       { channelId, updatedBy: event.sender.id },
       enabled ? "channel enabled via command" : "channel disabled via command",
     );
 
-    const threadKey = registerReplyDestination(this.router, event, policy);
+    const threadKey = registerReplyDestination(this.ctx.router, event, policy);
     await this.deliverCommandNotice(
       sessionKey,
       threadKey,
@@ -611,9 +591,14 @@ export class SessionRunner implements SessionHost {
     threadKey: string,
     text: string,
   ): Promise<void> {
-    await this.router.deliver({ thread_key: threadKey, text }).catch((err) => {
-      this.logger.warn({ sessionKey, err }, "command notice delivery failed");
-    });
+    await this.ctx.router
+      .deliver({ thread_key: threadKey, text })
+      .catch((err) => {
+        this.ctx.logger.warn(
+          { sessionKey, err },
+          "command notice delivery failed",
+        );
+      });
   }
 
   /** gate 通過が確定した後の affinity 合流解決 → enqueue → 多重起動チェック →
@@ -645,7 +630,7 @@ export class SessionRunner implements SessionHost {
         // このイベントのスレッドを合流先レーンの別名として記録し、以降の
         // スレッド内の追い発言も合流先へ届くようにする
         this.threadAlias.set(sessionKey, target);
-        this.logger.info(
+        this.ctx.logger.info(
           {
             channelId,
             sessionKey: target,
@@ -661,9 +646,9 @@ export class SessionRunner implements SessionHost {
       }
     }
 
-    const fresh = await this.store.inbox.enqueue(sessionKey, item);
+    const fresh = await this.ctx.store.inbox.enqueue(sessionKey, item);
     if (!fresh) {
-      this.logger.debug(
+      this.ctx.logger.debug(
         { sessionKey, itemId: item.id },
         "inbox duplicate skip",
       );
@@ -726,7 +711,7 @@ export class SessionRunner implements SessionHost {
         event,
         doc,
       ).catch((err) => {
-        this.logger.warn({ sessionKey, err }, "debounced kick failed");
+        this.ctx.logger.warn({ sessionKey, err }, "debounced kick failed");
       });
     }, delayMs);
     timer.unref();
@@ -738,7 +723,7 @@ export class SessionRunner implements SessionHost {
       doc,
       channelId,
     });
-    this.logger.debug(
+    this.ctx.logger.debug(
       { sessionKey, delayMs, firstPendingAtMs },
       "kick debounced",
     );
@@ -757,7 +742,7 @@ export class SessionRunner implements SessionHost {
     // debounce 待機中に /disable された場合、タイマー発火時点で再チェックする
     // (session-model.md §5)
     if (await this.isChannelDisabled(channelId)) {
-      this.logger.info(
+      this.ctx.logger.info(
         { channelId, sessionKey },
         "debounced kick skipped (channel disabled)",
       );
@@ -791,7 +776,7 @@ export class SessionRunner implements SessionHost {
     // 再開判定 1)。合流対象はチャンネル直下投稿のみ
     if (event.conversation.threadTs !== undefined) return naturalKey;
 
-    const state = await this.store.channels.get(channelId);
+    const state = await this.ctx.store.channels.get(channelId);
     const pointer = state?.affinity;
     if (pointer === undefined || pointer.sessionKey === naturalKey) {
       return naturalKey;
@@ -821,12 +806,12 @@ export class SessionRunner implements SessionHost {
     sessionKey: string,
   ): Promise<void> {
     try {
-      await this.store.channels.putSessionPointer(channelId, {
+      await this.ctx.store.channels.putSessionPointer(channelId, {
         sessionKey,
         lastActiveAt: new Date(),
       });
     } catch (err) {
-      this.logger.warn(
+      this.ctx.logger.warn(
         { channelId, sessionKey, err },
         "session pointer touch failed",
       );
@@ -841,17 +826,17 @@ export class SessionRunner implements SessionHost {
     sessionKey: string,
   ): Promise<void> {
     try {
-      const state = await this.store.channels.get(channelId);
+      const state = await this.ctx.store.channels.get(channelId);
       const pointer = state?.affinity;
       if (pointer === undefined || pointer.sessionKey !== sessionKey) return;
       const now = new Date();
-      await this.store.channels.putSessionPointer(channelId, {
+      await this.ctx.store.channels.putSessionPointer(channelId, {
         sessionKey,
         lastActiveAt: now,
         endedAt: now,
       });
     } catch (err) {
-      this.logger.warn(
+      this.ctx.logger.warn(
         { channelId, sessionKey, err },
         "session pointer end mark failed",
       );
@@ -870,13 +855,13 @@ export class SessionRunner implements SessionHost {
   ): Promise<void> {
     // 実行ロック。取れなければ別プロセスが保持中 — enqueue 済みなので
     // 保持者側の drain (steer / agent_end / linger) が拾う
-    const lease = await this.store.leases.acquire(
+    const lease = await this.ctx.store.leases.acquire(
       sessionKey,
       this.owner,
-      this.leaseTtlMs,
+      this.ctx.leaseTtlMs,
     );
     if (lease === null) {
-      this.logger.info(
+      this.ctx.logger.info(
         { sessionKey, itemId: inboxItemId(event) },
         "lease held by another process; enqueued only",
       );
@@ -885,7 +870,7 @@ export class SessionRunner implements SessionHost {
     if (this.sessions.has(sessionKey)) {
       // acquire の await 中にローカルの別イベントが kick した (そちらが lease を
       // 取れているはずなので通常到達しないが、二重 kick だけは防ぐ)
-      await this.store.leases.release(lease);
+      await this.ctx.store.leases.release(lease);
       return;
     }
 
@@ -910,27 +895,18 @@ export class SessionRunner implements SessionHost {
       policy,
       lease,
       host: this,
-      store: this.store,
-      router: this.router,
-      reactions: this.reactions,
-      workdirStorage: this.workdirStorage,
-      sharedStorage: this.sharedStorage,
       sharedStagingDir:
-        this.sharedStorage !== undefined
+        this.ctx.sharedStorage !== undefined
           ? this.sharedStagingDir(channelId)
           : undefined,
-      lingerMs: this.lingerMs,
-      turnTimeoutMs: this.turnTimeoutMs,
-      leaseTtlMs: this.leaseTtlMs,
-      progressNoticeIntervalMs: this.progressNoticeIntervalMs,
-      logger: this.logger,
+      ctx: this.ctx,
     });
     this.sessions.set(sessionKey, session);
 
     try {
       // kick シーケンス前半 (session-runtime.md §1: restore → spawn 準備)。
       // PiProcess 生成以降 (spawn → prompt) は ActiveSession.start が担う
-      warnPolicyMismatches(this.logger, sessionKey, channelId, policy, doc);
+      warnPolicyMismatches(this.ctx.logger, sessionKey, channelId, policy, doc);
 
       // workdir/shared の mkdir + restore、transcript 世代交代、UID 分離、
       // agentHome 作成、realpath 正規化 (session-runtime.md §1, §6)
@@ -946,14 +922,14 @@ export class SessionRunner implements SessionHost {
         workdir,
         policy,
         doc,
-        sessions: this.store.sessions,
-        workdirStorage: this.workdirStorage,
-        sharedStorage: this.sharedStorage,
+        sessions: this.ctx.store.sessions,
+        workdirStorage: this.ctx.workdirStorage,
+        sharedStorage: this.ctx.sharedStorage,
         sharedStagingDir: (id) => this.sharedStagingDir(id),
-        agentUid: this.agentUid,
-        agentGid: this.agentGid,
-        agentHome: this.agentHome,
-        logger: this.logger,
+        agentUid: this.ctx.agentUid,
+        agentGid: this.ctx.agentGid,
+        agentHome: this.ctx.agentHome,
+        logger: this.ctx.logger,
       });
 
       // extension/skill パス解決 + Node Permission Model オプション組み立て
@@ -966,14 +942,14 @@ export class SessionRunner implements SessionHost {
           doc,
           builtinExtensionPaths: this.extensionPaths,
           memorySkillPath: this.memorySkillPath,
-          piPermission: this.piPermission,
+          piPermission: this.ctx.piPermission,
         });
 
       const model = doc?.model;
       // 常に HOME を agentHome に上書きする (Runner 自身の HOME は継承しない)。
       // extraEnv で HOME を上書きする (buildPiEnv は extraEnv が PATH/HOME を
       // 上書きできる実装になっている)
-      const extraEnv = { ...this.extraEnv, HOME: agentHomeReal };
+      const extraEnv = { ...this.ctx.extraEnv, HOME: agentHomeReal };
       // memory の索引 (MEMORY.md) は skill 発火 (agent の自発的な read) に頼らず
       // system prompt に常時注入する (docs/design/memory.md §2)。1 行 1 メモリの
       // 短い索引という規約 (SKILL.md の Save 手順) が前提で、肥大化はしない想定。
@@ -992,12 +968,7 @@ export class SessionRunner implements SessionHost {
         memoryIndex,
         resumed,
         model,
-        mentionFormat: this.mentionFormat,
         extraEnv,
-        piBinary: this.piBinary,
-        piEntrypoint: this.piEntrypoint,
-        agentUid: this.agentUid,
-        agentGid: this.agentGid,
       });
     } catch (err) {
       // enqueue 済み item は ack されていないので、同レーンの次のイベント
@@ -1005,9 +976,9 @@ export class SessionRunner implements SessionHost {
       // timer/process の後始末と progress クリアは session.abort に閉じ、
       // lease release / markEnded / warn ログはここで現行と同じ順序で続ける
       await session.abort();
-      await this.store.leases.release(lease);
+      await this.ctx.store.leases.release(lease);
       await this.markSessionPointerEnded(channelId, sessionKey);
-      this.logger.warn({ sessionKey, err }, "session kick failed");
+      this.ctx.logger.warn({ sessionKey, err }, "session kick failed");
     }
   }
 
@@ -1023,7 +994,7 @@ export class SessionRunner implements SessionHost {
       return await this.configSource.channel(channelId);
     } catch (err) {
       // YAML の壊れで受信ループを止めない。既定動作 (mention 起動 / DM は disabled) に落とす
-      this.logger.warn({ channelId, err }, "failed to load channel doc");
+      this.ctx.logger.warn({ channelId, err }, "failed to load channel doc");
       return null;
     }
   }
@@ -1033,7 +1004,7 @@ export class SessionRunner implements SessionHost {
       ...(this.classifierClient !== undefined
         ? { classifierClient: this.classifierClient }
         : {}),
-      logger: this.logger,
+      logger: this.ctx.logger,
     };
     if (doc?.trigger === undefined) {
       // doc なし / trigger 未設定は既定 = mention のみ、DM は disabled (起動しない)

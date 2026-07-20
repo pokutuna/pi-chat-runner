@@ -72,11 +72,8 @@ export { SocketIngress } from "./ingress/slack/socket-ingress.js";
 export { SlackUserResolver } from "./ingress/slack/user-resolver.js";
 export { enrichEvent, type UserResolver } from "./ingress/user-resolver.js";
 export type { Logger } from "./logger.js";
-export {
-  type PiPermissionConfig,
-  SessionRunner,
-  type SessionRunnerOptions,
-} from "./session/runner.js";
+export { SessionRunner, type SessionRunnerOptions } from "./session/runner.js";
+export type { PiPermissionConfig } from "./session/spawn.js";
 export { InMemoryStateStore } from "./store/state/backends/memory.js";
 export type {
   ChannelStateDoc,

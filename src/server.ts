@@ -39,7 +39,7 @@ import { startRepl } from "./ingress/local/repl.js";
 import { HttpIngress } from "./ingress/slack/http-ingress.js";
 import { SocketIngress } from "./ingress/slack/socket-ingress.js";
 import { rootLogger } from "./logger.js";
-import type { PiPermissionConfig } from "./session/runner.js";
+import type { PiPermissionConfig } from "./session/spawn.js";
 import { FirestoreStateStore } from "./store/state/backends/firestore.js";
 import { InMemoryStateStore } from "./store/state/backends/memory.js";
 import { SqliteStateStore } from "./store/state/backends/sqlite.js";

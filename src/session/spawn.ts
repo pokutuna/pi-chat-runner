@@ -29,6 +29,30 @@ import {
 } from "./runtime.js";
 import { rotatedSessionFile, SESSION_FILE } from "./session-file.js";
 
+/** Node Permission Model 有効化の静的パラメタ (session-runtime.md §6)。
+ * workdir / home はセッションごとに決まるため kick 時に buildPiPermissionOptions
+ * へ都度渡す — ここに載るのはイメージ内で固定のパスだけ */
+export interface PiPermissionConfig {
+  /** pi 本体のエントリポイント JS の絶対パス (import.meta.resolve で自動検出する。
+   * server.ts 参照) */
+  entrypoint: string;
+  /** pi 本体・依存が入る npm パッケージの node_modules ルート (import.meta.resolve で
+   * 自動検出する。server.ts 参照) */
+  nodeModulesDir: string;
+  /** 追加で write を許可したいパス (例 "/tmp/*")。既定なし */
+  extraWrite?: string[];
+  /** 追加で read を許可したいパス (例 GOOGLE_APPLICATION_CREDENTIALS のファイル
+   * パス)。HOME を agentHome に固定するとローカルのユーザー ADC は HOME 経由で
+   * 見えなくなるため、明示指定されたファイルだけ個別に許可する用途。既定なし。
+   * extension (reply / permission-gate) の読み込みに必要な read 許可は kick 時に
+   * extensionPaths の dirname から自動導出してここへ足すため、呼び出し側が
+   * 明示する必要はない (appDir 包括許可の廃止に伴う対応) */
+  extraRead?: string[];
+  /** native addon (.node) を含む extension を使う場合の `--allow-addons` 付与。
+   * agent.runtime.allowAddons 由来 (config.md §6)。既定 false */
+  allowAddons?: boolean;
+}
+
 /** 組み込み extension のファイル名 (リポジトリ/パッケージ直下の extensions/)。
  * reply は唯一の返信経路、permission-gate は事故防止層 (config.md §5) で、どの
  * プラットフォームで使う場合も常時注入する — プラットフォーム非依存なので呼び出し側に
@@ -408,15 +432,7 @@ export async function buildSpawnOptions(args: {
   doc: ChannelDoc | null;
   builtinExtensionPaths: string[];
   memorySkillPath: string | undefined;
-  piPermission:
-    | {
-        entrypoint: string;
-        nodeModulesDir: string;
-        extraWrite?: string[];
-        extraRead?: string[];
-        allowAddons?: boolean;
-      }
-    | undefined;
+  piPermission: PiPermissionConfig | undefined;
 }): Promise<SpawnPaths> {
   const {
     agentHomeReal,
