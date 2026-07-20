@@ -241,6 +241,65 @@ describe("App (ink smoke test)", () => {
     unmount();
   });
 
+  it("入力履歴: C-p で直前の入力を呼び出し、C-n で下書きに戻る", async () => {
+    const chat = createFakeLocalChat();
+    const input = new PassThrough();
+    (input as unknown as { isTTY: boolean }).isTTY = true; // useInput 経路を有効化
+    const output = new PassThrough();
+
+    const { lastFrame, stdin, unmount } = render(
+      <App
+        chat={chat}
+        options={{ initialChannelId: "local", input, output }}
+        onDone={() => {}}
+      />,
+    );
+    await flushAsync();
+
+    // 入力欄の 1 行 (プロンプト "you> " を含む行) を抜き出すヘルパー
+    const inputLine = (): string =>
+      lastFrame()!
+        .split("\n")
+        .find((l) => l.includes("you>")) ?? "";
+
+    // 2 行投稿して履歴に積む (Enter (\r) はまとめて write すると貼り付け扱いに
+    // なり key.return にならないため、テキストと別チャンクで送る)
+    stdin.write("first-line");
+    await flushAsync();
+    stdin.write("\r");
+    await flushAsync();
+    stdin.write("second-line");
+    await flushAsync();
+    stdin.write("\r");
+    await flushAsync();
+
+    // 下書きを打ちかけた状態で C-p → 直前の入力に置き換わる
+    stdin.write("my-draft");
+    await flushAsync();
+    expect(inputLine()).toContain("my-draft");
+
+    stdin.write("\x10"); // C-p
+    await flushAsync();
+    expect(inputLine()).toContain("second-line");
+    expect(inputLine()).not.toContain("my-draft");
+
+    // さらに C-p で 1 つ前へ
+    stdin.write("\x10");
+    await flushAsync();
+    expect(inputLine()).toContain("first-line");
+
+    // C-n で戻り、履歴の末尾を越えたら下書きが復元される
+    stdin.write("\x0e"); // C-n
+    await flushAsync();
+    expect(inputLine()).toContain("second-line");
+
+    stdin.write("\x0e");
+    await flushAsync();
+    expect(inputLine()).toContain("my-draft");
+
+    unmount();
+  });
+
   it("プロンプトに現在のチャンネル/ユーザーが表示される", () => {
     const chat = createFakeLocalChat();
     const input = new PassThrough();

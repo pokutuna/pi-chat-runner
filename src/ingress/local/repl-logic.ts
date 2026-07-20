@@ -175,6 +175,7 @@ const META_COMMANDS = new Set([
   "!t",
   "!leave",
   "!quit",
+  "!exit",
   "!help",
 ]);
 
@@ -255,6 +256,7 @@ function parseMeta(trimmed: string): ParsedLine {
     case "!leave":
       return { kind: "leave" };
     case "!quit":
+    case "!exit":
       return { kind: "quit" };
     case "!help":
       return { kind: "help" };
@@ -267,7 +269,7 @@ function parseMeta(trimmed: string): ParsedLine {
 export const WELCOME_TEXT = `\
 Display: [N] = message number, ↳N = thread (e.g. [4]↳2 = [4] is a reply in thread of [2])
 Post: text | @bot text (Tab completes @bot) | >N text (reply in thread of N)
-Keys: Tab cycles focus (focused pane marked *), C-p C-n / mouse wheel to scroll
+Keys: Tab cycles focus (focused pane marked *), C-p C-n input history, mouse wheel to scroll
 Type !help for the full command list`;
 
 export const HELP_TEXT = `\
@@ -285,11 +287,12 @@ Syntax (N = message number [N]):
   !channels           list channels in config
   !dm on|off          toggle conversation.isDm
   !user <id> [--bot]  switch sender (--bot=isBot)
-  !quit               quit (Ctrl-D too)
+  !quit               quit (alias !exit, Ctrl-D too)
   !help               show this list
   Unknown /commands are posted as-is (for runner chat commands like /new)
 Focus: Tab cycles input/log/chat (focused pane marked *), Esc returns to input
-Scroll: arrows / C-p C-n / PageUp-Down on the focused pane, mouse wheel on any pane`;
+History: C-p / C-n recall previous/next input (while in the input line)
+Scroll: arrows / PageUp-Down / C-p C-n on the focused pane, mouse wheel on any pane`;
 
 // ── 2. REPL 状態と行ハンドラ ─────────────────────────────────────────────
 

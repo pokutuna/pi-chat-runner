@@ -715,6 +715,15 @@ export function App({ chat, options, onDone }: AppProps) {
   const queueRef = useRef<Promise<void>>(Promise.resolve());
   const finishedRef = useRef(false);
 
+  // 入力履歴 (readline の previous/next-history 相当。C-p / C-n で呼び出す)。
+  // pos は履歴内の参照位置で null = 履歴を辿っていない (最新の下書きを編集中)。
+  // 履歴を辿り始めるときに現在の下書きを draft へ退避し、C-n で末尾を越えたら
+  // 復元する。描画は setInputValue 経由で行うため ref で十分 (履歴自体の変化で
+  // 再レンダーは不要)。
+  const historyRef = useRef<string[]>([]);
+  const historyPosRef = useRef<number | null>(null);
+  const historyDraftRef = useRef("");
+
   const finish = (): void => {
     if (finishedRef.current) return;
     finishedRef.current = true;
@@ -726,6 +735,12 @@ export function App({ chat, options, onDone }: AppProps) {
   };
 
   const submitLine = (line: string): void => {
+    // 空行・直前と同一の行は履歴に積まない (readline の慣例に合わせる)。
+    const history = historyRef.current;
+    if (line.trim() !== "" && history[history.length - 1] !== line) {
+      history.push(line);
+    }
+    historyPosRef.current = null;
     setInputValue("");
     setCursor(0);
     queueRef.current = queueRef.current
@@ -959,6 +974,36 @@ export function App({ chat, options, onDone }: AppProps) {
           cps.splice(cursor - 1, 1);
           setInputValue(cps.join(""));
           setCursor(cursor - 1);
+          return;
+        }
+
+        // ── 入力履歴 (Ctrl-P / Ctrl-N = readline の previous/next-history) ──
+        if (key.ctrl && input === "p") {
+          const history = historyRef.current;
+          const pos = historyPosRef.current;
+          if (history.length === 0) return;
+          if (pos === null) {
+            historyDraftRef.current = inputValue;
+            historyPosRef.current = history.length - 1;
+          } else if (pos > 0) {
+            historyPosRef.current = pos - 1;
+          }
+          const recalled = history[historyPosRef.current as number] ?? "";
+          setInputValue(recalled);
+          setCursor([...recalled].length);
+          return;
+        }
+        if (key.ctrl && input === "n") {
+          const history = historyRef.current;
+          const pos = historyPosRef.current;
+          if (pos === null) return; // 履歴を辿っていなければ何もしない
+          const next =
+            pos + 1 < history.length
+              ? history[pos + 1]
+              : historyDraftRef.current;
+          historyPosRef.current = pos + 1 < history.length ? pos + 1 : null;
+          setInputValue(next ?? "");
+          setCursor([...(next ?? "")].length);
           return;
         }
 

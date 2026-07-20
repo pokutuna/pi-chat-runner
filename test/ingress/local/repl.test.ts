@@ -194,6 +194,10 @@ describe("parseLine", () => {
     expect(parseLine("!quit")).toEqual({ kind: "quit" });
   });
 
+  it("!exit も終了として扱う (!quit の別名)", () => {
+    expect(parseLine("!exit")).toEqual({ kind: "quit" });
+  });
+
   it("!help をヘルプ表示として扱う", () => {
     expect(parseLine("!help")).toEqual({ kind: "help" });
   });
