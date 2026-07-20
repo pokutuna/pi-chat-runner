@@ -1,0 +1,118 @@
+# agent.yaml — demo config for the local REPL (`pnpm run dev:local`, no Slack).
+# Point CONFIG_PATH at this file and follow ./README.md for the walkthrough.
+#
+# Local mode never reads the connector section, so this file has none.
+# Channel ids here ("local", "notes", ...) are plain strings — the REPL's
+# `!channel <id>` switches between them; nothing has to exist on Slack.
+
+# --- store: in-memory by default; set STORE_BACKEND=sqlite to survive restarts ---
+store:
+  backend: ${env.STORE_BACKEND:-memory}
+
+# --- agent: pi child process env and runtime ---
+agent:
+  # Extra env vars forwarded to the pi child process, on top of the built-in
+  # defaults (GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION /
+  # GOOGLE_APPLICATION_CREDENTIALS). google-vertex needs nothing here; for
+  # other providers, forward their API key explicitly. UNCOMMENT to enable:
+  # env:
+  #   ANTHROPIC_API_KEY: ${env.ANTHROPIC_API_KEY}
+
+  runtime:
+    # The "links" channel loads pi-smart-fetch, which contains a native addon
+    # (.node) — loading it under the Node Permission Model requires
+    # --allow-addons. Off by default; set PI_ALLOW_ADDONS=1 when trying that
+    # channel (see README.md).
+    allowAddons: ${env.PI_ALLOW_ADDONS:-false}
+
+# --- channels ---
+# "default" carries the model in pi's canonical "provider/model-id[:thinking]"
+# form; every other entry inherits fields it doesn't set itself.
+channels:
+  - channel: "default"
+    model: google-vertex/gemini-3.5-flash
+    systemPrompt: >
+      You are a helpful assistant running inside a chat. Keep replies short —
+      a few sentences unless asked for more.
+    trigger:
+      when:
+        - kind: mention
+
+  # The REPL's default channel. Plain mention-triggered assistant: `@bot ...`
+  # triggers, a bare message is dropped by the gate (watch the log pane).
+  - channel: "local"
+    systemPrompt: >
+      You are a helpful assistant running inside a chat. Keep replies short —
+      a few sentences unless asked for more.
+    trigger:
+      when:
+        - kind: mention
+
+  # Personal notes channel: every post triggers (passthrough), and the whole
+  # channel is one ongoing session (session.mode: channel) — consecutive notes
+  # share context until /new or the idle reset. Replies land at channel level
+  # (reply.mode: flat), like a running conversation rather than threads.
+  - channel: "notes"
+    systemPrompt: >
+      You are a note-taking companion. The user posts short notes and thoughts;
+      acknowledge briefly, connect them to earlier notes in this session when
+      relevant, and answer questions using what has been said so far.
+    trigger:
+      when:
+        - kind: passthrough
+    session:
+      mode: channel
+      idleResetMinutes: 240
+    reply:
+      mode: flat
+
+  # Alert triage channel: humans trigger by mention, bot posts (webhooks,
+  # allowBots opt-in) only when they look like an alert. A burst of alerts is
+  # debounced into one turn, and follow-up alerts within 10 minutes join the
+  # ongoing session (affinity scope: channel) instead of starting a new one.
+  # Reacting :eyes: on an existing message also starts triage on it.
+  # memory: false opts this channel out of the shared memory skill, and the
+  # tools allowlist keeps the agent read-only (reply is always allowed).
+  - channel: "alerts"
+    systemPrompt: >
+      You are an on-call triage assistant. For each alert, state what likely
+      happened, how urgent it is, and what to check first. Be terse.
+    trigger:
+      allowBots: true
+      when:
+        - and: [{ kind: sender, is: human }, { kind: mention }]
+        - and: [{ kind: sender, is: bot }, { kind: keyword, pattern: "ALERT|CRITICAL" }]
+        - kind: reaction
+          emoji: [eyes]
+    session:
+      affinity:
+        scope: channel
+        windowSec: 600
+        debounceSec: 5
+    memory: false
+    tools: [read, grep, bash]
+
+  # Link-reading channel: any message containing a URL triggers (no mention
+  # needed), and the pi-smart-fetch extension (URL fetch + summarize) is
+  # enabled for this channel only. Requires `pnpm add pi-smart-fetch` and
+  # PI_ALLOW_ADDONS=1 — see README.md; the other channels work without it.
+  - channel: "links"
+    systemPrompt: >
+      When the user shares a URL, fetch it with the smart-fetch tool and reply
+      with a short summary: what it is, the key points, and why it might be
+      worth reading.
+    trigger:
+      when:
+        - kind: keyword
+          pattern: "https?://"
+        - kind: mention
+    extensions:
+      - ../../node_modules/pi-smart-fetch/dist/index.js
+
+  # DMs don't inherit "default" and are disabled unless a "dm" entry opts them
+  # in. passthrough = every DM triggers. In the REPL, `!dm on` marks your
+  # posts as DMs to exercise this entry.
+  - channel: "dm"
+    trigger:
+      when:
+        - kind: passthrough

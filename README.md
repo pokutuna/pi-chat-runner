@@ -232,6 +232,18 @@ See [`examples/config/agent.yaml`](examples/config/agent.yaml) for an annotated 
 
 To see what a channel's merged (default/dm + channel entry) config actually resolves to, run `node dist/server.mjs dump <channelId> [--json]` — it prints each field with its provenance, without starting the bot.
 
+### Model and credentials
+
+The LLM is chosen in the `channels` section — `default.model`, overridable per channel — in pi's canonical `provider/model-id[:thinking-level]` form (`google-vertex/gemini-3.5-flash`, `anthropic/claude-opus-4-8:high`); the value is handed to pi's `--model` as-is, so the provider list and model shorthands are [pi](https://github.com/earendil-works/pi)'s. A classifier gate judges with its own `model` field on the gate node, independent of the channel's model.
+
+Credentials are env vars read by pi itself, but the pi child process gets an allowlisted environment, not the runner's: the built-in defaults (`GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` / `GOOGLE_APPLICATION_CREDENTIALS`, so `google-vertex` works via ADC with nothing extra) plus whatever `agent.env` names explicitly. For any other provider, forward its API key:
+
+```yaml
+agent:
+  env:
+    ANTHROPIC_API_KEY: ${env.ANTHROPIC_API_KEY}
+```
+
 ## Local Development
 
 ```sh
@@ -258,6 +270,8 @@ Chat pane interaction (log pane omitted for brevity):
 ```
 
 Chat commands (`@bot /new` etc.) flow through as normal message text. Full grammar and design: [docs/design/local-dev.md](docs/design/local-dev.md).
+
+For a guided tour, [`examples/local-demo/`](examples/local-demo/) ships a ready-made config (`CONFIG_PATH=examples/local-demo/agent.yaml`) plus a walkthrough covering the trigger kinds, channel-as-session, memory, and a per-channel extension — all from the REPL.
 
 ### Against real Slack
 
