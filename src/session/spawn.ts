@@ -105,7 +105,8 @@ export function resolveBuiltinMemorySkillPath(): string {
 /** チャンネル別の追加 skill / extension パス (ChannelDoc.skills / .extensions,
  * config.md §2) を検証し realpath で正規化する。イメージに焼き込んだパスを指す
  * 想定なので、実在しないパスは設定ミスとして fail-loud で throw する。
- * extension は pi の --extension がディレクトリを受けないため .ts/.js に限る。 */
+ * extension は pi の --extension がディレクトリを受けないため、拡張子から
+ * JS モジュールファイル (.ts/.js/.mjs/.cjs) であることだけ確認する。 */
 export async function resolveChannelResourcePaths(
   paths: string[] | undefined,
   kind: "skills" | "extensions",
@@ -116,10 +117,12 @@ export async function resolveChannelResourcePaths(
       if (
         kind === "extensions" &&
         !path.endsWith(".ts") &&
-        !path.endsWith(".js")
+        !path.endsWith(".js") &&
+        !path.endsWith(".mjs") &&
+        !path.endsWith(".cjs")
       ) {
         throw new Error(
-          `channel extensions entry must be a .ts/.js file: ${path}`,
+          `channel extensions entry must be a .ts/.js/.mjs/.cjs file: ${path}`,
         );
       }
       try {
