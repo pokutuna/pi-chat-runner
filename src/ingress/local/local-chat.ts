@@ -3,15 +3,15 @@
 // I/O を持たないプログラマブルなフェイクチャット。公開契約は ./types.ts に確定済み
 // (このファイルはそれを実装するだけで、契約自体は変更しない)。
 //
-// 注入物 (ingress/poster/reactions/userResolver/fetchMessage) は全て同一の
+// 注入物 (ingress/poster/reactor/userResolver/fetchMessage) は全て同一の
 // メッセージログを共有する — bot 投稿への reaction 起動 (fetchMessage) やスレッド
 // 返信を Slack と同じに動かすため。bot 投稿はログに isSelf: true で記録するが、
 // ChatEvent として onEvent へ還流はさせない (自己エコー経路を持たない)。
 
 import { EventEmitter } from "node:events";
 
-import { Reactions } from "../../egress/reactions.js";
 import type { ChatPoster } from "../../egress/router.js";
+import { SlackTurnReactor } from "../../egress/slack/turn-reactor.js";
 import type { FetchedMessage, FetchMessage } from "../../session/runner.js";
 import type { ChatEvent, InboundMessage, Sender } from "../chat-event.js";
 import type { Ack, Ingress } from "../ingress.js";
@@ -110,7 +110,7 @@ export function createLocalChat(options?: LocalChatOptions): LocalChat {
     },
   };
 
-  const reactions = new Reactions({
+  const reactor = new SlackTurnReactor({
     add(args: { channel: string; timestamp: string; name: string }) {
       const record: ReactionRecord = {
         channelId: args.channel,
@@ -226,7 +226,7 @@ export function createLocalChat(options?: LocalChatOptions): LocalChat {
   return {
     ingress,
     poster,
-    reactions,
+    reactor,
     userResolver,
     fetchMessage,
     post,

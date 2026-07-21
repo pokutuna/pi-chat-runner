@@ -18,9 +18,10 @@ import {
 } from "./classifier/client.js";
 import type { ConfigSource } from "./config/config-source.js";
 import { toMrkdwn } from "./egress/mrkdwn.js";
-import { Reactions } from "./egress/reactions.js";
 import type { ChatPoster } from "./egress/router.js";
 import { EgressRouter } from "./egress/router.js";
+import { SlackTurnReactor } from "./egress/slack/turn-reactor.js";
+import type { TurnReactor } from "./egress/turn-reactor.js";
 import type { ChatEvent, InboundMessage } from "./ingress/chat-event.js";
 import type { Ack, Ingress } from "./ingress/ingress.js";
 import { SlackUserResolver } from "./ingress/slack/user-resolver.js";
@@ -47,7 +48,7 @@ export interface BridgeOptions {
    * 本命 seam — 別の Slack app 実装から独自 Ingress を差し込める。 */
   eventSource: Ingress;
   /** 返信投稿 (chat.postMessage) と reaction (reactions.add) に使う。省略可 —
-   * 省略時は poster/reactions/userResolver/fetchMessage の 4 点すべての注入が必須
+   * 省略時は poster/reactor/userResolver/fetchMessage の 4 点すべての注入が必須
    * (local mode 等、Slack を介さない構成のための seam。docs/design/local-dev.md §2)。 */
   web?: WebClient;
   store: StateStore;
@@ -76,8 +77,9 @@ export interface BridgeOptions {
   logger?: Logger;
   /** 返信投稿の注入口。省略時は web (WebClient) の chat.postMessage から内部構築する。 */
   poster?: ChatPoster;
-  /** reaction 操作の注入口。省略時は web (WebClient) の reactions.add から内部構築する。 */
-  reactions?: Reactions;
+  /** ターン状態リアクションの注入口。省略時は web (WebClient) の reactions.add から
+   * SlackTurnReactor を内部構築する。 */
+  reactor?: TurnReactor;
   /** UserID → 表示名解決の注入口。省略時は web (WebClient) の users.info から内部構築する。 */
   userResolver?: UserResolver;
   /** reaction トリガーの対象メッセージ本文取得の注入口。省略時は web (WebClient) の
@@ -97,7 +99,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
   const logger = options.logger ?? rootLogger.child({ component: "server" });
   const { web, eventSource, store, configSource } = options;
 
-  // web (WebClient) 省略時は poster/reactions/userResolver/fetchMessage の 4 点すべてが
+  // web (WebClient) 省略時は poster/reactor/userResolver/fetchMessage の 4 点すべてが
   // 内部構築の代わりを果たす必要がある。1 つでも欠けていれば、どれが欠けているか
   // 分かるメッセージで fail-loud する (local mode 等、Slack を介さない構成のための seam。
   // docs/design/local-dev.md §2)
@@ -105,7 +107,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
     const missing = (
       [
         ["poster", options.poster],
-        ["reactions", options.reactions],
+        ["reactor", options.reactor],
         ["userResolver", options.userResolver],
         ["fetchMessage", options.fetchMessage],
       ] as const
@@ -114,7 +116,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
       .map(([name]) => name);
     if (missing.length > 0) {
       throw new Error(
-        `startBridge: web is undefined, so poster/reactions/userResolver/fetchMessage must all be injected. missing: ${missing.join(", ")}`,
+        `startBridge: web is undefined, so poster/reactor/userResolver/fetchMessage must all be injected. missing: ${missing.join(", ")}`,
       );
     }
   }
@@ -157,9 +159,9 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
       await web!.chat.update({ channel: channelId, ts: messageId, text });
     },
   };
-  const reactions =
-    options.reactions ??
-    new Reactions({
+  const reactor =
+    options.reactor ??
+    new SlackTurnReactor({
       add: (args) => web!.reactions.add(args),
     });
   // reaction トリガーの対象メッセージ本文取得 (session-model.md §5「人間による
@@ -223,7 +225,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
       formatter: toMrkdwn,
       logger: logger.child({ component: "egress" }),
     }),
-    reactions,
+    reactor,
     logger: logger.child({ component: "session" }),
     // mentionFormat は必須 (SessionRunner はプラットフォーム中立で既定値を
     // 持たない)。bridge.ts は Slack 専用モジュールなので、Slack の mrkdwn

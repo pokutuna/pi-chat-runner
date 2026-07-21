@@ -5,8 +5,8 @@
 
 import type { EventEmitter } from "node:events";
 
-import type { Reactions } from "../../egress/reactions.js";
 import type { ChatPoster } from "../../egress/router.js";
+import type { TurnReactor } from "../../egress/turn-reactor.js";
 import type { FetchMessage } from "../../session/runner.js";
 import type { Sender } from "../chat-event.js";
 import type { Ingress } from "../ingress.js";
@@ -52,7 +52,7 @@ export interface ReactOptions {
   added?: boolean;
 }
 
-/** bot 側 (Reactions 経由) のリアクション記録。 */
+/** bot 側 (TurnReactor 経由) のリアクション記録。 */
 export interface ReactionRecord {
   channelId: string;
   /** リアクション対象メッセージの ts。 */
@@ -80,7 +80,7 @@ export interface LocalChat {
   /** startBridge へ渡す注入物。全て同一のメッセージログを共有する。 */
   readonly ingress: Ingress;
   readonly poster: ChatPoster;
-  readonly reactions: Reactions;
+  readonly reactor: TurnReactor;
   readonly userResolver: UserResolver;
   readonly fetchMessage: FetchMessage;
 
@@ -92,7 +92,7 @@ export interface LocalChat {
 
   log(): readonly LoggedMessage[];
   bySeq(seq: number): LoggedMessage | undefined;
-  /** bot が付けたリアクション (Reactions.add) の記録。 */
+  /** bot が付けたリアクション (TurnReactor 経由) の記録。 */
   reactionsLog(): readonly ReactionRecord[];
 
   readonly events: EventEmitter<LocalChatOutputEvents>;

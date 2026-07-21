@@ -414,7 +414,7 @@ async function runLocal(argv: string[]): Promise<void> {
     store,
     configSource: new FileConfigSource(configPath),
     poster: chat.poster,
-    reactions: chat.reactions,
+    reactor: chat.reactor,
     userResolver: chat.userResolver,
     fetchMessage: chat.fetchMessage,
     ...options,

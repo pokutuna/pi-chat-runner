@@ -11,7 +11,7 @@ import { PassThrough } from "node:stream";
 import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
 
-import { Reactions } from "../../../src/egress/reactions.js";
+import { SlackTurnReactor } from "../../../src/egress/slack/turn-reactor.js";
 import type { Ingress } from "../../../src/ingress/ingress.js";
 import { App } from "../../../src/ingress/local/repl.js";
 import type {
@@ -44,7 +44,7 @@ function createFakeLocalChat(): LocalChat {
       postMessage: () => Promise.resolve({ messageId: "1" }),
       updateMessage: () => Promise.resolve(),
     },
-    reactions: new Reactions({ add: () => Promise.resolve() }),
+    reactor: new SlackTurnReactor({ add: () => Promise.resolve() }),
     userResolver: { resolve: () => Promise.resolve(null) },
     fetchMessage: () => Promise.resolve(null),
     post: (text) => {

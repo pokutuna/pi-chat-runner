@@ -16,8 +16,8 @@ import { join } from "node:path";
 import type { ClassifierClient } from "../classifier/client.js";
 import type { ChannelDoc } from "../config/channel-doc.js";
 import { type ConfigSource, DM_CHANNEL } from "../config/config-source.js";
-import type { Reactions } from "../egress/reactions.js";
 import type { EgressRouter } from "../egress/router.js";
+import type { TurnReactor } from "../egress/turn-reactor.js";
 import {
   buildWhen,
   defaultWhen,
@@ -82,7 +82,7 @@ export interface SessionRunnerOptions {
   /** 永続化 Store 群 (inbox / sessions / leases)。persistence.md §1 */
   store: StateStore;
   router: EgressRouter;
-  reactions: Reactions;
+  reactor: TurnReactor;
   /** workdir の境界退避。 */
   workdirStorage: WorkdirStorage;
   /** チャンネル単位の共有ディレクトリの境界退避 (docs/design/shared.md)。
@@ -194,7 +194,7 @@ export class SessionRunner implements SessionHost {
     this.ctx = {
       store: options.store,
       router: options.router,
-      reactions: options.reactions,
+      reactor: options.reactor,
       workdirStorage: options.workdirStorage,
       sharedStorage: options.sharedStorage,
       logger: options.logger ?? rootLogger.child({ component: "session" }),

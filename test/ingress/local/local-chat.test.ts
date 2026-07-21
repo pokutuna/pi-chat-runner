@@ -177,12 +177,12 @@ describe("createLocalChat", () => {
     expect(received[0]!.targetIsOwnMessage).toBe(false);
   });
 
-  it("reactions.add (bot 側) が reactionsLog に記録され reaction イベントが飛ぶ", async () => {
+  it("reactor.react (bot 側) が reactionsLog に記録され reaction イベントが飛ぶ", async () => {
     const chat = createLocalChat();
     const reactionEvents: unknown[] = [];
     chat.events.on("reaction", (r) => reactionEvents.push(r));
 
-    await chat.reactions.addEyes("local", "1752800000.000001");
+    await chat.reactor.react("local", "1752800000.000001", "kick");
 
     expect(reactionEvents).toHaveLength(1);
     expect(chat.reactionsLog()).toEqual([

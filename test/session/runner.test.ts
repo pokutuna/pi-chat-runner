@@ -22,8 +22,8 @@ import { describe, expect, it, vi } from "vitest";
 import type { ClassifierClient } from "../../src/classifier/client.js";
 import type { ChannelDoc } from "../../src/config/channel-doc.js";
 import type { ConfigSource } from "../../src/config/config-source.js";
-import { Reactions } from "../../src/egress/reactions.js";
 import { type ChatPoster, EgressRouter } from "../../src/egress/router.js";
+import { SlackTurnReactor } from "../../src/egress/slack/turn-reactor.js";
 import type {
   InboundMessage,
   ReactionEvent,
@@ -215,7 +215,7 @@ async function harness(
     configSource: new FakeConfigSource(docs),
     store,
     router: new EgressRouter({ poster }),
-    reactions: new Reactions({
+    reactor: new SlackTurnReactor({
       add: async (args) => {
         reactionCalls.push(args);
         return {};

@@ -3,7 +3,7 @@ import { PassThrough } from "node:stream";
 
 import { describe, expect, it } from "vitest";
 
-import { Reactions } from "../../../src/egress/reactions.js";
+import { SlackTurnReactor } from "../../../src/egress/slack/turn-reactor.js";
 import type { Sender } from "../../../src/ingress/chat-event.js";
 import type { Ingress } from "../../../src/ingress/ingress.js";
 import { parseLine } from "../../../src/ingress/local/repl-logic.js";
@@ -284,7 +284,7 @@ function createFakeLocalChat(options?: { postDelayMs?: number }): LocalChat {
         return Promise.resolve();
       },
     },
-    reactions: new Reactions({
+    reactor: new SlackTurnReactor({
       add() {
         return Promise.resolve();
       },

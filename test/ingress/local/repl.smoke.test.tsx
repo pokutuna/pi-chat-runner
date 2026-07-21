@@ -23,7 +23,7 @@ import { PassThrough } from "node:stream";
 import { render } from "ink-testing-library";
 import { describe, expect, it } from "vitest";
 
-import { Reactions } from "../../../src/egress/reactions.js";
+import { SlackTurnReactor } from "../../../src/egress/slack/turn-reactor.js";
 import type { Sender } from "../../../src/ingress/chat-event.js";
 import type { Ingress } from "../../../src/ingress/ingress.js";
 import {
@@ -107,7 +107,7 @@ function createFakeLocalChat(): LocalChat {
         return Promise.resolve();
       },
     },
-    reactions: new Reactions({
+    reactor: new SlackTurnReactor({
       add() {
         return Promise.resolve();
       },

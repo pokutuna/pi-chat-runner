@@ -35,7 +35,11 @@ export {
   resolveChannelConfig,
 } from "./config/config-source.js";
 export { toMrkdwn } from "./egress/mrkdwn.js";
-export { type ReactionClient, Reactions } from "./egress/reactions.js";
+export {
+  type ReactionClient,
+  SlackTurnReactor,
+} from "./egress/slack/turn-reactor.js";
+export { type ReactionState, type TurnReactor } from "./egress/turn-reactor.js";
 export {
   type ChatPoster,
   type EgressDestination,

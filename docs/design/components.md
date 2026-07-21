@@ -256,6 +256,10 @@ RPC イベント (`tool_execution_end`) を購読して行う — WebClient と 
 
 進捗表示 (👀 リアクション・edit ベースのステータス) は**別レーンのオプション**。
 確定した返答は reply、実行中の可視化は edit、と役割が重ならない。
+リアクションは agent の出力ではなく Runner が `agent_end` を観測した結果で、Runner は
+kick/ok/error という platform 非依存のターン状態を発するだけ (`TurnReactor` port)。
+Slack 絵文字への写像は EgressAdapter 側 (`SlackTurnReactor`) が持つ — Ingress の
+IngressAdapter と同じ直交。
 
 ## Config — チャンネル特化 ([config.md](config.md), [architecture.md](architecture.md) §2)
 

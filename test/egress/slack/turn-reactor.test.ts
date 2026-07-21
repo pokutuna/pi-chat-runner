@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import { type ReactionClient, Reactions } from "../../src/egress/reactions.js";
+import { SlackTurnReactor } from "../../../src/egress/slack/turn-reactor.js";
+import type { ReactionClient } from "../../../src/egress/slack/turn-reactor.js";
 
 function client(impl?: Partial<ReactionClient>): ReactionClient & {
   calls: { channel: string; timestamp: string; name: string }[];
@@ -16,19 +17,21 @@ function client(impl?: Partial<ReactionClient>): ReactionClient & {
   };
 }
 
-describe("Reactions", () => {
-  it("addEyes adds :eyes: to the message", async () => {
+describe("SlackTurnReactor", () => {
+  it("maps kick to :eyes:", async () => {
     const fake = client();
-    await new Reactions(fake).addEyes("C01", "1700.1");
+    await new SlackTurnReactor(fake).react("C01", "1700.1", "kick");
     expect(fake.calls).toEqual([
       { channel: "C01", timestamp: "1700.1", name: "eyes" },
     ]);
   });
 
-  it("addCheck adds :white_check_mark: to the message", async () => {
+  it("maps ok to :white_check_mark: and error to :x:", async () => {
     const fake = client();
-    await new Reactions(fake).addCheck("C01", "1700.1");
-    expect(fake.calls[0]?.name).toBe("white_check_mark");
+    const reactor = new SlackTurnReactor(fake);
+    await reactor.react("C01", "1700.1", "ok");
+    await reactor.react("C01", "1700.2", "error");
+    expect(fake.calls.map((c) => c.name)).toEqual(["white_check_mark", "x"]);
   });
 
   it("swallows already_reacted platform errors", async () => {
@@ -41,7 +44,7 @@ describe("Reactions", () => {
       },
     });
     await expect(
-      new Reactions(fake).addEyes("C01", "1"),
+      new SlackTurnReactor(fake).react("C01", "1", "kick"),
     ).resolves.toBeUndefined();
   });
 
@@ -54,6 +57,8 @@ describe("Reactions", () => {
         throw err;
       },
     });
-    await expect(new Reactions(fake).addEyes("C01", "1")).rejects.toThrow(err);
+    await expect(
+      new SlackTurnReactor(fake).react("C01", "1", "kick"),
+    ).rejects.toThrow(err);
   });
 });

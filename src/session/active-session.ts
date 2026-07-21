@@ -11,8 +11,8 @@ import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 
 import type { ChannelDoc } from "../config/channel-doc.js";
-import type { Reactions } from "../egress/reactions.js";
 import type { EgressRouter } from "../egress/router.js";
+import type { ReactionState, TurnReactor } from "../egress/turn-reactor.js";
 import type { InboundMessage } from "../ingress/chat-event.js";
 import type { Logger } from "../logger.js";
 import { inboxItemId } from "../store/state/inbox-item.js";
@@ -61,7 +61,7 @@ export interface SessionHost {
 export interface SessionContext {
   store: StateStore;
   router: EgressRouter;
-  reactions: Reactions;
+  reactor: TurnReactor;
   workdirStorage: WorkdirStorage;
   sharedStorage: SharedStorage | undefined;
   logger: Logger;
@@ -879,22 +879,6 @@ export class ActiveSession {
     this.#host.remove(this);
   }
 
-  /** リアクションは装飾なので、失敗してもセッションを止めない */
-  async #safeReact(
-    fn: () => Promise<void>,
-    sessionKey: string,
-    label: string,
-  ): Promise<void> {
-    try {
-      await fn();
-    } catch (err) {
-      this.#ctx.logger.warn(
-        { sessionKey, label, err },
-        "failed to add reaction",
-      );
-    }
-  }
-
   /** ターンに 1 件の入力メッセージを取り込む共通処理 (start / steerPending /
    * promptPending 共通)。宛先登録 (session-model.md §3) → dedupe 記録 (promptedIds、
    * キーは event_id) → リアクション対象の記録 (turnMessageIds、キーはメッセージ ID) →
@@ -908,30 +892,29 @@ export class ActiveSession {
     const threadKey = registerReplyDestination(this.#ctx.router, event, policy);
     this.#promptedIds.add(dedupeId);
     this.#turnMessageIds.push(event.id);
-    await this.#safeReact(
-      () => this.#ctx.reactions.addEyes(this.channelId, event.id),
-      this.sessionKey,
-      "eyes",
-    );
+    await this.#react(event.id, "kick");
     return threadKey;
   }
 
-  /** ターンの成否を、そのターンを起こした各メッセージへ ✅ (ok) / ❌ (error) で返す。
-   * 👀 は prompt/steer 時点で付けてあるので、これで 👀 → ✅/❌ が揃う。1 ターンに
+  /** ターンの成否を、そのターンを起こした各メッセージへ返す (ok / error)。kick は
+   * prompt/steer 時点で付けてあるので、これで kick → ok/error が揃う。1 ターンに
    * 複数メッセージが合流していれば全件に付く */
   async #reactMessages(
     messageIds: string[],
     status: TurnStatus,
   ): Promise<void> {
-    const label = status === "ok" ? "check" : "x";
-    for (const messageId of messageIds) {
-      await this.#safeReact(
-        () =>
-          status === "ok"
-            ? this.#ctx.reactions.addCheck(this.channelId, messageId)
-            : this.#ctx.reactions.addX(this.channelId, messageId),
-        this.sessionKey,
-        label,
+    for (const messageId of messageIds) await this.#react(messageId, status);
+  }
+
+  /** TurnReactor 経由でメッセージにターン状態を返す。装飾なので、失敗しても
+   * セッションは止めない */
+  async #react(messageId: string, state: ReactionState): Promise<void> {
+    try {
+      await this.#ctx.reactor.react(this.channelId, messageId, state);
+    } catch (err) {
+      this.#ctx.logger.warn(
+        { sessionKey: this.sessionKey, state, err },
+        "failed to react to turn state",
       );
     }
   }

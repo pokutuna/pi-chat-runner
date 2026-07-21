@@ -64,7 +64,7 @@ describe("startBridge with LocalChat (no Slack)", () => {
       agentHome,
       logger,
       poster: chat.poster,
-      reactions: chat.reactions,
+      reactor: chat.reactor,
       userResolver: chat.userResolver,
       fetchMessage: chat.fetchMessage,
     });
@@ -108,7 +108,7 @@ describe("startBridge with LocalChat (no Slack)", () => {
       agentHome,
       logger,
       poster: chat.poster,
-      reactions: chat.reactions,
+      reactor: chat.reactor,
       userResolver: chat.userResolver,
       fetchMessage: chat.fetchMessage,
     });
@@ -154,7 +154,7 @@ describe("startBridge with LocalChat (no Slack)", () => {
         agentHome,
         logger,
         poster: chat.poster,
-        reactions: chat.reactions,
+        reactor: chat.reactor,
         userResolver: chat.userResolver,
         // fetchMessage は意図的に注入しない
       }),
