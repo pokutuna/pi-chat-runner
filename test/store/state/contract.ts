@@ -163,7 +163,7 @@ export function describeStateStoreContract(
         const doc: SessionDoc = {
           channelId: "C1",
           threadTs: "1000.0",
-          triggerTs: "1000.0",
+          triggerMessageId: "1000.0",
           status: "active",
           updatedAt: new Date("2026-01-01T00:00:00.000Z"),
         };
@@ -178,7 +178,7 @@ export function describeStateStoreContract(
         const doc: SessionDoc = {
           channelId: "C1",
           threadTs: "1000.0",
-          triggerTs: "1000.0",
+          triggerMessageId: "1000.0",
           status: "active",
           updatedAt: new Date("2026-01-01T00:00:00.000Z"),
           rotateRequestedAt: new Date("2026-01-01T00:00:05.000Z"),
@@ -197,7 +197,7 @@ export function describeStateStoreContract(
         const doc: SessionDoc = {
           channelId: "C1",
           threadTs: "1000.0",
-          triggerTs: "1000.0",
+          triggerMessageId: "1000.0",
           status: "active",
           updatedAt: new Date("2026-01-01T00:00:00.000Z"),
         };
@@ -211,7 +211,7 @@ export function describeStateStoreContract(
         const doc1: SessionDoc = {
           channelId: "C1",
           threadTs: "1000.0",
-          triggerTs: "1000.0",
+          triggerMessageId: "1000.0",
           status: "active",
           updatedAt: new Date("2026-01-01T00:00:00.000Z"),
         };

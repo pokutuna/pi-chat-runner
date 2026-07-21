@@ -313,7 +313,8 @@ describe("SessionRunner (fake-pi integration)", () => {
       "eyes",
       "white_check_mark",
     ]);
-    expect(h.reactions[0]?.timestamp).toBe(trigger.id);
+    // 👀 も ✅ も、そのターンを起こしたメッセージ (trigger) に付く
+    expect(h.reactions.every((r) => r.timestamp === trigger.id)).toBe(true);
 
     await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
     const commands = await h.commandsLog("C01", trigger.id);
@@ -326,6 +327,45 @@ describe("SessionRunner (fake-pi integration)", () => {
       await h.store.leases.acquire(threadKey, "probe", 1000),
     ).not.toBeNull();
     expect((await h.store.sessions.get(threadKey))?.status).toBe("finished");
+  });
+
+  it("marks the trigger message ❌ when the turn ends with stopReason error", async () => {
+    // pi はプロセスとしては正常に agent_end を返すが、最終 assistant の
+    // stopReason が "error" (LLM 呼び出し失敗など)。silent な ✅ ではなく ❌ を付ける
+    const h = await harness();
+    const trigger = message({ mentionsBot: true, text: "TURN_ERROR" });
+
+    await h.runner.handle(trigger);
+
+    await waitFor(() => h.reactions.some((r) => r.name === "x"), "x reaction");
+    // 👀 → ❌ の順で、どちらもトリガーメッセージに付く。✅ は付かない
+    expect(h.reactions.map((r) => r.name)).toEqual(["eyes", "x"]);
+    expect(h.reactions.every((r) => r.timestamp === trigger.id)).toBe(true);
+
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
+  });
+
+  it("marks ✅ (no ❌) when a turn recovers via auto-retry (willRetry)", async () => {
+    // 1 回目の agent_end は willRetry: true + stopReason: "error" (中間)。runner は
+    // ここで畳まず、リトライ後の 2 回目の agent_end (reply + stopReason: "stop") で
+    // 正常終了する。中間の error に引きずられて ❌ を付けないことを確認する
+    const h = await harness();
+    const trigger = message({ mentionsBot: true, text: "RETRY_THEN_OK" });
+
+    await h.runner.handle(trigger);
+
+    await waitFor(() => h.poster.calls.length === 1, "reply posted");
+    await waitFor(
+      () => h.reactions.some((r) => r.name === "white_check_mark"),
+      "check reaction",
+    );
+    expect(h.reactions.map((r) => r.name)).toEqual([
+      "eyes",
+      "white_check_mark",
+    ]);
+    expect(h.reactions.some((r) => r.name === "x")).toBe(false);
+
+    await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
   });
 
   it("reply files outside the workdir are dropped; in-workdir files resolve to absolute paths", async () => {
@@ -820,7 +860,7 @@ describe("SessionRunner (fake-pi integration)", () => {
     await h.store.sessions.put(sessionKey, {
       channelId: "C01",
       threadTs: "channel",
-      triggerTs: "1699999999.000000",
+      triggerMessageId: "1699999999.000000",
       status: "finished",
       updatedAt: new Date(Date.now() - 10 * 60_000),
     });
@@ -1001,7 +1041,7 @@ describe("SessionRunner (fake-pi integration)", () => {
     await h.store.sessions.put(sessionKey, {
       channelId: "C01",
       threadTs: "channel",
-      triggerTs: "1699999999.000000",
+      triggerMessageId: "1699999999.000000",
       status: "finished",
       updatedAt: new Date(),
       rotateRequestedAt: new Date(),
@@ -1038,7 +1078,7 @@ describe("SessionRunner (fake-pi integration)", () => {
     await h.store.sessions.put(sessionKey, {
       channelId: "C01",
       threadTs: trigger.id,
-      triggerTs: trigger.id,
+      triggerMessageId: trigger.id,
       status: "finished",
       updatedAt: new Date(),
       rotateRequestedAt: new Date(),

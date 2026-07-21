@@ -23,6 +23,8 @@ import {
   extractTurnErrors,
   extractUsageTotals,
   piEventLogFields,
+  type TurnStatus,
+  turnStatusFromAgentEnd,
   type UsageTotals,
 } from "./pi-events.js";
 import { renderEvent, renderItems, type SessionPolicy } from "./policy.js";
@@ -84,14 +86,14 @@ export interface SessionContext {
 }
 
 /** ActiveSession の構築に必要な依存一式。同一性 (sessionKey/channelId/threadTs/
- * triggerTs/workdir/policy) と lease/host/sharedStagingDir はセッションごとに
+ * triggerMessageId/workdir/policy) と lease/host/sharedStagingDir はセッションごとに
  * 決まる値、ctx はセッション横断の共有コンテキスト (SessionContext)。 */
 export interface ActiveSessionOptions {
   sessionKey: string;
   channelId: string;
   threadTs: string;
-  /** トリガーメッセージの ts (👀 / ✅ の対象) */
-  triggerTs: string;
+  /** セッションを起こしたトリガーメッセージの ID (セッション同一性・sessions.put 用) */
+  triggerMessageId: string;
   workdir: string;
   /** kick 時に導出した session.mode / reply.mode。promptPending / start から
    * 参照して宛先登録・フォールバック登録に使う (session-model.md §3) */
@@ -132,8 +134,8 @@ export class ActiveSession {
   readonly sessionKey: string;
   readonly channelId: string;
   readonly threadTs: string;
-  /** トリガーメッセージの ts (👀 / ✅ の対象) */
-  readonly triggerTs: string;
+  /** セッションを起こしたトリガーメッセージの ID (セッション同一性・sessions.put 用) */
+  readonly triggerMessageId: string;
   readonly workdir: string;
   /** kick 時に導出した session.mode / reply.mode。promptPending / start から
    * 参照して宛先登録・フォールバック登録に使う (session-model.md §3) */
@@ -152,6 +154,12 @@ export class ActiveSession {
   /** このセッションで prompt/steer 済みの item id。drain は非破壊 (未 ack 全件を
    * 返す) なので、重複除外はこのインメモリ記憶で行う (persistence.md §1) */
   readonly #promptedIds = new Set<string>();
+  /** このターンで prompt/steer した入力メッセージの ID (event.id)。ターンの成否が
+   * 確定したら (agent_end) これらのメッセージへ ✅/❌ を付けてクリアする。
+   * #promptedIds (dedupe キー = event_id、セッション累積) とは軸も寿命も別物 —
+   * リアクション対象は「メッセージそのもの」なので event.id、寿命は #turnEpoch と
+   * 同じ 1 ターン。両者を 1 つの器に相乗りさせない (persistence.md §1) */
+  #turnMessageIds: string[] = [];
   /** prompt/steer を送るたびに増える世代。agent_end 処理中に増えていたら
    * 新しいターンが走り出しているので、終了判定をそのターンの agent_end に譲る */
   #turnEpoch = 0;
@@ -180,7 +188,7 @@ export class ActiveSession {
     this.sessionKey = options.sessionKey;
     this.channelId = options.channelId;
     this.threadTs = options.threadTs;
-    this.triggerTs = options.triggerTs;
+    this.triggerMessageId = options.triggerMessageId;
     this.workdir = options.workdir;
     this.policy = options.policy;
     this.#startedAt = Date.now();
@@ -313,6 +321,11 @@ export class ActiveSession {
         return;
       }
       if (isAgentEnd(piEvent)) {
+        // willRetry: true の agent_end はターン終端ではない (AgentSession の自動
+        // リトライが走り、リトライ後にもう一度 agent_end が来る)。ここで畳むと
+        // リトライ前にセッションを終わらせてしまうので、この中間 agent_end は
+        // 何もせず素通しし、成否判定・flush/ack・終了判定は次の agent_end に委ねる
+        if (piEvent.willRetry === true) return;
         // ターン内の LLM 呼び出し失敗は agent_end としては正常終了になるので、
         // ここで拾わないとログに一切残らない (pi-events.ts extractTurnErrors)
         for (const errorMessage of extractTurnErrors(piEvent)) {
@@ -330,7 +343,10 @@ export class ActiveSession {
         // teardown まで待つと、その間の await の隙間でタイマー tick がもう一件
         // 発火し、deliver 済みの reply の後に古いツール名で新規投稿してしまう
         this.#progress.clear();
-        void this.#onAgentEnd(proc).catch((err) => {
+        // 最終 assistant の stopReason からターンの成否を判定し、そのターンを
+        // 起こした各メッセージへ ✅/❌ で返す (pi-events.ts turnStatusFromAgentEnd)
+        const status = turnStatusFromAgentEnd(piEvent);
+        void this.#onAgentEnd(proc, status).catch((err) => {
           this.#ctx.logger.warn(
             { sessionKey, err },
             "agent_end handling failed",
@@ -404,12 +420,9 @@ export class ActiveSession {
           "pi exited unexpectedly",
         );
         // pi のクラッシュはユーザーから見えない (返信なしで無音になる) ので、
-        // トリガーメッセージに ❌ を付けて失敗を伝える
-        void this.#safeReact(
-          () => this.#ctx.reactions.addX(this.channelId, this.triggerTs),
-          sessionKey,
-          "x",
-        );
+        // このターンを起こした各メッセージに ❌ を付けて失敗を伝える
+        void this.#reactMessages(this.#turnMessageIds, "error");
+        this.#turnMessageIds = [];
       }
     });
 
@@ -426,11 +439,6 @@ export class ActiveSession {
     } else {
       this.#ctx.router.register(sessionKey, { channelId, threadTs });
     }
-    await this.#safeReact(
-      () => this.#ctx.reactions.addEyes(channelId, this.triggerTs),
-      sessionKey,
-      "eyes",
-    );
 
     // enqueue 済みの入力 (spawn 準備中に積まれた分を含む) を束ねて初回 prompt にする。
     // トリガーイベント自身も enqueue 済みなので通常 drain 経由で届く。
@@ -440,20 +448,17 @@ export class ActiveSession {
     );
     let body: string;
     if (items.length > 0) {
-      for (const i of items) {
-        registerReplyDestination(this.#ctx.router, i.event, policy);
-        this.#promptedIds.add(i.id);
-      }
+      for (const i of items)
+        await this.#beginTurnMessage(i.event, i.id, policy);
       body = renderItems(items);
     } else {
       // drain が空 (Store 実装の遅延など)。トリガーイベントに直接フォールバック
       // するが、ack 対象には含める (二重 prompt を防ぐ)
-      const triggerKey = registerReplyDestination(
-        this.#ctx.router,
+      const triggerKey = await this.#beginTurnMessage(
         triggerEvent,
+        inboxItemId(triggerEvent),
         policy,
       );
-      this.#promptedIds.add(inboxItemId(triggerEvent));
       body = renderEvent(triggerEvent, triggerKey);
     }
     this.#turnEpoch += 1;
@@ -464,7 +469,7 @@ export class ActiveSession {
     await this.#ctx.store.sessions.put(sessionKey, {
       channelId,
       threadTs,
-      triggerTs: this.triggerTs,
+      triggerMessageId: this.triggerMessageId,
       status: "active",
       updatedAt: new Date(),
     });
@@ -507,11 +512,10 @@ export class ActiveSession {
     const items = await this.#ctx.store.inbox.drain(sessionKey);
     const pending = items.filter((i) => !this.#promptedIds.has(i.id));
     if (pending.length > 0) {
-      // steer 前に宛先登録 (session-model.md §3 の境界規則)
+      // steer 前に宛先登録 (session-model.md §3 の境界規則) と 👀 付け
       for (const p of pending) {
-        registerReplyDestination(this.#ctx.router, p.event, this.policy);
+        await this.#beginTurnMessage(p.event, p.id, this.policy);
       }
-      for (const p of pending) this.#promptedIds.add(p.id);
       this.#turnEpoch += 1;
       this.#resetTurnTimeout();
       this.#progress.reset();
@@ -586,7 +590,7 @@ export class ActiveSession {
    * 残り入力があれば次の prompt、無ければ linger して再確認、それでも無ければ ✅ で終了
    * (persistence.md §3, session-model.md §4 の linger)
    */
-  async #onAgentEnd(proc: PiProcess): Promise<void> {
+  async #onAgentEnd(proc: PiProcess, status: TurnStatus): Promise<void> {
     const sessionKey = this.sessionKey;
     if (this.#disposed || this.#process !== proc) return;
     const epoch = this.#turnEpoch;
@@ -600,8 +604,12 @@ export class ActiveSession {
 
     // 1. ターン境界の flush → 2. flush 成功後に ack (persistence.md §3)。
     // ack 対象は flush 前のスナップショット — flush の await 中に steer が
-    // promptedIds へ追加した item を「そのターンの flush 前」に ack しない
+    // promptedIds へ追加した item を「そのターンの flush 前」に ack しない。
+    // リアクション対象 (このターンを起こしたメッセージ) も同じ境界でスナップショット
+    // して即クリアする — promptPending が次ターンとして新しい message id を push する前に
     const toAck = [...this.#promptedIds];
+    const reactTargets = this.#turnMessageIds;
+    this.#turnMessageIds = [];
     await this.#ctx.workdirStorage.flush(sessionKey, this.workdir);
     // shared も同じ境界で棚へ書き戻す (docs/design/shared.md §2)。異常終了パス
     // (exit / abnormalShutdown / renew 失敗) で書き戻さないのは workdir と同じ理由
@@ -618,6 +626,10 @@ export class ActiveSession {
       await this.#ctx.store.inbox.ack(sessionKey, toAck);
       for (const id of toAck) this.#promptedIds.delete(id);
     }
+    // このターンの成否を、起こした各メッセージへ ✅ (ok) / ❌ (error) で返す。
+    // flush/ack でターンの成果が確定した後に付ける。以降 continue しても linger 後に
+    // 終了しても、このターンのフィードバックは付け終わっている
+    await this.#reactMessages(reactTargets, status);
 
     // 3. 新規入力があれば同一プロセスで継続 (flush/ack は次の agent_end で行う)
     if (await this.#promptPending(proc)) return;
@@ -631,17 +643,13 @@ export class ActiveSession {
     if (await this.#promptPending(proc)) return;
     if (this.#turnEpoch !== epoch) return;
 
-    // 5. 終了処理。reply が 1 度も呼ばれなくても沈黙のまま ✅ を付けて終える
+    // 5. 終了処理。✅/❌ は各ターンの agent_end で既に付けてあるので、ここでは
+    // セッションを畳むだけ (セッション終了そのものにはリアクションを付けない)
     this.#state = "stopping";
-    await this.#safeReact(
-      () => this.#ctx.reactions.addCheck(this.channelId, this.triggerTs),
-      sessionKey,
-      "check",
-    );
     await this.#ctx.store.sessions.put(sessionKey, {
       channelId: this.channelId,
       threadTs: this.threadTs,
-      triggerTs: this.triggerTs,
+      triggerMessageId: this.triggerMessageId,
       status: "finished",
       updatedAt: new Date(),
     });
@@ -736,11 +744,9 @@ export class ActiveSession {
         );
       });
     await this.#ctx.router.clearProgress(sessionKey);
-    await this.#safeReact(
-      () => this.#ctx.reactions.addX(this.channelId, this.triggerTs),
-      sessionKey,
-      "x",
-    );
+    // このターンを起こした各メッセージに ❌ を付けて失敗を伝える
+    await this.#reactMessages(this.#turnMessageIds, "error");
+    this.#turnMessageIds = [];
 
     // このターンで prompt 済みだった item は ack して捨てる (retry しない)
     const toAck = [...this.#promptedIds];
@@ -771,10 +777,8 @@ export class ActiveSession {
       (i) => !this.#promptedIds.has(i.id),
     );
     if (items.length === 0) return false;
-    for (const i of items) {
-      registerReplyDestination(this.#ctx.router, i.event, this.policy);
-      this.#promptedIds.add(i.id);
-    }
+    for (const i of items)
+      await this.#beginTurnMessage(i.event, i.id, this.policy);
     this.#turnEpoch += 1;
     // lingering (agent_end 後の終了判定中) からの復帰。ここで拾う item は
     // trySteerExisting が steer せず enqueue のみで残していたものを含む
@@ -887,6 +891,47 @@ export class ActiveSession {
       this.#ctx.logger.warn(
         { sessionKey, label, err },
         "failed to add reaction",
+      );
+    }
+  }
+
+  /** ターンに 1 件の入力メッセージを取り込む共通処理 (start / steerPending /
+   * promptPending 共通)。宛先登録 (session-model.md §3) → dedupe 記録 (promptedIds、
+   * キーは event_id) → リアクション対象の記録 (turnMessageIds、キーはメッセージ ID) →
+   * 👀 を付ける、をまとめる。register の戻り (thread_key) を返すので、フォールバックの
+   * renderEvent はこれを使う */
+  async #beginTurnMessage(
+    event: InboundMessage,
+    dedupeId: string,
+    policy: SessionPolicy,
+  ): Promise<string> {
+    const threadKey = registerReplyDestination(this.#ctx.router, event, policy);
+    this.#promptedIds.add(dedupeId);
+    this.#turnMessageIds.push(event.id);
+    await this.#safeReact(
+      () => this.#ctx.reactions.addEyes(this.channelId, event.id),
+      this.sessionKey,
+      "eyes",
+    );
+    return threadKey;
+  }
+
+  /** ターンの成否を、そのターンを起こした各メッセージへ ✅ (ok) / ❌ (error) で返す。
+   * 👀 は prompt/steer 時点で付けてあるので、これで 👀 → ✅/❌ が揃う。1 ターンに
+   * 複数メッセージが合流していれば全件に付く */
+  async #reactMessages(
+    messageIds: string[],
+    status: TurnStatus,
+  ): Promise<void> {
+    const label = status === "ok" ? "check" : "x";
+    for (const messageId of messageIds) {
+      await this.#safeReact(
+        () =>
+          status === "ok"
+            ? this.#ctx.reactions.addCheck(this.channelId, messageId)
+            : this.#ctx.reactions.addX(this.channelId, messageId),
+        this.sessionKey,
+        label,
       );
     }
   }

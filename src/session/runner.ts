@@ -66,7 +66,7 @@ import {
  * 見つからない/取得失敗時は null。 */
 export type FetchMessage = (
   channelId: string,
-  ts: string,
+  messageId: string,
 ) => Promise<FetchedMessage | null>;
 
 export interface FetchedMessage {
@@ -507,7 +507,7 @@ export class SessionRunner implements SessionHost {
         await this.ctx.store.sessions.put(sessionKey, {
           channelId,
           threadTs,
-          triggerTs: event.id,
+          triggerMessageId: event.id,
           status: "finished",
           updatedAt: new Date(),
           rotateRequestedAt: new Date(),
@@ -890,7 +890,7 @@ export class SessionRunner implements SessionHost {
       sessionKey,
       channelId,
       threadTs,
-      triggerTs: event.id,
+      triggerMessageId: event.id,
       workdir,
       policy,
       lease,

@@ -13,6 +13,13 @@
 //                        ケース。runner の turn timeout 処理を検証する)
 //     "CRASH_NOW"      … running のまま即 process.exit(1) する (pi プロセスの
 //                        クラッシュ。runner の proc.on("exit") 異常分岐を検証する)
+//     "TURN_ERROR"     … reply を呼ばず、stopReason: "error" の agent_end を吐く
+//                        (LLM 呼び出し失敗などで pi が「正常に」ターンを畳むケース。
+//                        runner がトリガーメッセージに ❌ を付けることを検証する)
+//     "RETRY_THEN_OK"  … まず willRetry: true の agent_end (stopReason: "error") を
+//                        吐き、その後 reply → stopReason: "stop" の agent_end を吐く
+//                        (AgentSession 自動リトライで回復するケース。中間 agent_end で
+//                        畳まず、最終的に ✅ が付くことを検証する)
 //     "SLOW_TOOL"      … tool_execution_start ("dummy_tool") を吐いた後、steer が
 //                        届くまで待つ (runner の進捗通知タイマーが currentTool を
 //                        観測できる状態を維持する。progress-notice.md)。
@@ -108,12 +115,17 @@ function emitToolExecutionStart(toolName, args) {
   });
 }
 
-function emitAgentEnd() {
+// stopReason は実際の pi では assistant メッセージに必ず付く (5 値の必須フィールド)。
+// runner はこれを見てターンの成否を判定するので、スタブでも必ず付ける。
+// willRetry: true は「この agent_end はターン終端ではない (リトライが続く)」の合図
+function emitAgentEnd(stopReason = "stop", willRetry = false) {
   emit({
     type: "agent_end",
+    ...(willRetry ? { willRetry: true } : {}),
     messages: [
       {
         role: "assistant",
+        stopReason,
         usage: {
           input: 100,
           output: 50,
@@ -159,6 +171,22 @@ function handleCommand(command) {
       // response も agent_end も返さず、running のまま即クラッシュする。
       // runner の proc.on("exit") 異常分岐 (item を捨てる処理) を検証する
       process.exit(1);
+    }
+    if (command.message.includes("TURN_ERROR")) {
+      // reply せず error で完走する。pi はプロセスとしては正常なので agent_end は返す
+      emitAgentEnd("error");
+      return;
+    }
+    if (command.message.includes("RETRY_THEN_OK")) {
+      // 1 回目は error + willRetry: true (中間 agent_end)。runner はここで畳まない
+      emitAgentEnd("error", true);
+      // 2 回目 (リトライ後) で reply して正常終了する
+      emitReply(
+        threadKeyFromMessage(command.message),
+        `echo: ${command.message}`,
+      );
+      emitAgentEnd("stop");
+      return;
     }
     if (command.message.includes("SLOW_TOOL")) {
       emitToolExecutionStart("dummy_tool", { command: "sleep 300" });

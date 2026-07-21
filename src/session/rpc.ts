@@ -55,6 +55,9 @@ export interface ToolExecutionEndEvent {
 export interface AgentEndEvent {
   type: "agent_end";
   messages: unknown[];
+  /** AgentSession の自動リトライ (RPC モード既定 on)。true ならこの agent_end は
+   * ターン終端ではなく、リトライ後にもう一度 agent_end が来る */
+  willRetry?: boolean;
 }
 
 /** その他のイベントは型名だけ識別して素通しする */

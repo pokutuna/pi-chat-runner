@@ -5,6 +5,7 @@ import {
   extractTurnErrors,
   extractUsageTotals,
   piEventLogFields,
+  turnStatusFromAgentEnd,
 } from "../../src/session/pi-events.js";
 import type { ToolExecutionEndEvent } from "../../src/session/rpc.js";
 
@@ -115,6 +116,60 @@ describe("extractTurnErrors", () => {
       messages: [{ role: "assistant", stopReason: "error" }],
     });
     expect(errors).toEqual(["unknown error"]);
+  });
+});
+
+describe("turnStatusFromAgentEnd", () => {
+  it("returns ok when the last assistant message stopped normally", () => {
+    expect(
+      turnStatusFromAgentEnd({
+        type: "agent_end",
+        messages: [
+          { role: "user", content: [] },
+          { role: "assistant", stopReason: "stop", content: [] },
+        ],
+      }),
+    ).toBe("ok");
+  });
+
+  it("returns error when the last assistant message ended with error", () => {
+    expect(
+      turnStatusFromAgentEnd({
+        type: "agent_end",
+        messages: [{ role: "assistant", stopReason: "error" }],
+      }),
+    ).toBe("error");
+  });
+
+  it("treats non-stop stopReasons (e.g. length) as error", () => {
+    expect(
+      turnStatusFromAgentEnd({
+        type: "agent_end",
+        messages: [{ role: "assistant", stopReason: "length" }],
+      }),
+    ).toBe("error");
+  });
+
+  it("judges by the last assistant message, ignoring earlier ones", () => {
+    expect(
+      turnStatusFromAgentEnd({
+        type: "agent_end",
+        messages: [
+          { role: "assistant", stopReason: "error" },
+          { role: "user", content: [] },
+          { role: "assistant", stopReason: "stop" },
+        ],
+      }),
+    ).toBe("ok");
+  });
+
+  it("returns ok for a turn with no assistant message (silent success)", () => {
+    expect(
+      turnStatusFromAgentEnd({
+        type: "agent_end",
+        messages: [{ role: "user", content: [] }],
+      }),
+    ).toBe("ok");
   });
 });
 

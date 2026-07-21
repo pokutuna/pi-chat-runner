@@ -50,6 +50,28 @@ export function extractTurnErrors(event: AgentEndEvent): string[] {
   return errors;
 }
 
+export type TurnStatus = "ok" | "error";
+
+/**
+ * agent_end の最終 assistant メッセージの stopReason からターンの成否を判定する。
+ * stopReason は必ず付く 5 値 (stop / length / toolUse / error / aborted) で、
+ * messages は時系列 (末尾が最新)。「本当に完走した」= stop のみを ok とし、
+ * それ以外は error 扱いにする (whitelist)。LLM 呼び出し失敗も pi は
+ * stopReason: "error" の assistant メッセージとして正常に完走させ agent_end を
+ * 返すため、ここを whitelist にしないと失敗が ok に紛れる (extractTurnErrors と
+ * 同じ症状)。assistant メッセージが無いターン (沈黙の正常終了) は ok。
+ */
+export function turnStatusFromAgentEnd(event: AgentEndEvent): TurnStatus {
+  for (let i = event.messages.length - 1; i >= 0; i--) {
+    const message = event.messages[i];
+    if (typeof message !== "object" || message === null) continue;
+    const m = message as Record<string, unknown>;
+    if (m.role !== "assistant") continue;
+    return m.stopReason === "stop" ? "ok" : "error";
+  }
+  return "ok";
+}
+
 export interface UsageTotals {
   input: number;
   output: number;

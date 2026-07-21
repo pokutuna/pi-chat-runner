@@ -58,7 +58,7 @@ interface InboxItemDoc {
 interface SessionDocData {
   channelId: string;
   threadTs: string;
-  triggerTs: string;
+  triggerMessageId: string;
   status: "active" | "finished";
   updatedAt: Timestamp;
   rotateRequestedAt?: Timestamp;
@@ -177,7 +177,7 @@ class FirestoreSessionStore implements SessionStore {
     return {
       channelId: data.channelId,
       threadTs: data.threadTs,
-      triggerTs: data.triggerTs,
+      triggerMessageId: data.triggerMessageId,
       status: data.status,
       updatedAt: data.updatedAt.toDate(),
       ...(data.rotateRequestedAt !== undefined && {
@@ -190,7 +190,7 @@ class FirestoreSessionStore implements SessionStore {
     const data: SessionDocData = {
       channelId: doc.channelId,
       threadTs: doc.threadTs,
-      triggerTs: doc.triggerTs,
+      triggerMessageId: doc.triggerMessageId,
       status: doc.status,
       updatedAt: Timestamp.fromDate(doc.updatedAt),
       // Firestore は undefined フィールドを拒否するため、値がある場合のみ書く

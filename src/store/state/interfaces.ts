@@ -8,7 +8,7 @@ import type { InboundMessage } from "../../ingress/chat-event.js";
 
 /** InboxStore が保持する 1 件の入力イベント。 */
 export interface InboxItem {
-  /** dedupe キー。Slack event_id (metadata.eventId)、無ければ message ts (event.id) */
+  /** dedupe キー。Slack event_id (metadata.eventId)、無ければメッセージ ID (event.id) */
   id: string;
   event: InboundMessage;
   enqueuedAt: Date;
@@ -30,7 +30,8 @@ export interface InboxStore {
 export interface SessionDoc {
   channelId: string;
   threadTs: string;
-  triggerTs: string;
+  /** セッションを起こしたトリガーメッセージの ID (セッション同一性・put 用) */
+  triggerMessageId: string;
   // TODO: status は書かれるだけで読まれていない (どこも .status を参照しない)。
   // 実際の再開判定は workdir/session.jsonl の有無で決まる。design (session-model.md
   // §6) の resume_pending/suspended を含む状態機械を実装するまでは死んでいる値。
