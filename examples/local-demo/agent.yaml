@@ -81,7 +81,11 @@ channels:
       allowBots: true
       when:
         - and: [{ kind: sender, is: human }, { kind: mention }]
-        - and: [{ kind: sender, is: bot }, { kind: keyword, pattern: "ALERT|CRITICAL" }]
+        - and:
+            [
+              { kind: sender, is: bot },
+              { kind: keyword, pattern: "ALERT|CRITICAL" },
+            ]
         - kind: reaction
           emoji: [eyes]
     session:
