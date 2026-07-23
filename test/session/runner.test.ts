@@ -2956,6 +2956,98 @@ describe("session.affinity (セッション合流)", () => {
     ]);
   });
 
+  it("progress notice: affinity 合流後も進捗投稿先はターンを kick した先頭発言のスレッドに留まり、新規ターンで差し替わる", async () => {
+    // RUNNER_TODO.md「progress-notice が affinity 合流時に別スレッドへ reply
+    // すると上書きされず残る」への対応確認。進捗投稿先は「そのターンを kick
+    // した先頭発言の thread_key」に固定し、同一ターン中に合流した B の宛先が
+    // 異なっていても差し替えない。ターンが終わり C が新規 kick すると、
+    // 今度は C のスレッドへ差し替わる
+    const h = await harness(
+      { C01: { session: { affinity: { scope: "channel" } } } },
+      { progressNoticeIntervalMs: 30 },
+    );
+    const a = message({ mentionsBot: true, text: "SLOW_TOOL" });
+
+    await h.runner.handle(a);
+    await waitFor(() => h.poster.calls.length >= 1, "initial progress posted");
+    // 初回の進捗投稿は A のスレッド (channelId + threadTs = a.id)
+    expect(h.poster.calls[0]?.threadTs).toBe(a.id);
+    const messagesToAAfterInitial = h.poster.calls.length;
+
+    // B (mention 付き・チャンネル直下・別スレッド) が稼働中の A へ合流する。
+    // NEXT_TOOL を含めてターンを終わらせず、進捗テキストを確実に変化させる
+    const b = message({
+      id: "1700000000.000700",
+      mentionsBot: true,
+      text: "merged follow-up B NEXT_TOOL",
+      metadata: { eventId: "Ev-progress-affinity-b" },
+    });
+    await h.runner.handle(b);
+    await waitFor(async () => {
+      try {
+        const commands = (await h.commandsLog("C01", a.id)).map((line) =>
+          JSON.parse(line),
+        );
+        return commands.filter((cmd) => cmd.type === "steer").length >= 1;
+      } catch {
+        return false;
+      }
+    }, "B steered into lane A");
+
+    // NEXT_TOOL で進んだ 2 個目の tool_execution_start がタイマーに反映される
+    // (dummy_tool / sleep 300 は 2 回目の tool_execution_start でも同じ引数だが、
+    // step カウントが増えてテキストが変わるので update が発生するはず) のを待つ
+    await waitFor(
+      () => h.poster.updateCalls.length >= 1,
+      "progress updated after B merged",
+    );
+
+    // 合流後も進捗の新規投稿・更新は一切 B のスレッド (channelId + threadTs = b.id)
+    // に向かっていない。新規投稿は増えていない (A スレッドへの初回投稿のみ)
+    expect(h.poster.calls).toHaveLength(messagesToAAfterInitial);
+    expect(h.poster.calls.every((c) => c.threadTs !== b.id)).toBe(true);
+    // update は既存の A 進捗メッセージ (msg-1) に対して行われている
+    expect(h.poster.updateCalls.every((c) => c.messageId === "msg-1")).toBe(
+      true,
+    );
+
+    // ターンを終わらせる
+    const wrapUp = message({
+      id: "1700000000.000800",
+      conversation: { channelId: "C01", threadTs: a.id },
+      mentionsBot: true,
+      text: "wrap it up",
+      metadata: { eventId: "Ev-progress-affinity-wrapup" },
+    });
+    await h.runner.handle(wrapUp);
+    await waitFor(() => h.runner.activeSessionCount === 0, "lane A finished");
+
+    // 新規ターン C (mention 付き・チャンネル直下・また別スレッド)。今度は
+    // 新規 kick なので進捗投稿先が C のスレッドへ差し替わる
+    const c = message({
+      id: "1700000000.000900",
+      mentionsBot: true,
+      text: "SLOW_TOOL",
+      metadata: { eventId: "Ev-progress-affinity-c" },
+    });
+    await h.runner.handle(c);
+    await waitFor(
+      () => h.poster.calls.some((call) => call.threadTs === c.id),
+      "progress posted to C's own thread",
+    );
+
+    // 後始末: C のターンも畳んでおく
+    const wrapUpC = message({
+      id: "1700000000.001000",
+      conversation: { channelId: "C01", threadTs: c.id },
+      mentionsBot: true,
+      text: "wrap it up",
+      metadata: { eventId: "Ev-progress-affinity-wrapup-c" },
+    });
+    await h.runner.handle(wrapUpC);
+    await waitFor(() => h.runner.activeSessionCount === 0, "lane C finished");
+  });
+
   it("scope 未設定は従来動作: A 実行中のチャンネル直下メッセージ B は B 自身のレーンで別セッションが立つ", async () => {
     const h = await harness(); // affinity 未設定
     const a = message({ mentionsBot: true, text: "WAIT_FOR_STEER" });

@@ -97,13 +97,21 @@ export class ProgressNotice {
    * agent_end 冒頭でクリアする (turnTimeoutTimer と同じ寿命管理) */
   #timer: NodeJS.Timeout | undefined;
 
-  readonly #sessionKey: string;
+  /** 現在の進捗投稿先キー。新規ターンの kick (start/#promptPending) のたびに
+   * そのターンの先頭発言の thread_key へ差し替える (reset の引数)。steer
+   * (実行中セッションへの追い討ち) では差し替えない — session.affinity 合流や
+   * session.mode=channel で、後から合流した発言の宛先が最初のスレッドと
+   * 異なっても、進捗メッセージは「そのターンを起こした先頭発言のスレッド」に
+   * 留め続ける (RUNNER_TODO.md「progress-notice が affinity 合流時に別スレッドへ
+   * reply すると上書きされず残る」)。取り残された進捗メッセージ自体は次に
+   * そのスレッドへ reply が届いたときに通常どおり回収される */
+  #progressKey: string;
   readonly #router: EgressRouter;
   readonly #intervalMs: number;
   readonly #logger: Logger;
 
   constructor(options: ProgressNoticeOptions) {
-    this.#sessionKey = options.sessionKey;
+    this.#progressKey = options.sessionKey;
     this.#router = options.router;
     this.#intervalMs = options.intervalMs;
     this.#logger = options.logger;
@@ -122,17 +130,22 @@ export class ProgressNotice {
 
   /** 進捗通知タイマーをリセットする (prompt/steer 送信ごとに呼ぶ。既存タイマーが
    * あれば止めて張り直す)。turnTimeoutTimer と同じ寿命管理パターン
-   * (progress-notice.md)。間隔ごとに currentTool のスナップショットを投稿/更新する */
-  reset(): void {
-    const sessionKey = this.#sessionKey;
+   * (progress-notice.md)。間隔ごとに currentTool のスナップショットを投稿/更新する。
+   *
+   * newTurnKey: 新規ターンの kick (start/#promptPending) から呼ぶときだけ、
+   * そのターンの先頭発言の thread_key を渡す。省略時 (steer) は現在の進捗キーを
+   * 維持する */
+  reset(newTurnKey?: string): void {
+    if (newTurnKey !== undefined) this.#progressKey = newTurnKey;
+    const progressKey = this.#progressKey;
     this.clear();
     // 新しいターンの内容と比較できるよう、前ターン分の記憶は引き継がない
     this.#lastText = undefined;
     // 前ターンの reply 配達で閉じた進捗レーン (router.ts progressClosed) を
     // 新ターン開始時に再び開く。fire-and-forget — 失敗しても次の notifyProgress
     // が warn を出すだけで、新ターンの進捗表示自体はタイマーが担う
-    void this.#router.reopenProgress(sessionKey).catch((err) => {
-      this.#logger.warn({ sessionKey, err }, "failed to reopen progress lane");
+    void this.#router.reopenProgress(progressKey).catch((err) => {
+      this.#logger.warn({ progressKey, err }, "failed to reopen progress lane");
     });
     if (this.#intervalMs === 0) return;
     const timer = setInterval(() => {
@@ -147,8 +160,8 @@ export class ProgressNotice {
       // 前回送信時から状況が進んでいなければ何もしない (Slack API を呼ばない)
       if (text === this.#lastText) return;
       this.#lastText = text;
-      this.#router.notifyProgress(sessionKey, text).catch((err) => {
-        this.#logger.warn({ sessionKey, err }, "progress notice failed");
+      this.#router.notifyProgress(progressKey, text).catch((err) => {
+        this.#logger.warn({ progressKey, err }, "progress notice failed");
       });
     }, this.#intervalMs);
     timer.unref();
@@ -160,5 +173,13 @@ export class ProgressNotice {
       clearInterval(this.#timer);
       this.#timer = undefined;
     }
+  }
+
+  /** 現在の進捗投稿先キー (#progressKey)。セッション終了時の router.clearProgress
+   * はこれを使う必要がある — reset(newTurnKey) で sessionKey から差し替わって
+   * いる場合、呼び出し元が sessionKey 固定で clearProgress すると実際に使って
+   * いたキーの後始末が漏れる */
+  get currentKey(): string {
+    return this.#progressKey;
   }
 }

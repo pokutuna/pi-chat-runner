@@ -300,7 +300,12 @@ export class ActiveSession {
                   text: payload.text,
                   ...(files !== undefined ? { files } : {}),
                 },
-                sessionKey,
+                // progressThreadKey は sessionKey 固定ではなく、実際に進捗が
+                // 出ている先 (#progress.currentKey) を渡す — reset(leadKey) で
+                // sessionKey と異なるキーに差し替わっている場合 (DM の
+                // session.mode=channel + reply.mode=flat など)、sessionKey を
+                // 渡すと tryUpdateProgress の宛先突合が成立せず上書きされない
+                this.#progress.currentKey,
               ),
             )
             .then(() => {
@@ -394,9 +399,13 @@ export class ActiveSession {
         this.#state !== "stopping"
       ) {
         this.#dispose();
+        const progressKey = this.#progress.currentKey;
         this.#clearAllTimers();
-        void this.#ctx.router.clearProgress(sessionKey).catch((err) => {
-          this.#ctx.logger.warn({ sessionKey, err }, "clear progress failed");
+        void this.#ctx.router.clearProgress(progressKey).catch((err) => {
+          this.#ctx.logger.warn(
+            { sessionKey, progressKey, err },
+            "clear progress failed",
+          );
         });
         // このターンで prompt 済みだった item は ack して捨てる。retry しない
         // (session-model.md §6)。捨てないと未 ack のまま inbox に残り、次の新規
@@ -447,23 +456,27 @@ export class ActiveSession {
       (i) => !this.#promptedIds.has(i.id),
     );
     let body: string;
+    let leadKey: string;
     if (items.length > 0) {
+      const keys: string[] = [];
       for (const i of items)
-        await this.#beginTurnMessage(i.event, i.id, policy);
+        keys.push(await this.#beginTurnMessage(i.event, i.id, policy));
+      leadKey = keys[0]!;
       body = renderItems(items);
     } else {
       // drain が空 (Store 実装の遅延など)。トリガーイベントに直接フォールバック
       // するが、ack 対象には含める (二重 prompt を防ぐ)
-      const triggerKey = await this.#beginTurnMessage(
+      leadKey = await this.#beginTurnMessage(
         triggerEvent,
         inboxItemId(triggerEvent),
         policy,
       );
-      body = renderEvent(triggerEvent, triggerKey);
+      body = renderEvent(triggerEvent, leadKey);
     }
     this.#turnEpoch += 1;
     this.#resetTurnTimeout();
-    this.#progress.reset();
+    // このターンの進捗投稿先を先頭発言の宛先にする (progress.ts の reset 参照)
+    this.#progress.reset(leadKey);
     proc.prompt(prependContext(body, doc));
 
     await this.#ctx.store.sessions.put(sessionKey, {
@@ -492,8 +505,9 @@ export class ActiveSession {
    * spawn 途中の失敗などで起こりうるので飲み込む */
   async abort(): Promise<void> {
     this.#dispose();
+    const progressKey = this.#progress.currentKey;
     this.#clearAllTimers();
-    await this.#ctx.router.clearProgress(this.sessionKey);
+    await this.#ctx.router.clearProgress(progressKey);
     try {
       await this.#process?.stop();
     } catch {
@@ -518,6 +532,9 @@ export class ActiveSession {
       }
       this.#turnEpoch += 1;
       this.#resetTurnTimeout();
+      // steer は進捗投稿先を差し替えない (progress.ts の reset 参照) —
+      // 合流した追い討ちの宛先がこのターンの先頭発言と異なっていても、
+      // 進捗メッセージは元のスレッドに留まる
       this.#progress.reset();
       proc.steer(renderItems(pending));
       this.#ctx.logger.info(
@@ -654,8 +671,9 @@ export class ActiveSession {
       updatedAt: new Date(),
     });
     await proc.stop();
+    const progressKey = this.#progress.currentKey;
     this.#clearAllTimers();
-    await this.#ctx.router.clearProgress(sessionKey);
+    await this.#ctx.router.clearProgress(progressKey);
     await this.#ctx.store.leases.release(this.#lease);
     this.#dispose();
     // windowSec の起点 (session-model.md §3。以降このレーンは窓内なら resume 合流できる)
@@ -731,19 +749,25 @@ export class ActiveSession {
     if (this.#disposed || this.#process !== proc) return;
 
     this.#state = "stopping";
+    const progressKey = this.#progress.currentKey;
     this.#clearAllTimers();
 
     // register 済み (kick で必ず register している) なので deliver できる。
-    // 通知の配達が失敗してもセッションの畳み込みは続ける
+    // 通知の配達が失敗してもセッションの畳み込みは続ける。progressThreadKey は
+    // 実際に進捗メッセージが出ている先 (progressKey) を渡す — reset(leadKey) で
+    // sessionKey から差し替わっていた場合、sessionKey を渡すと取り残される
     await this.#ctx.router
-      .deliver({ thread_key: sessionKey, text: options.noticeText }, sessionKey)
+      .deliver(
+        { thread_key: sessionKey, text: options.noticeText },
+        progressKey,
+      )
       .catch((err) => {
         this.#ctx.logger.warn(
           { sessionKey, err },
           "failure notice delivery failed",
         );
       });
-    await this.#ctx.router.clearProgress(sessionKey);
+    await this.#ctx.router.clearProgress(progressKey);
     // このターンを起こした各メッセージに ❌ を付けて失敗を伝える
     await this.#reactMessages(this.#turnMessageIds, "error");
     this.#turnMessageIds = [];
@@ -777,14 +801,16 @@ export class ActiveSession {
       (i) => !this.#promptedIds.has(i.id),
     );
     if (items.length === 0) return false;
+    const keys: string[] = [];
     for (const i of items)
-      await this.#beginTurnMessage(i.event, i.id, this.policy);
+      keys.push(await this.#beginTurnMessage(i.event, i.id, this.policy));
     this.#turnEpoch += 1;
     // lingering (agent_end 後の終了判定中) からの復帰。ここで拾う item は
     // trySteerExisting が steer せず enqueue のみで残していたものを含む
     this.#state = "running";
     this.#resetTurnTimeout();
-    this.#progress.reset();
+    // 新しいターンなので進捗投稿先を先頭発言の宛先に差し替える (start と同様)
+    this.#progress.reset(keys[0]!);
     proc.prompt(renderItems(items));
     this.#ctx.logger.info(
       { sessionKey, items: items.length },
@@ -812,9 +838,10 @@ export class ActiveSession {
           "lease renew failed; stopping session without flush",
         );
         this.#state = "stopping";
+        const progressKey = this.#progress.currentKey;
         this.#dispose();
         this.#clearAllTimers();
-        await this.#ctx.router.clearProgress(sessionKey);
+        await this.#ctx.router.clearProgress(progressKey);
         await this.#process?.stop();
         await this.#host.markEnded(this.channelId, sessionKey);
       })().catch((err) => {
