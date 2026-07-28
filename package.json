@@ -41,7 +41,7 @@
     "@google/genai": "^2.13.0",
     "@slack/socket-mode": "^3.0.0",
     "@slack/web-api": "^8.0.0",
-    "better-sqlite3": "^12.11.1",
+    "better-sqlite3": "^13.0.1",
     "hono": "^4.12.32",
     "ink": "^7.1.1",
     "pino": "^10.3.1",
