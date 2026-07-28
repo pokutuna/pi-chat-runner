@@ -1,6 +1,8 @@
 # pi-chat-runner
 
-A low-cost, serverless runner for running the [pi](https://github.com/earendil-works/pi) coding agent from chat.
+A small bridge between chat and the [pi](https://github.com/earendil-works/pi) coding agent — messages in, a pi session at work, replies back in the thread.
+
+Running a coding agent on your own machine is easy; keeping one on call from chat is the fiddly part — something has to stay reachable, carry session context and files across turns, and cost nothing while idle. pi-chat-runner is just that part, run serverless.
 
 See [docs/design/README.md](docs/design/README.md) for the design.
 
@@ -9,11 +11,106 @@ See [docs/design/README.md](docs/design/README.md) for the design.
 - Mention the bot — or match a keyword, an emoji reaction, or an alerting webhook's post — and a pi session starts working right in that thread
 - It's a conversation: steer it while it runs, follow up after it answers, come back later — context and files survive
 - Prompts, models, triggers, and skills are per-channel YAML; [chat commands](#chat-commands) (`/new`, `/enable`, `/disable`) control a channel from inside the chat
-- Serverless-friendly: Cloud Run + Firestore + GCS with scale-to-zero, or in-memory / SQLite / local dirs for dev — or embed it as a library
+- The serverless part: Cloud Run + Firestore + GCS with scale-to-zero — or in-memory / SQLite / local dirs for dev, or embed it as a library
+
+## Quickstart
+
+Try the whole pipeline in a container, driven from a terminal chat REPL —
+no Slack App or tokens needed.
+
+### Write an agent.yaml
+
+```yaml
+# agent.yaml
+store:
+  backend: memory
+
+agent:
+  env:
+    # the pi child process gets an allowlisted env — name the vars to forward.
+    # ${env.*} reads the runner process's environment (the -e flags below)
+    ANTHROPIC_API_KEY: ${env.ANTHROPIC_API_KEY}
+
+channels:
+  - channel: "default"
+    model: anthropic/claude-sonnet-5   # pi's provider/model-id shorthand
+    systemPrompt: >
+      You are a helpful assistant running inside a chat. Keep replies short.
+    trigger:
+      when:
+        - kind: mention
+```
+
+The `model` is handed to pi's `--model` as-is: the provider prefix picks the
+provider inside pi, and the API-key env vars are the ones pi reads. The full
+config reference is in [Configuration](#configuration) below.
+
+Other providers follow the same shape (`OPENROUTER_API_KEY`, ...):
+
+#### OpenAI
+
+Same two lines with the other key: forward
+`OPENAI_API_KEY: ${env.OPENAI_API_KEY}` in `agent.env` and set
+`model: openai/gpt-5.5`. Then pass `-e OPENAI_API_KEY=sk-...` when running.
+
+#### Google Vertex AI (ADC)
+
+Set `model: google-vertex/gemini-3.5-flash` — with no `agent.env` entry:
+`GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` /
+`GOOGLE_APPLICATION_CREDENTIALS` are always forwarded to pi.
+
+Run `gcloud auth application-default login` once, then replace the
+`-e ANTHROPIC_API_KEY` line below with:
+
+```sh
+-v ~/.config/gcloud/application_default_credentials.json:/gcloud/adc.json:ro \
+-e GOOGLE_APPLICATION_CREDENTIALS=/gcloud/adc.json \
+-e GOOGLE_CLOUD_PROJECT=<your project> \
+-e GOOGLE_CLOUD_LOCATION=global \
+```
+
+### Run it
+
+```sh
+docker run -it --rm \
+  -v "$PWD/agent.yaml":/config/agent.yaml:ro \
+  -e CONFIG_PATH=/config/agent.yaml \
+  -e ANTHROPIC_API_KEY=sk-ant-... \
+  ghcr.io/pokutuna/pi-chat-runner:latest \
+  local
+```
+
+On Apple Silicon add `--platform linux/amd64` (the image is amd64-only for
+now).
+
+You get a two-pane TUI: logs on top, chat below. Say `@bot hello!` and watch
+a real pi session run:
+
+```
+#local you> @bot hello! what can you do here?
+[1] you: @bot hello! what can you do here?
+:eyes: on [1]
+[2]↳1 bot: I can help you with ...
+:white_check_mark: on [1]
+```
+
+The reply comes back as a thread (`[2]↳1`), and the reactions on `[1]` are the
+turn's own feedback — `:eyes:` when it starts, `:white_check_mark:` when it
+finishes.
+
+`!help` shows the full REPL grammar. For a guided tour of triggers,
+channel-as-session, memory, and per-channel extensions, see
+[`examples/local-demo/`](examples/local-demo/README.md) (the same REPL, run
+from a clone with `pnpm run dev:local`). Once this works,
+[Local Development](#local-development) below covers running against real
+Slack, and [Configuration](#configuration) covers `agent.yaml`.
 
 ## Components
 
 One pipeline, top to bottom. Boxes are components, cylinders are persistent stores, and blue rounded nodes are the outside world (the chat platform, the pi child process); edge labels name the data handed between stages, and notes describe each component's job. A **turn** is one run of the agent over the messages drained from the inbox — one conversational round-trip in the chat.
+
+> [!NOTE]
+> The chat implementations shipped today are Slack and the local dev REPL. Each stage knows only its neighbor's interface, though — the pipeline itself is chat-agnostic, so any chat or message stream could sit at either end.
 
 ```mermaid
 %%{init: {"flowchart": {"wrappingWidth": 320}}}%%
@@ -180,6 +277,8 @@ Text commands, sent as a chat message, control a channel without touching config
 - `/enable` / `/disable` — per-channel kill switch (default enabled). While disabled, all triggers are silently dropped; `/enable` recovers. State persists in the channel-state store.
 
 Commands are exact-match (except `/new <text>`), human-senders only, and normally apply to messages that pass the Gate — in a mention-gated channel send `@bot /new` (which also keeps Slack's client from capturing a bare leading `/` as its own slash command).
+
+Session export needs no command — just ask (`@bot export this session`): the agent calls its built-in `export_session` tool, which renders the whole pi session to a single HTML file and attaches it to the reply. Handy for handing a long run to someone who wasn't in the thread.
 
 ## Configuration
 
