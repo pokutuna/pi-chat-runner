@@ -12,12 +12,9 @@ updates:
     commit-message:
       prefix: "deps"
       include: "scope"
+    # グループは auto-merge する塊と一致させる (dependabot-auto-merge.yaml)。
+    # production は個別 PR にして minor 以上を手動レビューに残す。
     groups:
-      production-dependencies:
-        dependency-type: "production"
-        update-types:
-          - "minor"
-          - "patch"
       dev-dependencies:
         dependency-type: "development"
         update-types:

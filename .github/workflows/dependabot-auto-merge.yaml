@@ -1,0 +1,33 @@
+name: Dependabot auto-merge
+
+# CI (ci.yaml) の通過を main の ruleset で必須にしていることが前提。
+# 必須チェックが無いと --auto は待たずに即マージする。
+on: pull_request_target
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  auto-merge:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      # pull_request_target は base の権限で走るため、PR のコードを
+      # checkout・実行してはいけない。ここでは一切 checkout しない。
+      - uses: dependabot/fetch-metadata@v2
+        id: meta
+        with:
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
+      # グループ PR は update-type が単一値に決まらないためグループ名で判定し、
+      # 個別 PR (= production) は patch のみ通す。
+      - name: Enable auto-merge
+        if: |
+          steps.meta.outputs.dependabot-group-name == 'dev-dependencies' ||
+          steps.meta.outputs.dependabot-group-name == 'github-actions' ||
+          steps.meta.outputs.update-type == 'version-update:semver-patch'
+        run: gh pr merge --auto --squash "$PR_URL"
+        env:
+          PR_URL: ${{ github.event.pull_request.html_url }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
