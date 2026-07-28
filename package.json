@@ -37,7 +37,7 @@
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.80.10",
-    "@google-cloud/firestore": "^8.6.0",
+    "@google-cloud/firestore": "^8.7.0",
     "@google/genai": "^2.13.0",
     "@slack/socket-mode": "^3.0.0",
     "@slack/web-api": "^8.0.0",
