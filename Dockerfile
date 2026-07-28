@@ -1,26 +1,21 @@
 # pi-chat-runner base image
 #
-# 設計の正: docs/design/session-runtime.md §5 (最小コンテナイメージ)、
-# docs/design/architecture.md §1 (Cloud Run 構成) / §4 (GCS FUSE)。
+# Design docs: session-runtime.md §5 (minimal image), architecture.md §1/§4.
 #
-# 方針: 「pi の bash ツールから使う調査の基本セットだけ」を runtime に入れ、
-# 言語ランタイムやビルドツールは持たない (§5)。イメージが小さいほど
-# min-instances=0 からのコールドスタートが速い。
+# Runtime ships only the basic investigation CLIs used from pi's bash tool —
+# no language runtimes or build tools (§5). Smaller image, faster cold start
+# from min-instances=0.
 #
-# 依存の扱い (実測で決定): tsdown/rolldown は node platform ビルドで
-# node_modules の依存を bundle せず external のままにする (dist/server.mjs は
-# @google-cloud/firestore 等を import 文のまま残す)。そのため runtime には
-# production 依存の node_modules が必要。better-sqlite3 は native module なので、
-# runtime と同じ Node ABI で builder 内 (= 同じベースイメージ) でビルドし、
-# そのまま COPY する。
+# tsdown (node platform) keeps node_modules imports external, so the runtime
+# needs production node_modules. better-sqlite3 is a native module: install it
+# on the same base image (= same Node ABI) and COPY as-is.
 
-# ---- builder: pnpm install + tsdown build ----
-FROM node:26-slim AS builder
+# ---- base: node + pnpm, shared by build stages ----
+FROM node:26-slim AS base
 
-# node:26-slim は corepack を同梱しないため、package.json の packageManager に
-# 合わせてバージョン固定インストールする。node:26-slim 同梱 npm (11.17.0) は
-# `npm install -g` が arborist の packument-cache 初期化で crash する既知バグを
-# 持つため、pnpm 公式のスタンドアロンインストーラを使う (npm を経由しない)
+# node:26-slim has no corepack, so install pnpm pinned to package.json's
+# packageManager. Use the standalone installer: the bundled npm (11.17.0) has
+# a known `npm install -g` crash in arborist's packument-cache init.
 ENV PNPM_HOME=/usr/local/share/pnpm
 ENV PATH=$PNPM_HOME:$PATH
 RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates \
@@ -28,74 +23,83 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
   && curl -fsSL https://get.pnpm.io/install.sh | env PNPM_VERSION=10.30.3 SHELL=/bin/sh ENV=/dev/null sh -
 
 WORKDIR /app
-
-# 依存解決とビルドに必要な最小構成のみ先にコピーしキャッシュを効かせる
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
+
+# ---- builder: full install + tsdown build ----
+FROM base AS builder
+
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+  pnpm install --frozen-lockfile --store-dir /pnpm/store
 
 COPY tsconfig.json tsdown.config.ts ./
 COPY src ./src
 RUN pnpm run build
 
-# 本番用 node_modules を作る (production 依存のみ、better-sqlite3 は
-# このステージ = runtime と同じ node:26-slim ベースでネイティブビルドされる)。
-# pi 本体 (@earendil-works/pi-coding-agent) も dependencies なのでここに入り、
-# その transitive 依存も pnpm が一元管理する (npm 別 install で衝突する問題を回避)。
-# server.ts の resolvePiPaths が import.meta.resolve() で /app/node_modules から
-# pi の entrypoint を自動検出する (config.md §6)
-RUN pnpm install --frozen-lockfile --prod
+# ---- prod-deps: production-only install in a clean stage ----
+# Re-running `pnpm install --prod` inside builder leaves dev deps
+# (typescript/rolldown/oxlint etc.) in the virtual store (.pnpm), leaking
+# ~150MB into the runtime. A from-scratch --prod install avoids that.
+# pi (@earendil-works/pi-coding-agent) is a regular dependency, so it and its
+# transitive deps land here too, managed by pnpm alone (a separate npm install
+# would conflict). server.ts resolvePiPaths finds pi's entrypoint in
+# /app/node_modules via import.meta.resolve() (config.md §6).
+FROM base AS prod-deps
+
+RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
+  pnpm install --frozen-lockfile --prod --store-dir /pnpm/store
 
 # ---- runtime ----
 FROM node:26-slim
 
-# pi の bash ツールから使う調査の基本セットだけ (git/curl/jq/ripgrep/fd)。
-# fd-find は Debian では fdfind としてインストールされるため fd に symlink する
+ENV NODE_ENV=production
+
+# Basic investigation set for pi's bash tool (git/curl/jq/ripgrep/fd) only.
+# Debian installs fd-find as fdfind; symlink it to fd.
 RUN apt-get update && apt-get install -y --no-install-recommends \
       git curl ca-certificates jq ripgrep fd-find \
   &&  rm -rf /var/lib/apt/lists/* \
   &&  ln -s "$(command -v fdfind)" /usr/local/bin/fd
 
-# UID 分離用の agent ユーザー (session-runtime.md §6)。コンテナ自体は root で
-# 起動し続け (Runner が root)、Runner が pi を spawn するときに { uid, gid } を
-# 落として agent として実行する。/home/agent は agent 所有で書き込み可能にし、
-# pi が ~/.pi 等を作れるようにする。/app は root 所有のまま (下記 WORKDIR 以降)
-# で agent に書き込み権限を与えない — Runner コード自体を書き換えさせない
+# agent user for UID separation (session-runtime.md §6). The container keeps
+# running as root (the Runner); the Runner drops to { uid, gid } when spawning
+# pi. /home/agent is agent-owned so pi can create ~/.pi etc. /app stays
+# root-owned with no agent write access — the agent must not be able to
+# rewrite the Runner's own code.
 RUN groupadd --gid 1001 agent \
   && useradd --uid 1001 --gid 1001 --create-home --shell /usr/sbin/nologin agent
 
-# 既定 settings.json の焼き込み (session-runtime.md §2)。
-# steeringMode/followUpMode/compaction.enabled/enableInstallTelemetry など
-# runner の設計が依存する挙動だけをピン留めした最小構成。利用者は
-# FROM このイメージ 1 段で COPY --chown=1001:1001 <自分の settings.json>
-# /home/agent/.pi/agent/settings.json と上書きできる
+# Baked default settings.json (session-runtime.md §2): pins only the behavior
+# the runner depends on (steeringMode/followUpMode/compaction.enabled/
+# enableInstallTelemetry). Downstream images can overwrite it with a single
+# COPY --chown=1001:1001 <own settings.json> /home/agent/.pi/agent/settings.json
 COPY --chown=1001:1001 home/ /home/agent/
 
 WORKDIR /app
 
-COPY --from=builder /app/node_modules ./node_modules
+COPY --from=prod-deps /app/node_modules ./node_modules
 COPY --from=builder /app/dist ./dist
 COPY package.json ./
 
-# reply extension は pi が --extension で TS ソースを直接ロードするため
-# ビルド対象外。ソースのままコピーする
+# The reply extension is excluded from the build: pi loads the TS source
+# directly via --extension. Copy as source.
 COPY extensions ./extensions
 
-# 組み込み skill (memory)。SHARED_DIR 有効時に Runner が --skill で配線する
-# (docs/design/memory.md)。$AGENT_HOME/.pi/agent/skills/ (下の skills/) とは別物 —
-# あちらは全チャンネル常時ロード、こちらは ChannelDoc.memory で opt-out できる
+# Built-in skills (memory). Wired by the Runner via --skill when SHARED_DIR is
+# enabled (docs/design/memory.md). Distinct from skills/ below — that one is
+# always loaded for all channels, this one is opt-out via ChannelDoc.memory.
 COPY builtin-skills ./builtin-skills
 
-# skill は pi の既定探索パス $AGENT_HOME/.pi/agent/skills/ に置けば pi が自動で
-# 読む (Runner 側に --skill 等の配線は不要。config.md §6)。現状 skills/ は
-# .gitkeep のみで空だが、利用者は FROM このイメージ 1 段で
-# COPY --chown=1001:1001 skills/ /home/agent/.pi/agent/skills/ と上書きできる
+# Skills under pi's default search path $AGENT_HOME/.pi/agent/skills/ are
+# auto-discovered (no --skill wiring needed, config.md §6). Currently empty
+# (.gitkeep only); downstream images can overwrite with a single
+# COPY --chown=1001:1001 skills/ /home/agent/.pi/agent/skills/
 COPY --chown=1001:1001 skills/ /home/agent/.pi/agent/skills/
 
-# CONFIG_PATH の既定 (server.ts) は相対パス "examples/config/agent.yaml"。
-# WORKDIR /app からの相対で解決できるようにここへ同梱する
+# CONFIG_PATH defaults to the relative path "examples/config/agent.yaml"
+# (server.ts); bundle it so it resolves from WORKDIR /app.
 COPY examples/config ./examples/config
 
-# サブコマンド (local / dump) は docker run の引数でそのまま渡せる:
+# Subcommands (local / dump) pass through docker run args:
 #   docker run -it ... <image> local
-# 引数なしの既定は server モード (Cloud Run はこの形で起動する)
+# No args = server mode (how Cloud Run starts it).
 ENTRYPOINT ["node", "/app/dist/server.mjs"]
