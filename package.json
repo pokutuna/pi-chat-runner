@@ -28,12 +28,12 @@
   "scripts": {
     "build": "tsdown",
     "dev": "tsx watch --env-file-if-exists=.env src/server.ts",
-    "dev:socket": "tsx watch --env-file-if-exists=.env.socket src/server.ts",
     "dev:local": "tsx --env-file-if-exists=.env.local src/server.ts local",
-    "test": "vitest run",
-    "typecheck": "tsc --noEmit",
+    "dev:socket": "tsx watch --env-file-if-exists=.env.socket src/server.ts",
+    "format": "oxfmt --write .",
     "lint": "oxlint . && oxfmt --check .",
-    "format": "oxfmt --write ."
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@earendil-works/pi-coding-agent": "^0.82.1",
@@ -70,7 +70,6 @@
   "packageManager": "pnpm@10.30.3",
   "pnpm": {
     "onlyBuiltDependencies": [
-      "better-sqlite3",
       "esbuild",
       "protobufjs"
     ]
