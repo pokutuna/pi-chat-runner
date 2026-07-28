@@ -269,7 +269,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   &&  ln -s "$(command -v fdfind)" /usr/local/bin/fd
 RUN npm install -g @earendil-works/pi-coding-agent
 COPY dist/ /app/                     # Runner 本体 + reply extension
-CMD ["node", "/app/server.js"]
+# ENTRYPOINT なので docker run の引数がサブコマンドになる (`... <image> local` 等)
+ENTRYPOINT ["node", "/app/server.js"]
 ```
 
 選定基準: **pi の bash ツールから使う「調査の基本セット」だけ** (git / curl / jq /

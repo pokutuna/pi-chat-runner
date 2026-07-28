@@ -95,4 +95,7 @@ COPY --chown=1001:1001 skills/ /home/agent/.pi/agent/skills/
 # WORKDIR /app からの相対で解決できるようにここへ同梱する
 COPY examples/config ./examples/config
 
-CMD ["node", "/app/dist/server.mjs"]
+# サブコマンド (local / dump) は docker run の引数でそのまま渡せる:
+#   docker run -it ... <image> local
+# 引数なしの既定は server モード (Cloud Run はこの形で起動する)
+ENTRYPOINT ["node", "/app/dist/server.mjs"]

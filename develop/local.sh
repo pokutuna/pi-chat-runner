@@ -57,7 +57,7 @@ cmd_build() {
 cmd_tui() {
   local channel_id="${1:-local}"
   docker compose -f "${COMPOSE_FILE}" --env-file "${ROOT_DIR}/.env.socket" run --rm \
-    pi-chat-runner node /app/dist/server.mjs local "${channel_id}"
+    pi-chat-runner local "${channel_id}"
 }
 
 cmd_socket() {

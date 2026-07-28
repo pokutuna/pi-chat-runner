@@ -141,14 +141,15 @@ COPY egress-proxy/preload.mjs /opt/egress-proxy/preload.mjs
 COPY agent.yaml /app/config/agent.yaml
 
 ENV CONFIG_PATH=/app/config/agent.yaml
-CMD ["node", "--import", "/opt/egress-proxy/preload.mjs", "/app/dist/server.mjs"]
+ENTRYPOINT ["node", "--import", "/opt/egress-proxy/preload.mjs", "/app/dist/server.mjs"]
 ```
 
 Replace `<PI_CHAT_RUNNER_BASE_IMAGE>` with the pi-chat-runner image used by the deployment.
 Keeping `proxy-chain` under `/opt/egress-proxy` avoids modifying the base image's `/app/package.json` and `/app/node_modules`.
 If the deployment already supplies `agent.yaml` through another image layer, keep that mechanism instead of the `COPY` and `CONFIG_PATH` lines above.
 
-Use the explicit `--import` argument in `CMD` rather than setting `NODE_OPTIONS`.
+Overriding `ENTRYPOINT` (the base image defines one) keeps subcommands like `local` working as `docker run` arguments.
+Use the explicit `--import` argument in `ENTRYPOINT` rather than setting `NODE_OPTIONS`.
 This keeps the preload attached to the container entrypoint instead of making it an ambient option for other Node.js commands.
 
 ## Pass proxy settings only to pi
