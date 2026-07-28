@@ -15,7 +15,7 @@ jobs:
     steps:
       # pull_request_target は base の権限で走るため、PR のコードを
       # checkout・実行してはいけない。ここでは一切 checkout しない。
-      - uses: dependabot/fetch-metadata@v2
+      - uses: dependabot/fetch-metadata@v3
         id: meta
         with:
           github-token: ${{ secrets.GITHUB_TOKEN }}
