@@ -11,10 +11,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # FirestoreStateStore の contract テスト用 (persistence.md §1)。
-      # services: では起動コマンドを渡せない (entrypoint/command キーは未サポート、
-      # options: の --entrypoint だけでは引数を渡せない) ため docker run で起動する。
-      # イメージ pull に時間がかかるので、background で setup と並行させる。
+      # services: では起動コマンドを渡せないため docker run を使う (entrypoint/command
+      # キーは検証で拒否され、options: の --entrypoint では引数を渡せない)。
       - name: Start Firestore emulator
         id: firestore
         background: true
@@ -42,9 +40,6 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      # emulator は常駐するので wait (background ステップの終了待ち) では待てない。
-      # 受付開始までポートをポーリングする。レスポンス本文は公式に規定がないため、
-      # 到達可否だけを見る。
       - name: Wait for Firestore emulator
         run: timeout 60 bash -c 'until curl -sf -o /dev/null http://localhost:8080/; do sleep 1; done'
 
