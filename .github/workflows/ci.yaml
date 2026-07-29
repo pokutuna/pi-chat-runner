@@ -11,8 +11,8 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      # services: では起動コマンドを渡せないため docker run を使う (entrypoint/command
-      # キーは検証で拒否され、options: の --entrypoint では引数を渡せない)。
+      # services: cannot pass a start command (entrypoint/command keys are rejected
+      # at validation, and options: --entrypoint takes no arguments), so use docker run.
       - name: Start Firestore emulator
         id: firestore
         background: true
