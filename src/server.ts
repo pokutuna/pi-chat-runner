@@ -78,10 +78,18 @@ function buildStateStore(store: ResolvedStoreConfig): StateStore {
       mkdirSync(dirname(store.sqlite.path), { recursive: true });
       return new SqliteStateStore(store.sqlite.path);
     }
-    case "firestore":
-      // projectId は GOOGLE_CLOUD_PROJECT / エミュレータは FIRESTORE_EMULATOR_HOST
-      // を SDK が自動で読む (persistence.md §1)
-      return new FirestoreStateStore(new Firestore());
+    case "firestore": {
+      // projectId 未指定 ("") なら SDK が GOOGLE_CLOUD_PROJECT / ADC から解決する。
+      // エミュレータは FIRESTORE_EMULATOR_HOST を SDK が自動で読む (persistence.md §1)
+      const { projectId, database, rootDoc } = store.firestore;
+      return new FirestoreStateStore(
+        new Firestore({
+          ...(projectId !== "" && { projectId }),
+          databaseId: database,
+        }),
+        { rootDoc },
+      );
+    }
     default:
       throw new Error(
         `Unknown store.backend "${store.backend}" (expected memory|sqlite|firestore)`,

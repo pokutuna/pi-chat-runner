@@ -494,6 +494,10 @@ store:
   backend: ${env.STORE_BACKEND:-memory}   # memory | sqlite | firestore
   sqlite:
     path: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db}  # backend: sqlite 用
+  firestore:                              # backend: firestore 用 (persistence.md §1)
+    projectId: ${env.FIRESTORE_PROJECT_ID:-}        # 空なら SDK が自動解決
+    database: ${env.FIRESTORE_DATABASE:-(default)}  # named database
+    rootDoc: ${env.FIRESTORE_ROOT_DOC:-pi-chat-runner/default}  # 親ドキュメントパス
 
 # --- agent: pi 本体の挙動・env・実行環境 ---
 agent:

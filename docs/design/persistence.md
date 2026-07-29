@@ -108,13 +108,33 @@ doc が JSON 1 カラムなので read-modify-write でよい。単一プロセ�
 選択は env `STORE_BACKEND=memory|sqlite|firestore` (既定 memory)。
 server.ts の組み立て時に 1 箇所で分岐し、SessionRunner 以下には漏らさない。
 
+Firestore は既存プロジェクトの Firestore に同居させられるよう、projectId /
+named database / 親ドキュメントパスを agent.yaml の `store.firestore` で指定できる:
+
+```yaml
+store:
+  backend: firestore
+  firestore:
+    projectId: ${env.FIRESTORE_PROJECT_ID:-}  # 空なら SDK が自動解決 (GOOGLE_CLOUD_PROJECT / ADC)
+    database: ${env.FIRESTORE_DATABASE:-(default)}  # named database
+    rootDoc: ${env.FIRESTORE_ROOT_DOC:-pi-chat-runner/default}  # 親ドキュメントパス
+```
+
+全コレクションは `rootDoc` が指す親ドキュメントのサブコレクション
+(`<rootDoc>/inbox|sessions|leases|channels`、inbox のみさらに `items`
+サブコレクションを持つ) に置く。トップレベルにはコレクションが 1 つしか増えず、
+`pi-chat-runner/prod` と `pi-chat-runner/staging` のように rootDoc を変えるだけで
+複数インスタンスが同居できる。親ドキュメント自体は書かない (実体のない親の下に
+サブコレクションを置けるが、コンソールでは斜体表示になる)。
+
 ### 共通コントラクトテスト
 
 3 実装は同じ振る舞いをすべきなので、テストは「インタフェースに対する
 コントラクトテスト」を 1 セット書き、実装ごとにパラメタライズして流す
 (dedupe、drain/ack の順序、lease の排他・期限切れ・fencing)。
 Firestore 実装だけ `FIRESTORE_EMULATOR_HOST` が立っているときのみ実行する
-(CI では compose でエミュレータを立てる。ローカルで未起動なら skip)。
+(ローカルは compose (`develop/compose.yaml`)、CI は同じイメージを docker run で
+立てる。未起動なら skip)。
 
 ## 2. Storage 抽象 — WorkdirStorage
 
