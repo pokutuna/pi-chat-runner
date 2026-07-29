@@ -133,7 +133,8 @@ store:
 コントラクトテスト」を 1 セット書き、実装ごとにパラメタライズして流す
 (dedupe、drain/ack の順序、lease の排他・期限切れ・fencing)。
 Firestore 実装だけ `FIRESTORE_EMULATOR_HOST` が立っているときのみ実行する
-(CI では compose でエミュレータを立てる。ローカルで未起動なら skip)。
+(ローカルは compose (`develop/compose.yaml`)、CI は同じイメージを docker run で
+立てる。未起動なら skip)。
 
 ## 2. Storage 抽象 — WorkdirStorage
 
