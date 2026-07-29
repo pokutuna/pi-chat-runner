@@ -14,10 +14,12 @@ jobs:
       # FirestoreStateStore の contract テスト用 (persistence.md §1)。
       # services: では起動コマンドを渡せない (entrypoint/command キーは未サポート、
       # options: の --entrypoint だけでは引数を渡せない) ため docker run で起動する。
-      # イメージ pull に時間がかかるので、後続ステップと並行させるべく早めに起動する。
+      # イメージ pull に時間がかかるので、background で setup と並行させる。
       - name: Start Firestore emulator
+        id: firestore
+        background: true
         run: |
-          docker run -d --name firestore-emulator -p 8080:8080 \
+          docker run --rm -p 8080:8080 \
             --entrypoint sh gcr.io/google.com/cloudsdktool/google-cloud-cli:emulators \
             -c "gcloud emulators firestore start --host-port=0.0.0.0:8080"
 
@@ -40,8 +42,9 @@ jobs:
       - name: Build
         run: pnpm run build
 
-      # エミュレータの起動はコンテナ起動と非同期なので、ポートが開くまで待つ。
-      # レスポンス本文は公式に規定がないため、到達可否だけを見る。
+      # emulator は常駐するので wait (background ステップの終了待ち) では待てない。
+      # 受付開始までポートをポーリングする。レスポンス本文は公式に規定がないため、
+      # 到達可否だけを見る。
       - name: Wait for Firestore emulator
         run: timeout 60 bash -c 'until curl -sf -o /dev/null http://localhost:8080/; do sleep 1; done'
 
@@ -49,3 +52,6 @@ jobs:
         run: pnpm test
         env:
           FIRESTORE_EMULATOR_HOST: localhost:8080
+
+      - name: Stop Firestore emulator
+        cancel: firestore
