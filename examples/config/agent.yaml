@@ -33,6 +33,10 @@ store:
   backend: ${env.STORE_BACKEND:-memory} # memory | sqlite | firestore
   sqlite:
     path: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db} # backend: sqlite only
+  firestore: # backend: firestore only
+    projectId: ${env.FIRESTORE_PROJECT_ID:-} # empty = auto-detect (GOOGLE_CLOUD_PROJECT / ADC)
+    database: ${env.FIRESTORE_DATABASE:-(default)} # named database
+    rootDoc: ${env.FIRESTORE_ROOT_DOC:-pi-chat-runner/default} # parent doc; all collections nest under it
 
 # --- agent: pi's behavior, env, and execution environment ---
 agent:

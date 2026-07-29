@@ -12,11 +12,11 @@ describe.skipIf(emulatorHost === undefined)(
     describeStateStoreContract("FirestoreStateStore (emulator)", async () => {
       const db = new Firestore({ projectId: "pi-chat-runner-test" });
       let now = 0;
-      const collectionPrefix = `test-${Date.now()}-${Math.random()
+      const rootDoc = `test-runs/${Date.now()}-${Math.random()
         .toString(36)
         .slice(2)}`;
       const store = new FirestoreStateStore(db, {
-        collectionPrefix,
+        rootDoc,
         now: () => now,
       });
       return {

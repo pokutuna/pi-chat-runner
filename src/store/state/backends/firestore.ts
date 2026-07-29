@@ -4,11 +4,16 @@
 // (エミュレータ分岐を持たない。SDK は FIRESTORE_EMULATOR_HOST が立っていれば
 // 自動でそちらへ接続する)。
 //
-// - inbox: `<prefix>-inbox/{threadKey}/items/{itemId}`。enqueue は create() を使い
+// 全コレクションは親ドキュメント (rootDoc、既定 "pi-chat-runner/default") の
+// サブコレクションに置く。既存プロジェクトの Firestore に同居してもトップレベルを
+// 散らかさないため (persistence.md §1)。親ドキュメント自体は書かない (Firestore は
+// 実体のない親の下にサブコレクションを置ける。コンソールでは斜体表示になる)。
+//
+// - inbox: `<rootDoc>/inbox/{threadKey}/items/{itemId}`。enqueue は create() を使い
 //   ALREADY_EXISTS を false に写像する (dedupe。session-model.md §4)。
-// - sessions: `<prefix>-sessions/{threadKey}`
-// - leases: `<prefix>-leases/{threadKey}`
-// - channels: `<prefix>-channels/{channelId}`
+// - sessions: `<rootDoc>/sessions/{threadKey}`
+// - leases: `<rootDoc>/leases/{threadKey}`
+// - channels: `<rootDoc>/channels/{channelId}`
 //
 // drain の順序保証: enqueue 時に `seq` フィールド (injected now() + 同 ms 単調化の
 // インスタンス内カウンタ) を書き、`where acked == false` で取得してクライアント側で
@@ -18,7 +23,11 @@
 // 使わない)。acquire/renew/release は runTransaction で token/owner の一致を確認する
 // (sqlite.ts の意味論と同一)。
 
-import type { Firestore, Transaction } from "@google-cloud/firestore";
+import type {
+  CollectionReference,
+  Firestore,
+  Transaction,
+} from "@google-cloud/firestore";
 import { Timestamp } from "@google-cloud/firestore";
 
 import type {
@@ -89,16 +98,12 @@ class FirestoreInboxStore implements InboxStore {
   private seqCounter = 0;
 
   constructor(
-    private readonly db: Firestore,
-    private readonly collectionName: string,
+    private readonly collection: CollectionReference,
     private readonly now: () => number,
   ) {}
 
   private itemsCollection(threadKey: string) {
-    return this.db
-      .collection(this.collectionName)
-      .doc(threadKey)
-      .collection("items");
+    return this.collection.doc(threadKey).collection("items");
   }
 
   private nextSeq(): number {
@@ -152,7 +157,7 @@ class FirestoreInboxStore implements InboxStore {
 
   async ack(threadKey: string, itemIds: string[]): Promise<void> {
     if (itemIds.length === 0) return;
-    const batch = this.db.batch();
+    const batch = this.collection.firestore.batch();
     const collection = this.itemsCollection(threadKey);
     for (const itemId of itemIds) {
       batch.update(collection.doc(itemId), { acked: true });
@@ -162,16 +167,10 @@ class FirestoreInboxStore implements InboxStore {
 }
 
 class FirestoreSessionStore implements SessionStore {
-  constructor(
-    private readonly db: Firestore,
-    private readonly collectionName: string,
-  ) {}
+  constructor(private readonly collection: CollectionReference) {}
 
   async get(threadKey: string): Promise<SessionDoc | null> {
-    const snap = await this.db
-      .collection(this.collectionName)
-      .doc(threadKey)
-      .get();
+    const snap = await this.collection.doc(threadKey).get();
     if (!snap.exists) return null;
     const data = snap.data() as SessionDocData;
     return {
@@ -198,21 +197,15 @@ class FirestoreSessionStore implements SessionStore {
         rotateRequestedAt: Timestamp.fromDate(doc.rotateRequestedAt),
       }),
     };
-    await this.db.collection(this.collectionName).doc(threadKey).set(data);
+    await this.collection.doc(threadKey).set(data);
   }
 }
 
 class FirestoreChannelStateStore implements ChannelStateStore {
-  constructor(
-    private readonly db: Firestore,
-    private readonly collectionName: string,
-  ) {}
+  constructor(private readonly collection: CollectionReference) {}
 
   async get(channelId: string): Promise<ChannelStateDoc | null> {
-    const snap = await this.db
-      .collection(this.collectionName)
-      .doc(channelId)
-      .get();
+    const snap = await this.collection.doc(channelId).get();
     if (!snap.exists) return null;
     const data = snap.data() as ChannelStateDocData;
     return {
@@ -235,8 +228,8 @@ class FirestoreChannelStateStore implements ChannelStateStore {
     // enabled/updatedAt/updatedBy のみを書く。affinity には触れないため、txn で
     // 既存 doc の affinity を読んで引き継ぐ (mergeFields で "affinity" を除外する手も
     // あるが、doc 未存在時の新規作成を素直に扱うため txn で統一する)。
-    const ref = this.db.collection(this.collectionName).doc(channelId);
-    await this.db.runTransaction(async (txn: Transaction) => {
+    const ref = this.collection.doc(channelId);
+    await this.collection.firestore.runTransaction(async (txn: Transaction) => {
       const snap = await txn.get(ref);
       const current = snap.exists
         ? (snap.data() as ChannelStateDocData)
@@ -259,7 +252,7 @@ class FirestoreChannelStateStore implements ChannelStateStore {
     // affinity は pointer オブジェクト全体で置換 (endedAt なしなら消える) しつつ、
     // enabled/updatedAt/updatedBy は保持する。doc 未存在時は enabled: true,
     // updatedAt: pointer.lastActiveAt で新規作成する。
-    const ref = this.db.collection(this.collectionName).doc(channelId);
+    const ref = this.collection.doc(channelId);
     const affinity: ChannelSessionPointerData = {
       sessionKey: pointer.sessionKey,
       lastActiveAt: Timestamp.fromDate(pointer.lastActiveAt),
@@ -268,7 +261,7 @@ class FirestoreChannelStateStore implements ChannelStateStore {
       }),
     };
 
-    await this.db.runTransaction(async (txn: Transaction) => {
+    await this.collection.firestore.runTransaction(async (txn: Transaction) => {
       const snap = await txn.get(ref);
       const current = snap.exists
         ? (snap.data() as ChannelStateDocData)
@@ -289,13 +282,12 @@ class FirestoreChannelStateStore implements ChannelStateStore {
 
 class FirestoreLeaseStore implements LeaseStore {
   constructor(
-    private readonly db: Firestore,
-    private readonly collectionName: string,
+    private readonly collection: CollectionReference,
     private readonly now: () => number,
   ) {}
 
   private docRef(threadKey: string) {
-    return this.db.collection(this.collectionName).doc(threadKey);
+    return this.collection.doc(threadKey);
   }
 
   async acquire(
@@ -304,52 +296,56 @@ class FirestoreLeaseStore implements LeaseStore {
     ttlMs: number,
   ): Promise<Lease | null> {
     const ref = this.docRef(threadKey);
-    return this.db.runTransaction(async (txn: Transaction) => {
-      const snap = await txn.get(ref);
-      const nowMs = this.now();
-      const current = snap.exists ? (snap.data() as LeaseDocData) : undefined;
+    return this.collection.firestore.runTransaction(
+      async (txn: Transaction) => {
+        const snap = await txn.get(ref);
+        const nowMs = this.now();
+        const current = snap.exists ? (snap.data() as LeaseDocData) : undefined;
 
-      if (current !== undefined && current.expiresAtMs > nowMs) return null;
+        if (current !== undefined && current.expiresAtMs > nowMs) return null;
 
-      const token = current === undefined ? 0 : current.token + 1;
-      const expiresAtMs = nowMs + ttlMs;
-      const data: LeaseDocData = { owner, token, expiresAtMs };
-      txn.set(ref, data);
+        const token = current === undefined ? 0 : current.token + 1;
+        const expiresAtMs = nowMs + ttlMs;
+        const data: LeaseDocData = { owner, token, expiresAtMs };
+        txn.set(ref, data);
 
-      return {
-        threadKey,
-        owner,
-        token,
-        expiresAt: new Date(expiresAtMs),
-      };
-    });
+        return {
+          threadKey,
+          owner,
+          token,
+          expiresAt: new Date(expiresAtMs),
+        };
+      },
+    );
   }
 
   async renew(lease: Lease, ttlMs: number): Promise<boolean> {
     const ref = this.docRef(lease.threadKey);
-    return this.db.runTransaction(async (txn: Transaction) => {
-      const snap = await txn.get(ref);
-      if (!snap.exists) return false;
-      const current = snap.data() as LeaseDocData;
-      const nowMs = this.now();
-      if (current.token !== lease.token || current.owner !== lease.owner) {
-        return false;
-      }
-      if (current.expiresAtMs <= nowMs) return false;
+    return this.collection.firestore.runTransaction(
+      async (txn: Transaction) => {
+        const snap = await txn.get(ref);
+        if (!snap.exists) return false;
+        const current = snap.data() as LeaseDocData;
+        const nowMs = this.now();
+        if (current.token !== lease.token || current.owner !== lease.owner) {
+          return false;
+        }
+        if (current.expiresAtMs <= nowMs) return false;
 
-      const data: LeaseDocData = {
-        owner: current.owner,
-        token: current.token,
-        expiresAtMs: nowMs + ttlMs,
-      };
-      txn.set(ref, data);
-      return true;
-    });
+        const data: LeaseDocData = {
+          owner: current.owner,
+          token: current.token,
+          expiresAtMs: nowMs + ttlMs,
+        };
+        txn.set(ref, data);
+        return true;
+      },
+    );
   }
 
   async release(lease: Lease): Promise<void> {
     const ref = this.docRef(lease.threadKey);
-    await this.db.runTransaction(async (txn: Transaction) => {
+    await this.collection.firestore.runTransaction(async (txn: Transaction) => {
       const snap = await txn.get(ref);
       if (!snap.exists) return;
       const current = snap.data() as LeaseDocData;
@@ -359,11 +355,11 @@ class FirestoreLeaseStore implements LeaseStore {
   }
 }
 
-/** コレクション名/コンストラクタオプション。 */
+/** コンストラクタオプション。 */
 export interface FirestoreStateStoreOptions {
-  /** コレクション名の接頭辞。既定 "pi-chat-runner"。
-   * テストではランダムな値を渡して分離する。 */
-  collectionPrefix?: string;
+  /** 全コレクションを収める親ドキュメントのパス。既定 "pi-chat-runner/default"。
+   * テストではランダムなパスを渡して分離する。 */
+  rootDoc?: string;
   /** lease の期限判定に使う時計。既定 Date.now。 */
   now?: () => number;
 }
@@ -375,12 +371,12 @@ export class FirestoreStateStore implements StateStore {
   readonly channels: ChannelStateStore;
 
   constructor(db: Firestore, options: FirestoreStateStoreOptions = {}) {
-    const prefix = options.collectionPrefix ?? "pi-chat-runner";
+    const root = db.doc(options.rootDoc ?? "pi-chat-runner/default");
     const now = options.now ?? Date.now;
 
-    this.inbox = new FirestoreInboxStore(db, `${prefix}-inbox`, now);
-    this.sessions = new FirestoreSessionStore(db, `${prefix}-sessions`);
-    this.leases = new FirestoreLeaseStore(db, `${prefix}-leases`, now);
-    this.channels = new FirestoreChannelStateStore(db, `${prefix}-channels`);
+    this.inbox = new FirestoreInboxStore(root.collection("inbox"), now);
+    this.sessions = new FirestoreSessionStore(root.collection("sessions"));
+    this.leases = new FirestoreLeaseStore(root.collection("leases"), now);
+    this.channels = new FirestoreChannelStateStore(root.collection("channels"));
   }
 }

@@ -14,6 +14,11 @@ describe("StoreConfigSchema", () => {
     const result = StoreConfigSchema.safeParse({
       backend: "sqlite",
       sqlite: { path: "/data/state.db" },
+      firestore: {
+        projectId: "my-project",
+        database: "my-db",
+        rootDoc: "myapp/agent",
+      },
     });
     expect(result.success).toBe(true);
   });
@@ -22,6 +27,9 @@ describe("StoreConfigSchema", () => {
     const data = StoreConfigSchema.parse({});
     expect(data.backend).toBe("memory");
     expect(data.sqlite.path).toBe("/tmp/pi-chat-runner/state.db");
+    expect(data.firestore.projectId).toBe("");
+    expect(data.firestore.database).toBe("(default)");
+    expect(data.firestore.rootDoc).toBe("pi-chat-runner/default");
   });
 
   it("rejects unknown top-level keys", () => {
@@ -31,6 +39,29 @@ describe("StoreConfigSchema", () => {
   it("rejects unknown keys under sqlite", () => {
     expect(
       StoreConfigSchema.safeParse({ sqlite: { unknown: true } }).success,
+    ).toBe(false);
+  });
+
+  it("rejects a rootDoc that is not a document path", () => {
+    for (const rootDoc of ["", "collection-only", "a/b/c", "a//b", "/a/b"]) {
+      expect(
+        StoreConfigSchema.safeParse({ firestore: { rootDoc } }).success,
+        `rootDoc: ${JSON.stringify(rootDoc)}`,
+      ).toBe(false);
+    }
+  });
+
+  it("accepts a nested rootDoc document path", () => {
+    expect(
+      StoreConfigSchema.safeParse({
+        firestore: { rootDoc: "apps/pi/envs/prod" },
+      }).success,
+    ).toBe(true);
+  });
+
+  it("rejects unknown keys under firestore", () => {
+    expect(
+      StoreConfigSchema.safeParse({ firestore: { unknown: true } }).success,
     ).toBe(false);
   });
 
@@ -56,6 +87,11 @@ describe("loadStoreConfig", () => {
     expect(await loadStoreConfig(join(dir, "agent.yaml"))).toEqual({
       backend: "memory",
       sqlite: { path: "/tmp/pi-chat-runner/state.db" },
+      firestore: {
+        projectId: "",
+        database: "(default)",
+        rootDoc: "pi-chat-runner/default",
+      },
     });
   });
 
@@ -67,6 +103,11 @@ describe("loadStoreConfig", () => {
     expect(await loadStoreConfig(join(dir, "agent.yaml"))).toEqual({
       backend: "memory",
       sqlite: { path: "/tmp/pi-chat-runner/state.db" },
+      firestore: {
+        projectId: "",
+        database: "(default)",
+        rootDoc: "pi-chat-runner/default",
+      },
     });
   });
 
@@ -75,6 +116,11 @@ describe("loadStoreConfig", () => {
     expect(await loadStoreConfig(join(dir, "agent.yaml"))).toEqual({
       backend: "memory",
       sqlite: { path: "/tmp/pi-chat-runner/state.db" },
+      firestore: {
+        projectId: "",
+        database: "(default)",
+        rootDoc: "pi-chat-runner/default",
+      },
     });
   });
 
@@ -91,6 +137,11 @@ describe("loadStoreConfig", () => {
     expect(await loadStoreConfig(join(dir, "agent.yaml"))).toEqual({
       backend: "sqlite",
       sqlite: { path: "/data/state.db" },
+      firestore: {
+        projectId: "",
+        database: "(default)",
+        rootDoc: "pi-chat-runner/default",
+      },
     });
   });
 
@@ -111,6 +162,37 @@ describe("loadStoreConfig", () => {
     expect(result).toEqual({
       backend: "sqlite",
       sqlite: { path: "/var/data/state.db" },
+      firestore: {
+        projectId: "",
+        database: "(default)",
+        rootDoc: "pi-chat-runner/default",
+      },
+    });
+  });
+
+  it("parses a firestore block with env refs, falling back to defaults", async () => {
+    await writeFile(
+      join(dir, "agent.yaml"),
+      [
+        "store:",
+        "  backend: firestore",
+        "  firestore:",
+        "    database: ${env.FIRESTORE_DATABASE:-(default)}",
+        "    rootDoc: ${env.FIRESTORE_ROOT_DOC:-pi-chat-runner/default}",
+      ].join("\n"),
+    );
+    expect(
+      await loadStoreConfig(join(dir, "agent.yaml"), {
+        FIRESTORE_ROOT_DOC: "myapp/agent",
+      }),
+    ).toEqual({
+      backend: "firestore",
+      sqlite: { path: "/tmp/pi-chat-runner/state.db" },
+      firestore: {
+        projectId: "",
+        database: "(default)",
+        rootDoc: "myapp/agent",
+      },
     });
   });
 

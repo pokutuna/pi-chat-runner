@@ -19,12 +19,33 @@ const SqliteStoreSchema = z
   })
   .strict();
 
+const FirestoreStoreSchema = z
+  .object({
+    /** GCP project id. Empty = SDK auto-detection (GOOGLE_CLOUD_PROJECT / ADC). */
+    projectId: z.string().default(""),
+    /** Named database id. */
+    database: z.string().default("(default)"),
+    /** Parent document all collections nest under, so a shared project's
+     * top level stays clean (persistence.md §1). Validated here so a bad
+     * path fails at startup, not at the first store operation. */
+    rootDoc: z
+      .string()
+      .regex(
+        /^[^/]+\/[^/]+(\/[^/]+\/[^/]+)*$/,
+        'must be a document path with an even number of segments (e.g. "pi-chat-runner/default")',
+      )
+      .default("pi-chat-runner/default"),
+  })
+  .strict();
+
 export const StoreConfigSchema = z
   .object({
     backend: z.enum(["memory", "sqlite", "firestore"]).default("memory"),
     /** backend が sqlite のときだけ使う。default があるので backend が sqlite
      * 以外でも常に値が入る (store.sqlite.path で常にアクセス可能)。 */
     sqlite: SqliteStoreSchema.prefault({}),
+    /** Used only when backend is firestore. Always defaulted, like sqlite. */
+    firestore: FirestoreStoreSchema.prefault({}),
   })
   .strict();
 
