@@ -31,7 +31,10 @@ function shelfPath(baseDir: string, threadKey: string): string {
 
 /** ファイルコピーのみによる WorkdirStorage 実装 (persistence.md §2)。 */
 export class CopyWorkdirStorage implements WorkdirStorage {
-  constructor(private readonly baseDir: string) {}
+  constructor(
+    private readonly baseDir: string,
+    private readonly logger?: Logger,
+  ) {}
 
   async restore(threadKey: string, workdir: string): Promise<boolean> {
     const shelf = shelfPath(this.baseDir, threadKey);
@@ -40,10 +43,13 @@ export class CopyWorkdirStorage implements WorkdirStorage {
       return false;
     }
 
+    const started = Date.now();
+    const stats: CopyStats = { files: 0, bytes: 0 };
     await mkdir(workdir, { recursive: true });
     for (const entry of entries) {
-      await copyRegularEntry(shelf, workdir, entry);
+      await copyRegularEntry(shelf, workdir, entry, stats);
     }
+    logCopy(this.logger, "workdir restore", { threadKey }, started, stats);
     return true;
   }
 
@@ -51,16 +57,19 @@ export class CopyWorkdirStorage implements WorkdirStorage {
     const shelf = shelfPath(this.baseDir, threadKey);
     await mkdir(shelf, { recursive: true });
 
+    const started = Date.now();
+    const stats: CopyStats = { files: 0, bytes: 0 };
     const entries = await readEntriesOrEmpty(workdir);
     // session.jsonl 以外を先にコピーし、session.jsonl を最後にコピーする
     // (persistence.md §3: 「アトミック性は transcript を最後に置く順序で担保」)。
     const rest = entries.filter((entry) => entry !== SESSION_FILE);
     for (const entry of rest) {
-      await copyRegularEntry(workdir, shelf, entry);
+      await copyRegularEntry(workdir, shelf, entry, stats);
     }
     if (entries.includes(SESSION_FILE)) {
-      await copyRegularEntry(workdir, shelf, SESSION_FILE);
+      await copyRegularEntry(workdir, shelf, SESSION_FILE, stats);
     }
+    logCopy(this.logger, "workdir flush", { threadKey }, started, stats);
   }
 }
 
@@ -92,51 +101,56 @@ export class CopySharedStorage implements SharedStorage {
     const entries = await readEntriesOrEmpty(shelf);
     if (entries.length === 0) return;
 
+    const started = Date.now();
+    const stats: CopyStats = { files: 0, bytes: 0 };
     await mkdir(dest, { recursive: true });
     for (const entry of entries) {
-      await copyRegularEntry(shelf, dest, entry);
+      await copyRegularEntry(shelf, dest, entry, stats);
     }
+    logCopy(this.logger, "shared restore", { channelId }, started, stats);
   }
 
   async flush(channelId: string, src: string): Promise<void> {
     const shelf = join(this.baseDir, channelId);
     await mkdir(shelf, { recursive: true });
+    const started = Date.now();
+    const stats: CopyStats = { files: 0, bytes: 0 };
     for (const entry of await readEntriesOrEmpty(src)) {
-      await copyRegularEntry(src, shelf, entry);
+      await copyRegularEntry(src, shelf, entry, stats);
     }
-    await this.warnIfOversized(channelId, shelf);
+    logCopy(this.logger, "shared flush", { channelId }, started, stats);
+    this.warnIfOversized(channelId, stats.bytes);
   }
 
   /** ロックなし・上限なしの割り切り (shared.md §3, §7) を維持したまま、肥大化に
-   * 運用者が気づけるようログだけ出す。サイズ計測の失敗でターンを失敗させない。 */
-  private async warnIfOversized(
-    channelId: string,
-    shelf: string,
-  ): Promise<void> {
-    if (this.logger === undefined) return;
-    try {
-      const bytes = await dirSize(shelf);
-      if (bytes > this.warnBytes) {
-        this.logger.warn(
-          { channelId, bytes, warnBytes: this.warnBytes },
-          "shared shelf exceeds size warning threshold",
-        );
-      }
-    } catch {
-      // サイズ計測の失敗は無視 (flush 自体は既に成功している)
+   * 運用者が気づけるようログだけ出す。
+   *
+   * 判定は「今 flush した staging の総バイト数」= コピー中に数えた値で行い、棚を
+   * 走査し直さない。棚は staging のコピーなので概算として十分で、走査は棚 (FUSE
+   * の場合ネットワーク越し) のファイル数に比例するコストを毎ターン払うことになる —
+   * 気づきのための警告に対して高すぎる。削除が伝播しない分だけ棚は staging より
+   * 大きくなりうる (#12) が、その差で警告の役目は損なわれない。 */
+  private warnIfOversized(channelId: string, bytes: number): void {
+    if (bytes > this.warnBytes) {
+      this.logger?.warn(
+        { channelId, bytes, warnBytes: this.warnBytes },
+        "shared staging exceeds size warning threshold",
+      );
     }
   }
 }
 
-async function dirSize(dir: string): Promise<number> {
-  let total = 0;
-  for (const entry of await readEntriesOrEmpty(dir)) {
-    const path = join(dir, entry);
-    const info = await lstat(path).catch(() => undefined);
-    if (info === undefined) continue;
-    total += info.isDirectory() ? await dirSize(path) : info.size;
-  }
-  return total;
+/** コピー量と所要時間を記録する。どの案 (差分化 / 除外 / まとめて 1 エントリ) が
+ * 効くかは files と bytes のどちらが支配的かで変わるため、判断材料として両方残す。
+ * info で出す — ターン境界ごとに 1 行で、頻度は turn usage と同程度。 */
+function logCopy(
+  logger: Logger | undefined,
+  msg: string,
+  key: Record<string, string>,
+  startedAt: number,
+  stats: CopyStats,
+): void {
+  logger?.info({ ...key, durationMs: Date.now() - startedAt, ...stats }, msg);
 }
 
 /** sharedDir の設定値から対応する SharedStorage を選ぶ。未設定/空文字なら
@@ -163,9 +177,10 @@ export class NoopWorkdirStorage implements WorkdirStorage {
 /** archiveDir の設定値から対応する WorkdirStorage を選ぶ。未設定/空文字なら Noop。 */
 export function createWorkdirStorage(
   archiveDir: string | undefined,
+  logger?: Logger,
 ): WorkdirStorage {
   return archiveDir !== undefined && archiveDir !== ""
-    ? new CopyWorkdirStorage(archiveDir)
+    ? new CopyWorkdirStorage(archiveDir, logger)
     : new NoopWorkdirStorage();
 }
 
@@ -180,30 +195,41 @@ async function readEntriesOrEmpty(dir: string): Promise<string[]> {
   }
 }
 
+/** コピー量の計測結果。flush のコストは転送バイト数より往復回数 (= files) に
+ * 支配される — 棚が GCS FUSE の場合 1 ファイルが 1 オブジェクト書き込みになるため。
+ * どちらが効いているか切り分けられるよう両方記録する。 */
+interface CopyStats {
+  files: number;
+  bytes: number;
+}
+
 /** 通常ファイル・ディレクトリのみをコピーする (socket 等の特殊ファイルを除外)。
- * コピー先の同名エントリは置き換える (上書き)。 */
+ * コピー先の同名エントリは置き換える (上書き)。
+ *
+ * 計測は cp の filter に相乗りする — コピー後に改めて走査すると、棚が FUSE の
+ * ときに stat の往復が二重になる。 */
 async function copyRegularEntry(
   srcDir: string,
   destDir: string,
   entry: string,
+  stats?: CopyStats,
 ): Promise<void> {
   const src = join(srcDir, entry);
   const dest = join(destDir, entry);
   await rm(dest, { recursive: true, force: true });
   await cp(src, dest, {
     recursive: true,
-    filter: (source) => isRegularOrDirectory(source),
+    filter: async (source) => {
+      const info = await lstat(source).catch(() => undefined);
+      if (info === undefined) return false;
+      if (info.isFile()) {
+        if (stats !== undefined) {
+          stats.files += 1;
+          stats.bytes += info.size;
+        }
+        return true;
+      }
+      return info.isDirectory();
+    },
   });
-}
-
-async function isRegularOrDirectory(path: string): Promise<boolean> {
-  try {
-    const stat = await lstat(path);
-    return stat.isFile() || stat.isDirectory();
-  } catch (err) {
-    if ((err as NodeJS.ErrnoException).code === "ENOENT") {
-      return false;
-    }
-    throw err;
-  }
 }

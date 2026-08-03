@@ -224,7 +224,7 @@ describe("CopySharedStorage", () => {
     );
   });
 
-  it("warns when the shelf size exceeds warnBytes after flush", async () => {
+  it("warns when the staging size exceeds warnBytes after flush", async () => {
     const { logger, lines } = collectingLogger();
     const storage = new CopySharedStorage(baseDir, logger, 10);
     await writeFile(join(workdir, "notes.md"), "this content is over 10 bytes");
@@ -237,19 +237,23 @@ describe("CopySharedStorage", () => {
     expect(warnLines).toHaveLength(1);
     expect(warnLines[0]).toMatchObject({
       channelId: CHANNEL_ID,
-      msg: "shared shelf exceeds size warning threshold",
+      msg: "shared staging exceeds size warning threshold",
     });
     expect((warnLines[0] as { bytes: number }).bytes).toBeGreaterThan(10);
   });
 
-  it("does not warn when the shelf size is within warnBytes", async () => {
+  it("does not warn when the staging size is within warnBytes", async () => {
     const { logger, lines } = collectingLogger();
     const storage = new CopySharedStorage(baseDir, logger, 50 * 1024 * 1024);
     await writeFile(join(workdir, "notes.md"), "small content");
 
     await storage.flush(CHANNEL_ID, workdir);
 
-    expect(lines()).toHaveLength(0);
+    // info の計測ログ (flush 毎に 1 行) は出るので、warn だけを見る
+    const warnLines = lines().filter(
+      (line) => (line as { level: number }).level === 40,
+    );
+    expect(warnLines).toHaveLength(0);
   });
 
   it("flushes without error when no logger is given, even past the warn threshold", async () => {
@@ -257,6 +261,23 @@ describe("CopySharedStorage", () => {
     await writeFile(join(workdir, "notes.md"), "content bigger than 1 byte");
 
     await expect(storage.flush(CHANNEL_ID, workdir)).resolves.toBeUndefined();
+  });
+
+  // 判定は staging の実測バイト数で行い、棚を走査し直さない。棚に残った過去の
+  // ファイル (削除が伝播しないため残りうる。#12) は判定に入らない
+  it("judges by staging size, not by what already sits on the shelf", async () => {
+    const { logger, lines } = collectingLogger();
+    const storage = new CopySharedStorage(baseDir, logger, 100);
+    await mkdir(join(baseDir, CHANNEL_ID), { recursive: true });
+    await writeFile(join(baseDir, CHANNEL_ID, "old.md"), "x".repeat(500));
+    await writeFile(join(workdir, "notes.md"), "small");
+
+    await storage.flush(CHANNEL_ID, workdir);
+
+    const warnLines = lines().filter(
+      (line) => (line as { level: number }).level === 40,
+    );
+    expect(warnLines).toHaveLength(0);
   });
 });
 
@@ -297,5 +318,74 @@ describe("createWorkdirStorage", () => {
 
   it("returns a CopyWorkdirStorage when archiveDir is set", () => {
     expect(createWorkdirStorage(baseDir)).toBeInstanceOf(CopyWorkdirStorage);
+  });
+});
+
+describe("copy measurement logs", () => {
+  /** writeWorkdirFiles が作る通常ファイル (session.jsonl / note.txt / deep.txt)。
+   * ディレクトリは files に数えない — 棚が GCS FUSE のとき往復のコストを持つのは
+   * ファイルだけなので、往復回数の目安として使えるようにする */
+  const EXPECTED_FILES = 3;
+
+  it("logs duration, file count and bytes on workdir flush", async () => {
+    const { logger, lines } = collectingLogger();
+    const storage = new CopyWorkdirStorage(baseDir, logger);
+    await writeWorkdirFiles();
+
+    await storage.flush(THREAD_KEY, workdir);
+
+    const flushLines = lines().filter(
+      (line) => (line as { msg: string }).msg === "workdir flush",
+    );
+    expect(flushLines).toHaveLength(1);
+    expect(flushLines[0]).toMatchObject({
+      threadKey: THREAD_KEY,
+      files: EXPECTED_FILES,
+    });
+    const entry = flushLines[0] as { bytes: number; durationMs: number };
+    expect(entry.bytes).toBeGreaterThan(0);
+    expect(entry.durationMs).toBeGreaterThanOrEqual(0);
+  });
+
+  it("logs the same shape on workdir restore", async () => {
+    const { logger, lines } = collectingLogger();
+    const storage = new CopyWorkdirStorage(baseDir, logger);
+    await writeWorkdirFiles();
+    await storage.flush(THREAD_KEY, workdir);
+    await rm(workdir, { recursive: true, force: true });
+
+    await storage.restore(THREAD_KEY, workdir);
+
+    const restoreLines = lines().filter(
+      (line) => (line as { msg: string }).msg === "workdir restore",
+    );
+    expect(restoreLines).toHaveLength(1);
+    expect(restoreLines[0]).toMatchObject({
+      threadKey: THREAD_KEY,
+      files: EXPECTED_FILES,
+    });
+  });
+
+  it("does not log a restore line when the shelf has no transcript", async () => {
+    const { logger, lines } = collectingLogger();
+    const storage = new CopyWorkdirStorage(baseDir, logger);
+
+    expect(await storage.restore(THREAD_KEY, workdir)).toBe(false);
+
+    expect(lines()).toHaveLength(0);
+  });
+
+  it("logs shared flush with the channelId", async () => {
+    const { logger, lines } = collectingLogger();
+    const storage = new CopySharedStorage(baseDir, logger);
+    await writeFile(join(workdir, "notes.md"), "shared content");
+
+    await storage.flush("C123ABC", workdir);
+
+    const flushLines = lines().filter(
+      (line) => (line as { msg: string }).msg === "shared flush",
+    );
+    expect(flushLines).toHaveLength(1);
+    expect(flushLines[0]).toMatchObject({ channelId: "C123ABC", files: 1 });
   });
 });

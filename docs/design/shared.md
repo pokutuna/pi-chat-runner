@@ -142,8 +142,15 @@ workdir と同一 ([session-runtime.md](session-runtime.md) §6)。
 - flush は staging 全体のコピーなので、shared が肥大するとターン境界のコストが
   増える。想定は memory / skills / 小さなドキュメントで数 MB オーダー。
   大きな成果物は workdir の artifacts 側に置く。
-  上限は設けない代わりに、flush 後の棚サイズが閾値 (env
+  上限は設けない代わりに、flush した staging のサイズが閾値 (env
   `SHARED_SHELF_WARN_BYTES`、既定 50MB) を超えたら warn ログを出し、
   肥大化に運用者が気づけるようにする (`CopySharedStorage`、ブロックはしない)。
+  サイズはコピー中に数えた実測値を使い、棚を走査し直さない — 棚が GCS FUSE の
+  場合その走査はファイル数に比例するネットワーク往復になり、気づきのための警告に
+  対して高すぎる。棚は staging のコピーなので概算として十分。
+- restore / flush は所要時間・ファイル数・バイト数を info ログに出す
+  (`workdir flush` / `shared flush` 等)。計測は `cp` の filter に相乗りするので
+  追加の走査は無い。肥大化対策 (差分化 / 除外 / まとめて 1 エントリ) のどれが
+  効くかは files と bytes のどちらが支配的かで変わるため、両方を残す。
 - 削除の伝播はしない (コピーは上書きのみ)。棚から消したいファイルは
   staging と棚の両方から消す必要がある — 現状は運用 (手動) で対応。

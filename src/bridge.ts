@@ -191,7 +191,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
     });
   // workdirStorage 注入があれば archiveDir より優先する
   const workdirStorage =
-    options.workdirStorage ?? createWorkdirStorage(options.archiveDir);
+    options.workdirStorage ?? createWorkdirStorage(options.archiveDir, logger);
   // sharedStorage 注入があれば sharedDir より優先する。どちらも無ければ
   // undefined = shared 機能ごと無効 (docs/design/shared.md)
   const sharedStorage =
