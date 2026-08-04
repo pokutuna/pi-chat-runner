@@ -42,7 +42,7 @@
     "@slack/socket-mode": "^3.0.0",
     "@slack/web-api": "^8.0.0",
     "better-sqlite3": "^13.0.1",
-    "hono": "^4.12.32",
+    "hono": "^4.12.33",
     "ink": "^7.1.1",
     "pino": "^10.3.1",
     "pino-pretty": "^13.1.3",
