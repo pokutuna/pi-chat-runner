@@ -22,7 +22,9 @@ export interface Sender {
   /** 自分自身 (この bot) の投稿。エコーの無限ループ防止のため bridge が
    * 設定に関わらず常に除外する。 */
   isSelf: boolean;
-  /** 表示名。EventSource/bridge 層で解決できた場合のみ入る。無ければ id を使う。 */
+  /** 表示名。EventSource/bridge 層で解決できた場合のみ入る。無ければ id を使う。
+   * sender gate の name 判定 (config.md §7) はこの値との完全一致で行うため、
+   * bridge は message/reaction を gate 評価に渡す前に enrichEvent で解決する。 */
   displayName?: string;
 }
 

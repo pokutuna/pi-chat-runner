@@ -675,6 +675,36 @@ trigger:
 reaction gate は対象リアクションの送信者 (通常は人間) で判定するため、
 `allowBots` の影響を受けず従来どおり動く。
 
+### kind: sender — 送信者による判定
+
+`sender` gate は送信者種別 (`is`) に加えて、送信者 ID (`id`) と送信者名 (`name`) の
+allowlist を持てる。少なくとも 1 つが必須で、複数書けば AND。キー名は判定対象の
+`Sender.id` / `Sender.displayName` (chat-event.ts) にそのまま対応する:
+
+```yaml
+trigger:
+  when:
+    # oncall メンバーの発言だけ keyword で自動起動、それ以外は mention のみ
+    - and:
+        - { kind: sender, name: [alice, bob] }   # 表示名で。ID なら id: [U012AB34CD]
+        - { kind: keyword, pattern: "#alert" }
+    - { kind: mention }
+```
+
+- `id` は `Sender.id` (プラットフォームのユーザ ID。Slack では `U...`) との**完全一致**。
+  改名の影響を受けない安定した指定で、`channel:` を raw ID で書く既存スタイルとも揃う。
+- `name` は EventSource/bridge 層が正規化した表示名 (`Sender.displayName`) との
+  **完全一致**。Slack では users.info の display_name → real_name → name の順で
+  解決した値で、bridge が message / reaction とも gate 評価前に解決する。
+  gate 自体はプラットフォーム中立 (文字列比較のみ) で、何が名前かは EventSource が決める。
+  ID との相互マッチはしない (`name` に `U...` を書いても `Sender.id` とは比較されない)。
+- `name` で表示名を解決できなかった送信者は fail-closed (起動しない)。
+- negate を持たない方針 (下記「trigger.when」) のため `id`/`name` とも **allowlist 専用**。
+  「このユーザ以外」は書けない。
+- 表示名はユーザが変更できるため、改名すると一致しなくなる (静かに起動しなくなる)
+  ことに注意。厳格な同一性が要る用途は `id` で書く — いずれにせよこれは起動条件で
+  あって認可境界ではない (認可は allowBots / DM 既定 disabled / チャンネル選択の側)。
+
 ### trigger.when — Gate の合成木
 
 Gate はこの基盤が提供する type 名 (`kind`) から選び、設定値を添える。読み込み時 (§6) に

@@ -22,7 +22,11 @@ import type { ChatPoster } from "./egress/router.js";
 import { EgressRouter } from "./egress/router.js";
 import { SlackTurnReactor } from "./egress/slack/turn-reactor.js";
 import type { TurnReactor } from "./egress/turn-reactor.js";
-import type { ChatEvent, InboundMessage } from "./ingress/chat-event.js";
+import type {
+  ChatEvent,
+  InboundMessage,
+  ReactionEvent,
+} from "./ingress/chat-event.js";
 import type { Ack, Ingress } from "./ingress/ingress.js";
 import { SlackUserResolver } from "./ingress/slack/user-resolver.js";
 import { enrichEvent, type UserResolver } from "./ingress/user-resolver.js";
@@ -297,7 +301,10 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
         return;
       }
       try {
-        await runner.handleReaction(event, fetchMessage);
+        // sender gate の name 判定のため、reaction も sender を解決してから渡す
+        // (enrichEvent は reaction では sender のみ enrich する)
+        const enriched = (await enrichEvent(event, resolver)) as ReactionEvent;
+        await runner.handleReaction(enriched, fetchMessage);
       } catch (err) {
         logger.error({ err }, "failed to handle reaction");
       }

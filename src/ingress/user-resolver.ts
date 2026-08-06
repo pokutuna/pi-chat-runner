@@ -14,18 +14,25 @@ export interface UserResolver {
 const STRIPPED_MENTION_PATTERN = /@(U[A-Z0-9]+)/g;
 
 /** ChatEvent の sender.id / text 中の mention を表示名に解決した新しい ChatEvent を返す。
- * kind !== "message" はそのまま (何もせず) 返す。解決できなかった ID は変更しない。 */
+ * reaction は sender のみ解決する (text を持たない)。sender を持たない kind は
+ * そのまま (何もせず) 返す。解決できなかった ID は変更しない。
+ * sender gate の name 判定 (gates/sender.ts) は解決済み displayName を前提とするため、
+ * bridge は gate 評価前にこれを通すこと。 */
 export async function enrichEvent(
   event: ChatEvent,
   resolver: UserResolver,
 ): Promise<ChatEvent> {
-  if (event.kind !== "message") return event;
+  if (event.kind !== "message" && event.kind !== "reaction") return event;
 
   const senderName = await resolver.resolve(event.sender.id);
   const sender: Sender =
     senderName !== null
       ? { ...event.sender, displayName: senderName }
       : event.sender;
+
+  if (event.kind === "reaction") {
+    return sender === event.sender ? event : { ...event, sender };
+  }
 
   const matches = [...event.text.matchAll(STRIPPED_MENTION_PATTERN)];
   let text = event.text;

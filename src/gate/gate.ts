@@ -45,7 +45,7 @@ export type GateSpec =
   | { kind: "passthrough" }
   | { kind: "classifier"; criteria: string; model?: string }
   | { kind: "reaction"; emoji: string[] }
-  | { kind: "sender"; is: "bot" | "human" };
+  | { kind: "sender"; is?: "bot" | "human"; id?: string[]; name?: string[] };
 
 /** createGate に注入する依存。classifier gate のみが必要とする (LLM client + logger)。 */
 export interface GateDeps {
@@ -77,7 +77,11 @@ export function createGate(spec: GateSpec, deps: GateDeps = {}): Gate {
     case "reaction":
       return new ReactionGate(spec.emoji);
     case "sender":
-      return new SenderGate(spec.is);
+      return new SenderGate({
+        ...(spec.is !== undefined ? { is: spec.is } : {}),
+        ...(spec.id !== undefined ? { id: spec.id } : {}),
+        ...(spec.name !== undefined ? { name: spec.name } : {}),
+      });
     default: {
       const unknown: { kind: string } = spec;
       throw new Error(`createGate: unknown gate kind "${unknown.kind}"`);
@@ -123,10 +127,21 @@ function gateConfigToSpec(gate: GateConfig): GateSpec {
       }
       return { kind: "reaction", emoji: gate.emoji };
     case "sender":
-      if (gate.is === undefined) {
-        throw new Error('gate kind "sender" requires "is"');
+      if (
+        gate.is === undefined &&
+        (gate.id === undefined || gate.id.length === 0) &&
+        (gate.name === undefined || gate.name.length === 0)
+      ) {
+        throw new Error(
+          'gate kind "sender" requires at least one of "is", "id" or "name"',
+        );
       }
-      return { kind: "sender", is: gate.is };
+      return {
+        kind: "sender",
+        ...(gate.is !== undefined ? { is: gate.is } : {}),
+        ...(gate.id !== undefined ? { id: gate.id } : {}),
+        ...(gate.name !== undefined ? { name: gate.name } : {}),
+      };
     default: {
       const unknown: { kind: string } = gate;
       throw new Error(`unsupported gate kind "${unknown.kind}"`);

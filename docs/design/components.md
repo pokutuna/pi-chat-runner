@@ -152,8 +152,9 @@ flowchart LR
     HF --> K[KeywordGate<br/>正規表現・安価]
     HF --> L[ClassifierGate<br/>Flash-Lite 自然文判定]
     HF --> PS[PassthroughGate<br/>素通し]
-    HF --> S[SenderGate<br/>bot/human 判定]
-    M & K & L & PS & S --> D{when<br/>OR / AND}
+    HF --> R[ReactionGate<br/>emoji 一致]
+    HF --> S[SenderGate<br/>bot/human・送信者名]
+    M & K & L & PS & R & S --> D{when<br/>OR / AND}
     D -->|trigger| IB[(Inbox へ)]
     D -->|観測のみ| O[observed 記録]
 ```

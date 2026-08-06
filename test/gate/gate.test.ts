@@ -80,6 +80,16 @@ describe("createGate (registry)", () => {
     expect(gate).toBeInstanceOf(SenderGate);
   });
 
+  it("creates a SenderGate for kind=sender with name only", () => {
+    const gate = createGate({ kind: "sender", name: ["alice"] });
+    expect(gate).toBeInstanceOf(SenderGate);
+  });
+
+  it("creates a SenderGate for kind=sender with id only", () => {
+    const gate = createGate({ kind: "sender", id: ["U0123456"] });
+    expect(gate).toBeInstanceOf(SenderGate);
+  });
+
   it("throws for unknown kind", () => {
     expect(() =>
       // @ts-expect-error intentionally invalid kind for the error-path test

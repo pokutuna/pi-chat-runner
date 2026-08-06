@@ -218,14 +218,59 @@ describe("ChannelDocSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  it("rejects sender gate without is", () => {
+  it("accepts a sender gate with name only", () => {
+    const result = ChannelDocSchema.safeParse({
+      trigger: {
+        when: [{ kind: "sender", name: ["alice", "bob"] }],
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a sender gate with id only", () => {
+    const result = ChannelDocSchema.safeParse({
+      trigger: {
+        when: [{ kind: "sender", id: ["U0123456", "U0234567"] }],
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("accepts a sender gate with both is and name", () => {
+    const result = ChannelDocSchema.safeParse({
+      trigger: {
+        when: [{ kind: "sender", is: "human", name: ["alice"] }],
+      },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects sender gate with an empty id and no is/name", () => {
+    const result = ChannelDocSchema.safeParse({
+      trigger: {
+        when: [{ kind: "sender", id: [] }],
+      },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  it("rejects sender gate with none of is, id, name", () => {
     expect(() =>
       ChannelDocSchema.parse({
         trigger: {
           when: [{ kind: "sender" }],
         },
       }),
-    ).toThrow(/is/);
+    ).toThrow(/at least one of/);
+  });
+
+  it("rejects sender gate with an empty name and no is", () => {
+    const result = ChannelDocSchema.safeParse({
+      trigger: {
+        when: [{ kind: "sender", name: [] }],
+      },
+    });
+    expect(result.success).toBe(false);
   });
 
   it("rejects sender gate with an invalid is value", () => {

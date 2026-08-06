@@ -28,7 +28,8 @@ const PathRefSchema = z
 
 /** Gate の種別ごとに要るパラメータだけを refinement で強制する (config.md §7)。
  * keyword は pattern 必須、classifier は criteria 必須、reaction は emoji 必須
- * (非空)、sender は is 必須。mention/passthrough は無し。 */
+ * (非空)、sender は is / id (非空) / name (非空) の少なくとも 1 つが必須。
+ * mention/passthrough は無し。 */
 const GateSchema = z
   .object({
     kind: z.enum([
@@ -48,6 +49,12 @@ const GateSchema = z
     emoji: z.array(z.string()).optional(),
     /** sender gate が trigger する送信者種別 (session-model.md §5)。 */
     is: z.enum(["bot", "human"]).optional(),
+    /** sender gate が trigger する送信者 ID の allowlist。Sender.id との完全一致
+     * (config.md §7)。is/name と併記した場合は AND。 */
+    id: z.array(z.string()).optional(),
+    /** sender gate が trigger する送信者名の allowlist。EventSource が正規化した
+     * Sender.displayName との完全一致 (config.md §7)。is/id と併記した場合は AND。 */
+    name: z.array(z.string()).optional(),
   })
   .strict()
   .superRefine((gate, ctx) => {
@@ -75,10 +82,15 @@ const GateSchema = z
         path: ["emoji"],
       });
     }
-    if (gate.kind === "sender" && gate.is === undefined) {
+    if (
+      gate.kind === "sender" &&
+      gate.is === undefined &&
+      (gate.id === undefined || gate.id.length === 0) &&
+      (gate.name === undefined || gate.name.length === 0)
+    ) {
       ctx.addIssue({
         code: "custom",
-        message: `gate kind "sender" requires "is"`,
+        message: `gate kind "sender" requires at least one of "is", a non-empty "id" or a non-empty "name"`,
         path: ["is"],
       });
     }

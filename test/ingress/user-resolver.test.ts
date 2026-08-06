@@ -70,8 +70,8 @@ describe("enrichEvent", () => {
     expect(result.text).toBe("@U999 さんへ");
   });
 
-  it("passes through non-message events unchanged", async () => {
-    const event: ReactionEvent = {
+  function baseReaction(overrides: Partial<ReactionEvent> = {}): ReactionEvent {
+    return {
       kind: "reaction",
       emoji: "eyes",
       targetMessageId: "1720000000.000100",
@@ -80,7 +80,32 @@ describe("enrichEvent", () => {
       sender: { id: "U123", isBot: false, isSelf: false },
       added: true,
       timestamp: new Date("2026-07-06T00:00:00Z"),
+      ...overrides,
     };
+  }
+
+  it("sets sender.displayName on reaction events", async () => {
+    const event = baseReaction();
+    const resolver = stubResolver({ U123: "たなか" });
+    const result = (await enrichEvent(event, resolver)) as ReactionEvent;
+    expect(result.sender.displayName).toBe("たなか");
+    expect(event.sender.displayName).toBeUndefined();
+  });
+
+  it("returns the reaction unchanged when the sender does not resolve", async () => {
+    const event = baseReaction({
+      sender: { id: "U999", isBot: false, isSelf: false },
+    });
+    const resolver = stubResolver({ U123: "たなか" });
+    const result = await enrichEvent(event, resolver);
+    expect(result).toBe(event);
+  });
+
+  it("passes through events without a sender unchanged", async () => {
+    const event = {
+      kind: "system",
+      subtype: "channel_joined",
+    } as const;
     const resolver = stubResolver({ U123: "たなか" });
     const result = await enrichEvent(event, resolver);
     expect(result).toBe(event);
