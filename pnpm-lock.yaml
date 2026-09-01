@@ -10,7 +10,7 @@ importers:
     dependencies:
       '@earendil-works/pi-coding-agent':
         specifier: ^0.82.1
-        version: 0.82.1(ws@8.21.1)(zod@4.4.3)
+        version: 0.82.1(ws@8.21.1)(zod@4.5.2)
       '@google-cloud/firestore':
         specifier: ^8.7.1
         version: 8.7.1
@@ -48,8 +48,8 @@ importers:
         specifier: ^2.9.0
         version: 2.9.0
       zod:
-        specifier: ^4.4.3
-        version: 4.4.3
+        specifier: ^4.5.2
+        version: 4.5.2
     devDependencies:
       '@types/better-sqlite3':
         specifier: ^7.6.13
@@ -2555,8 +2555,8 @@ packages:
     peerDependencies:
       zod: ^3.25.28 || ^4
 
-  zod@4.4.3:
-    resolution: {integrity: sha512-ytENFjIJFl2UwYglde2jchW2Hwm4GJFLDiSXWdTrJQBIN9Fcyp7n4DhxJEiWNAJMV1/BqWfW/kkg71UDcHJyTQ==}
+  zod@4.5.2:
+    resolution: {integrity: sha512-XkYXCol10+ba/6F/cueWV+TezUeOqXW0hdeJt5CdXjTYeAgAQg5N03RQdJ80mhfFE72+pblvYMW4wy2Qp4Qbrg==}
 
 snapshots:
 
@@ -2565,11 +2565,11 @@ snapshots:
       ansi-styles: 6.2.3
       is-fullwidth-code-point: 5.1.0
 
-  '@anthropic-ai/sdk@0.91.1(zod@4.4.3)':
+  '@anthropic-ai/sdk@0.91.1(zod@4.5.2)':
     dependencies:
       json-schema-to-ts: 3.1.1
     optionalDependencies:
-      zod: 4.4.3
+      zod: 4.5.2
 
   '@aws-crypto/sha256-browser@5.2.0':
     dependencies:
@@ -2787,9 +2787,9 @@ snapshots:
 
   '@babel/runtime@7.29.7': {}
 
-  '@earendil-works/pi-agent-core@0.82.1(ws@8.21.1)(zod@4.4.3)':
+  '@earendil-works/pi-agent-core@0.82.1(ws@8.21.1)(zod@4.5.2)':
     dependencies:
-      '@earendil-works/pi-ai': 0.82.1(ws@8.21.1)(zod@4.4.3)
+      '@earendil-works/pi-ai': 0.82.1(ws@8.21.1)(zod@4.5.2)
       diff: 8.0.4
       ignore: 7.0.5
       typebox: 1.1.38
@@ -2802,9 +2802,9 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-ai@0.82.1(ws@8.21.1)(zod@4.4.3)':
+  '@earendil-works/pi-ai@0.82.1(ws@8.21.1)(zod@4.5.2)':
     dependencies:
-      '@anthropic-ai/sdk': 0.91.1(zod@4.4.3)
+      '@anthropic-ai/sdk': 0.91.1(zod@4.5.2)
       '@aws-sdk/client-bedrock-runtime': 3.1048.0
       '@google/genai': 1.52.0
       '@mistralai/mistralai': 2.2.6(@opentelemetry/api@1.9.0)
@@ -2812,7 +2812,7 @@ snapshots:
       '@smithy/node-http-handler': 4.7.3
       http-proxy-agent: 7.0.2
       https-proxy-agent: 7.0.6
-      openai: 6.26.0(ws@8.21.1)(zod@4.4.3)
+      openai: 6.26.0(ws@8.21.1)(zod@4.5.2)
       partial-json: 0.1.7
       typebox: 1.1.38
     transitivePeerDependencies:
@@ -2823,10 +2823,10 @@ snapshots:
       - ws
       - zod
 
-  '@earendil-works/pi-coding-agent@0.82.1(ws@8.21.1)(zod@4.4.3)':
+  '@earendil-works/pi-coding-agent@0.82.1(ws@8.21.1)(zod@4.5.2)':
     dependencies:
-      '@earendil-works/pi-agent-core': 0.82.1(ws@8.21.1)(zod@4.4.3)
-      '@earendil-works/pi-ai': 0.82.1(ws@8.21.1)(zod@4.4.3)
+      '@earendil-works/pi-agent-core': 0.82.1(ws@8.21.1)(zod@4.5.2)
+      '@earendil-works/pi-ai': 0.82.1(ws@8.21.1)(zod@4.5.2)
       '@earendil-works/pi-tui': 0.82.1
       '@silvia-odwyer/photon-node': 0.3.4
       chalk: 5.6.2
@@ -3068,8 +3068,8 @@ snapshots:
     dependencies:
       '@opentelemetry/semantic-conventions': 1.43.0
       ws: 8.21.1
-      zod: 4.4.3
-      zod-to-json-schema: 3.25.2(zod@4.4.3)
+      zod: 4.5.2
+      zod-to-json-schema: 3.25.2(zod@4.5.2)
     optionalDependencies:
       '@opentelemetry/api': 1.9.0
     transitivePeerDependencies:
@@ -4159,10 +4159,10 @@ snapshots:
     dependencies:
       mimic-fn: 2.1.0
 
-  openai@6.26.0(ws@8.21.1)(zod@4.4.3):
+  openai@6.26.0(ws@8.21.1)(zod@4.5.2):
     optionalDependencies:
       ws: 8.21.1
-      zod: 4.4.3
+      zod: 4.5.2
 
   oxfmt@0.65.0:
     dependencies:
@@ -4759,8 +4759,8 @@ snapshots:
       '@yuku-parser/binding-win32-arm64': 0.8.1
       '@yuku-parser/binding-win32-x64': 0.8.1
 
-  zod-to-json-schema@3.25.2(zod@4.4.3):
+  zod-to-json-schema@3.25.2(zod@4.5.2):
     dependencies:
-      zod: 4.4.3
+      zod: 4.5.2
 
-  zod@4.4.3: {}
+  zod@4.5.2: {}
