@@ -18,8 +18,8 @@ importers:
         specifier: ^2.13.0
         version: 2.13.0
       '@slack/socket-mode':
-        specifier: ^3.0.0
-        version: 3.0.0(undici@8.5.0)
+        specifier: ^3.0.1
+        version: 3.0.1(undici@8.5.0)
       '@slack/web-api':
         specifier: ^8.0.0
         version: 8.0.0
@@ -1023,8 +1023,8 @@ packages:
     resolution: {integrity: sha512-VGXhmmgsAo9shdQYh4tFDndd+7nsgp0Y5h0UPDaUp8K359pBasI6YdkMqFW3mCOxLQkq09qj7o7cq6f3DuXcJQ==}
     engines: {node: '>= 20', npm: '>=9.6.4'}
 
-  '@slack/socket-mode@3.0.0':
-    resolution: {integrity: sha512-QShO60SB0E+HH+TbcKj3CBEQbodToRyiXnxuSB4t1kvUlqEmuGA1nOOjrRDkDJbOECAZ13PLe4ek9SrntpfoYg==}
+  '@slack/socket-mode@3.0.1':
+    resolution: {integrity: sha512-7L4adgnJtQvQgo5cfIwqHG1QuR8mdZQ/WdMScNDp6uK644ZqnHDAa4rR+vZYfZFdJ5+obCqZQ66Dad8kcwJ4Jg==}
     engines: {node: '>=20', npm: '>=9.6.4'}
     peerDependencies:
       undici: ^7.0.0
@@ -2039,6 +2039,10 @@ packages:
 
   picomatch@4.0.5:
     resolution: {integrity: sha512-RvwwcruNjI1ncT5xRakeyS9Lf8lcItv34KD+aif+VH9kduAyfYBipGh12274xtenIPZ119/R9BdTBa8gAwSh0A==}
+    engines: {node: '>=12'}
+
+  picomatch@4.0.7:
+    resolution: {integrity: sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA==}
     engines: {node: '>=12'}
 
   pino-abstract-transport@3.0.0:
@@ -3345,7 +3349,7 @@ snapshots:
     dependencies:
       '@types/node': 26.2.0
 
-  '@slack/socket-mode@3.0.0(undici@8.5.0)':
+  '@slack/socket-mode@3.0.1(undici@8.5.0)':
     dependencies:
       '@slack/logger': 5.0.0
       '@slack/web-api': 8.0.0
@@ -4246,6 +4250,8 @@ snapshots:
 
   picomatch@4.0.5: {}
 
+  picomatch@4.0.7: {}
+
   pino-abstract-transport@3.0.0:
     dependencies:
       split2: 4.2.0
@@ -4619,7 +4625,7 @@ snapshots:
   vite@8.1.2(@types/node@26.2.0)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.12)(yaml@2.9.0):
     dependencies:
       lightningcss: 1.33.0
-      picomatch: 4.0.5
+      picomatch: 4.0.7
       postcss: 8.5.26
       rolldown: 1.1.5
       tinyglobby: 0.2.17
