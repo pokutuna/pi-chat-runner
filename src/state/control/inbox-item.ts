@@ -1,4 +1,4 @@
-// InboxItem.id の導出 (旧 src/session/inbox.ts から移設。Step 4 で旧 IF は廃止)。
+// InboxItem.id の導出 (docs/design/state.md §3.1)。
 //
 // Slack リトライは同じ event_id で届くため、これで冪等排除できる
 // (app_mention/message の二重配信は別 event_id なので、ここではなく server 側で防ぐ)。

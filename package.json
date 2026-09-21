@@ -17,12 +17,12 @@
       "default": "./dist/index.mjs"
     },
     "./store/firestore": {
-      "types": "./dist/store/state/backends/firestore.d.mts",
-      "default": "./dist/store/state/backends/firestore.mjs"
+      "types": "./dist/store/firestore.d.mts",
+      "default": "./dist/store/firestore.mjs"
     },
     "./store/sqlite": {
-      "types": "./dist/store/state/backends/sqlite.d.mts",
-      "default": "./dist/store/state/backends/sqlite.mjs"
+      "types": "./dist/store/sqlite.d.mts",
+      "default": "./dist/store/sqlite.mjs"
     }
   },
   "scripts": {

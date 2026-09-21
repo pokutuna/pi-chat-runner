@@ -1,43 +1,34 @@
-// WorkdirStorage — docs/design/state.md §5, §7
+// ファイルコピーによる Agent State の棚の実装 — docs/design/state.md §5, §7
 //
 // pi の workdir (tmpfs) とセッション境界での退避先 (ローカルディレクトリ or GCS FUSE
 // マウント) の間をファイルコピーだけで往復する。GCS SDK は使わない — baseDir が
 // 普通のディレクトリでも FUSE マウントでも同じコードで動く。
-//
-// タスク指示により restore は「復元があったか」を boolean で返す
-// (state.md 本文の擬似コードは Promise<void> だが、実装はこちらを正とする)。
 
 import { cp, lstat, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
-import type { Logger } from "../logger.js";
-import { SESSION_FILE } from "../session/session-file.js";
+import type { Logger } from "../../logger.js";
+import { SESSION_FILE } from "../../session/session-file.js";
+import type { SharedStore, WorkdirStore } from "./interfaces.js";
+import { NoopWorkdirStore } from "./noop.js";
 
-/** workdir の退避と復元。実体はディレクトリコピー (state.md §5)。 */
-export interface WorkdirStorage {
-  /** 保存棚 → workdir へ復元。棚に無ければ何もしない。復元があったか boolean で返す */
-  restore(threadKey: string, workdir: string): Promise<boolean>;
-  /** workdir → 保存棚へ退避 */
-  flush(threadKey: string, workdir: string): Promise<void>;
-}
-
-/** threadKey (`<channelId>:<threadTs>`) を棚のパスに変換する。
- * `:` を `/` に置き換えると state.md §6 の `/data/channels/<ch>/<threadTs>/`
+/** sessionKey (`<channelId>:<threadTs>`) を棚のパスに変換する。
+ * `:` を `/` に置き換えると state.md §6 の `<workdirBase>/<channelId>/<threadTs>/`
  * と揃う。 */
-function shelfPath(baseDir: string, threadKey: string): string {
-  const segments = threadKey.split(":");
+function shelfPath(baseDir: string, sessionKey: string): string {
+  const segments = sessionKey.split(":");
   return join(baseDir, ...segments);
 }
 
-/** ファイルコピーのみによる WorkdirStorage 実装 (state.md §5)。 */
-export class CopyWorkdirStorage implements WorkdirStorage {
+/** ファイルコピーのみによる WorkdirStore 実装 (state.md §5)。 */
+export class CopyWorkdirStore implements WorkdirStore {
   constructor(
     private readonly baseDir: string,
     private readonly logger?: Logger,
   ) {}
 
-  async restore(threadKey: string, workdir: string): Promise<boolean> {
-    const shelf = shelfPath(this.baseDir, threadKey);
+  async restore(sessionKey: string, workdir: string): Promise<boolean> {
+    const shelf = shelfPath(this.baseDir, sessionKey);
     const entries = await readEntriesOrEmpty(shelf);
     if (!entries.includes(SESSION_FILE)) {
       return false;
@@ -49,12 +40,12 @@ export class CopyWorkdirStorage implements WorkdirStorage {
     for (const entry of entries) {
       await copyRegularEntry(shelf, workdir, entry, stats);
     }
-    logCopy(this.logger, "workdir restore", { threadKey }, started, stats);
+    logCopy(this.logger, "workdir restore", { sessionKey }, started, stats);
     return true;
   }
 
-  async flush(threadKey: string, workdir: string): Promise<void> {
-    const shelf = shelfPath(this.baseDir, threadKey);
+  async flush(sessionKey: string, workdir: string): Promise<void> {
+    const shelf = shelfPath(this.baseDir, sessionKey);
     await mkdir(shelf, { recursive: true });
 
     const started = Date.now();
@@ -69,18 +60,8 @@ export class CopyWorkdirStorage implements WorkdirStorage {
     if (entries.includes(SESSION_FILE)) {
       await copyRegularEntry(workdir, shelf, SESSION_FILE, stats);
     }
-    logCopy(this.logger, "workdir flush", { threadKey }, started, stats);
+    logCopy(this.logger, "workdir flush", { sessionKey }, started, stats);
   }
-}
-
-/** チャンネル単位の共有ディレクトリの退避と復元 (docs/design/state.md §5)。
- * WorkdirStorage と違いキーは channelId のみで、transcript を持たないため
- * session.jsonl の有無によるゲートもコピー順序の担保も行わない。 */
-export interface SharedStorage {
-  /** 保存棚 → staging へ復元。棚に無ければ何もしない */
-  restore(channelId: string, dest: string): Promise<void>;
-  /** staging → 保存棚へ退避 */
-  flush(channelId: string, src: string): Promise<void>;
 }
 
 /** 棚のサイズがこれを超えたら warn する既定値 (state.md §5.1: ガードレールでは
@@ -88,8 +69,8 @@ export interface SharedStorage {
  * その 10 倍程度を「気づくべき」ラインとする)。 */
 const DEFAULT_SHARED_SIZE_WARN_BYTES = 50 * 1024 * 1024;
 
-/** ファイルコピーのみによる SharedStorage 実装。棚は `<baseDir>/<channelId>/`。 */
-export class CopySharedStorage implements SharedStorage {
+/** ファイルコピーのみによる SharedStore 実装。棚は `<baseDir>/<channelId>/`。 */
+export class CopySharedStore implements SharedStore {
   constructor(
     private readonly baseDir: string,
     private readonly logger?: Logger,
@@ -153,35 +134,27 @@ function logCopy(
   logger?.info({ ...key, durationMs: Date.now() - startedAt, ...stats }, msg);
 }
 
-/** sharedDir の設定値から対応する SharedStorage を選ぶ。未設定/空文字なら
+/** sharedDir の設定値から対応する SharedStore を選ぶ。未設定/空文字なら
  * undefined (= shared 機能ごと無効。SessionRunner は undefined を見て staging の
  * 作成・skill 配線・system prompt への言及をすべて省く)。 */
-export function createSharedStorage(
+export function createSharedStore(
   sharedDir: string | undefined,
   logger?: Logger,
   warnBytes?: number,
-): SharedStorage | undefined {
+): SharedStore | undefined {
   return sharedDir !== undefined && sharedDir !== ""
-    ? new CopySharedStorage(sharedDir, logger, warnBytes)
+    ? new CopySharedStore(sharedDir, logger, warnBytes)
     : undefined;
 }
 
-/** 境界退避なし (アーカイブ先未設定時の既定)。restore は常に false、flush は何もしない。 */
-export class NoopWorkdirStorage implements WorkdirStorage {
-  async restore(_threadKey: string, _workdir: string): Promise<boolean> {
-    return false;
-  }
-  async flush(_threadKey: string, _workdir: string): Promise<void> {}
-}
-
-/** archiveDir の設定値から対応する WorkdirStorage を選ぶ。未設定/空文字なら Noop。 */
-export function createWorkdirStorage(
+/** archiveDir の設定値から対応する WorkdirStore を選ぶ。未設定/空文字なら Noop。 */
+export function createWorkdirStore(
   archiveDir: string | undefined,
   logger?: Logger,
-): WorkdirStorage {
+): WorkdirStore {
   return archiveDir !== undefined && archiveDir !== ""
-    ? new CopyWorkdirStorage(archiveDir, logger)
-    : new NoopWorkdirStorage();
+    ? new CopyWorkdirStore(archiveDir, logger)
+    : new NoopWorkdirStore();
 }
 
 async function readEntriesOrEmpty(dir: string): Promise<string[]> {

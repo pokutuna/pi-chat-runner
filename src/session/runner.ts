@@ -7,7 +7,7 @@
 //
 // Step 4 のスコープ: lease による多重起動の排他、drain/ack 分離 (drain は非破壊。
 // プロンプト済み item の記憶と重複除外は runner のインメモリ責務)、agent_end 後の
-// linger による追いメッセージ拾い直し、WorkdirStorage による境界退避 (未指定なら
+// linger による追いメッセージ拾い直し、WorkdirStore による境界退避 (未指定なら
 // Step 3 相当のローカル置きっぱなし)。turn timeout (Step 6) もここで実装する
 // (runtime.md §5.1「ターンにタイムアウトを設け、超過したら pi を kill」)。
 
@@ -29,9 +29,9 @@ import {
 import type { InboundMessage, ReactionEvent } from "../ingress/chat-event.js";
 import type { Logger } from "../logger.js";
 import { rootLogger } from "../logger.js";
-import { inboxItemId } from "../store/state/inbox-item.js";
-import type { InboxItem, StateStore } from "../store/state/interfaces.js";
-import type { SharedStorage, WorkdirStorage } from "../store/workdir.js";
+import type { SharedStore, WorkdirStore } from "../state/agent/interfaces.js";
+import { inboxItemId } from "../state/control/inbox-item.js";
+import type { ControlState, InboxItem } from "../state/control/interfaces.js";
 import {
   ActiveSession,
   type SessionContext,
@@ -80,16 +80,16 @@ export interface FetchedMessage {
 
 export interface SessionRunnerOptions {
   configSource: ConfigSource;
-  /** 永続化 Store 群 (inbox / sessions / leases)。state.md §3 */
-  store: StateStore;
+  /** Control State の Store 群 (inbox / sessions / threads / leases / channels)。state.md §3 */
+  controlState: ControlState;
   router: EgressRouter;
   reactor: TurnReactor;
   /** workdir の境界退避。 */
-  workdirStorage: WorkdirStorage;
+  workdirStore: WorkdirStore;
   /** チャンネル単位の共有ディレクトリの境界退避 (docs/design/state.md §9)。
    * 未指定なら shared 機能ごと無効 — staging の作成・skill 配線・system prompt
-   * への言及をすべて行わない (createSharedStorage が設定から解決する) */
-  sharedStorage?: SharedStorage;
+   * への言及をすべて行わない (createSharedStore が設定から解決する) */
+  sharedStore?: SharedStore;
   /** workdir のルート。既定 /tmp/pi-chat-runner/sessions */
   workdirRoot?: string;
   /** 明示的に差し替える pi バイナリ。テストや埋め込み用途向け */
@@ -159,12 +159,6 @@ export class SessionRunner implements SessionHost {
    * レーンで gate 通過 → inbox enqueue した後、即 kick する代わりにレーンごとの
    * タイマーで kick を遅らせる」 */
   private readonly pendingKicks = new Map<string, PendingKick>();
-  /** affinity 合流したイベントのスレッド → 合流先レーンの別名 (message-dispatch.md §3.2
-   * 「セッション合流」)。合流先セッションが返信したスレッド内の追い発言を、自
-   * スレッド followUp と同じ規則 (稼働中は gate なしで steer、終了後は resume) で
-   * 合流先レーンへ届けるための in-memory マップ。プロセス再起動で消える (その後の
-   * スレッド返信は通常の新規判定に落ちる) — 永続化は §3.1 の Thread → Session 対応の実装時 */
-  private readonly threadAlias = new Map<string, string>();
   private readonly configSource: ConfigSource;
   /** 組み込み memory skill の絶対パス。shared 有効時のみ解決する (無効時 undefined) */
   private readonly memorySkillPath: string | undefined;
@@ -182,7 +176,7 @@ export class SessionRunner implements SessionHost {
     // memory skill は書き先が ../shared/ なので shared 前提。有効時は boot で解決して
     // 配置壊れを fail-loud にする (チャンネル別の opt-out は kick 時に doc.memory で判定)
     this.memorySkillPath =
-      options.sharedStorage !== undefined
+      options.sharedStore !== undefined
         ? resolveBuiltinMemorySkillPath()
         : undefined;
     // 組み込み extension (reply/permission-gate/export) は常時注入で外せない
@@ -193,11 +187,11 @@ export class SessionRunner implements SessionHost {
     this.owner = options.owner ?? `${hostname()}:${process.pid}`;
     this.classifierClient = options.classifierClient;
     this.ctx = {
-      store: options.store,
+      controlState: options.controlState,
       router: options.router,
       reactor: options.reactor,
-      workdirStorage: options.workdirStorage,
-      sharedStorage: options.sharedStorage,
+      workdirStore: options.workdirStore,
+      sharedStore: options.sharedStore,
       logger: options.logger ?? rootLogger.child({ component: "session" }),
       lingerMs: options.lingerMs ?? 3_000,
       turnTimeoutMs: options.turnTimeoutMs ?? 600_000,
@@ -227,9 +221,9 @@ export class SessionRunner implements SessionHost {
     if (current === session) this.sessions.delete(session.sessionKey);
   }
 
-  /** SessionHost: windowSec 起点の記録 (旧 markSessionPointerEnded の呼び出し) */
+  /** SessionHost: windowSec 起点の記録 (threads.markLatestEnded の呼び出し) */
   markEnded(channelId: string, sessionKey: string): Promise<void> {
-    return this.markSessionPointerEnded(channelId, sessionKey);
+    return this.markLatestSessionEnded(channelId, sessionKey);
   }
 
   async handle(event: InboundMessage): Promise<void> {
@@ -240,9 +234,9 @@ export class SessionRunner implements SessionHost {
     const doc = await this.loadChannelDoc(isDm ? DM_CHANNEL : channelId);
     const policy = resolveSessionPolicy(doc, isDm);
     // affinity で合流したスレッド内の追い発言は合流先レーンの発言として扱う
-    // (message-dispatch.md §3.2「セッション合流」の別名解決)
+    // (message-dispatch.md §3.1 Thread → Session の対応)
     const naturalKey = sessionKeyOf(event, policy);
-    const sessionKey = this.threadAlias.get(naturalKey) ?? naturalKey;
+    const sessionKey = await this.resolveBoundSession(naturalKey);
     const item: InboxItem = {
       id: inboxItemId(event),
       event,
@@ -406,9 +400,9 @@ export class SessionRunner implements SessionHost {
     );
 
     const policy = resolveSessionPolicy(doc, isDm);
-    // message 経路と同じ別名解決 (合流済みスレッド内のメッセージへの reaction 起動)
+    // message 経路と同じ Thread → Session 解決 (合流済みスレッド内のメッセージへの reaction 起動)
     const naturalKey = sessionKeyOf(synthetic, policy);
-    const sessionKey = this.threadAlias.get(naturalKey) ?? naturalKey;
+    const sessionKey = await this.resolveBoundSession(naturalKey);
     const item: InboxItem = {
       id: inboxItemId(synthetic),
       event: synthetic,
@@ -437,7 +431,7 @@ export class SessionRunner implements SessionHost {
     const existing = this.sessions.get(sessionKey);
     if (existing === undefined) return false;
 
-    const fresh = await this.ctx.store.inbox.enqueue(sessionKey, item);
+    const fresh = await this.ctx.controlState.inbox.enqueue(sessionKey, item);
     if (!fresh) {
       this.ctx.logger.debug(
         { sessionKey, itemId: item.id },
@@ -446,7 +440,7 @@ export class SessionRunner implements SessionHost {
       return true;
     }
     // steer 配達もレーンの活動 (message-dispatch.md §3.2 の直近セッションポインタ)
-    await this.touchSessionPointer(
+    await this.touchLatestSession(
       item.event.conversation.channelId,
       sessionKey,
     );
@@ -463,7 +457,7 @@ export class SessionRunner implements SessionHost {
   /** /new コマンドの処理 (session-model.md §5.1)。gate を通過済み、かつこのレーンに
    * 実行中セッションが無いことが呼び出し元 (handle) で確定した後にのみ呼ばれる。
    * 短時間の lease を取得してマーカー (rotateRequestedAt) を書くだけで、即座の
-   * rotate はしない (WorkdirStorage の棚に旧 session.jsonl が残っており、次の
+   * rotate はしない (WorkdirStore の棚に旧 session.jsonl が残っており、次の
    * restore で復元されて巻き戻るため。次の kick が restore 後に消費する) */
   private async handleNewCommand(
     sessionKey: string,
@@ -472,7 +466,7 @@ export class SessionRunner implements SessionHost {
     event: InboundMessage,
     cmd: Extract<ChatCommand, { kind: "new" }>,
   ): Promise<void> {
-    const lease = await this.ctx.store.leases.acquire(
+    const lease = await this.ctx.controlState.leases.acquire(
       sessionKey,
       this.owner,
       NEW_COMMAND_LEASE_TTL_MS,
@@ -495,27 +489,29 @@ export class SessionRunner implements SessionHost {
       return;
     }
     try {
-      const existing = await this.ctx.store.sessions.get(sessionKey);
+      const existing = await this.ctx.controlState.sessions.get(sessionKey);
       if (existing !== null) {
-        // updatedAt は据え置き — マーカー書き込みは「活動」ではないので
+        // lastActiveAt は据え置き — マーカー書き込みは「活動」ではないので
         // idle 判定を狂わせない (session-model.md §6)
-        await this.ctx.store.sessions.put(sessionKey, {
+        await this.ctx.controlState.sessions.put(sessionKey, {
           ...existing,
           rotateRequestedAt: new Date(),
         });
       } else {
         const threadTs = event.conversation.threadTs ?? event.id;
-        await this.ctx.store.sessions.put(sessionKey, {
+        const now = new Date();
+        await this.ctx.controlState.sessions.put(sessionKey, {
           channelId,
           threadTs,
           triggerMessageId: event.id,
-          status: "finished",
-          updatedAt: new Date(),
-          rotateRequestedAt: new Date(),
+          startedAt: now,
+          lastActiveAt: now,
+          endedAt: now,
+          rotateRequestedAt: now,
         });
       }
     } finally {
-      await this.ctx.store.leases.release(lease);
+      await this.ctx.controlState.leases.release(lease);
     }
     this.ctx.logger.info({ sessionKey }, "session rotation requested");
 
@@ -549,7 +545,9 @@ export class SessionRunner implements SessionHost {
    * doc 不在 = enabled (既定)。DM 予約名でなく実 channelId で管理する
    * (メッセージ側は実 channelId で判定するため、ChannelDoc の DM 束ねとは別軸) */
   private async isChannelDisabled(channelId: string): Promise<boolean> {
-    return (await this.ctx.store.channels.get(channelId))?.enabled === false;
+    return (
+      (await this.ctx.controlState.channels.get(channelId))?.enabled === false
+    );
   }
 
   /** /enable /disable コマンドの処理 (session-model.md §5.2)。gate をバイパスして
@@ -564,7 +562,7 @@ export class SessionRunner implements SessionHost {
     cmd: Extract<ChatCommand, { kind: "enable" | "disable" }>,
   ): Promise<void> {
     const enabled = cmd.kind === "enable";
-    await this.ctx.store.channels.put(channelId, {
+    await this.ctx.controlState.channels.put(channelId, {
       enabled,
       updatedAt: new Date(),
       updatedBy: event.sender.id,
@@ -628,9 +626,10 @@ export class SessionRunner implements SessionHost {
         doc,
       );
       if (target !== sessionKey) {
-        // このイベントのスレッドを合流先レーンの別名として記録し、以降の
-        // スレッド内の追い発言も合流先へ届くようにする
-        this.threadAlias.set(sessionKey, target);
+        // このイベントのスレッドを合流先 Session に束ね、以降のスレッド内の追い
+        // 発言も合流先へ届くようにする (message-dispatch.md §3.1)。Control State に
+        // 記録するので Runner の実行インスタンスが入れ替わっても対応は保たれる
+        await this.bindThread(sessionKey, target);
         this.ctx.logger.info(
           {
             channelId,
@@ -647,7 +646,7 @@ export class SessionRunner implements SessionHost {
       }
     }
 
-    const fresh = await this.ctx.store.inbox.enqueue(sessionKey, item);
+    const fresh = await this.ctx.controlState.inbox.enqueue(sessionKey, item);
     if (!fresh) {
       this.ctx.logger.debug(
         { sessionKey, itemId: item.id },
@@ -656,7 +655,7 @@ export class SessionRunner implements SessionHost {
       return;
     }
     // レーンの発生 (debounce 待機開始 / kick) を直近セッションポインタに記録
-    await this.touchSessionPointer(channelId, sessionKey);
+    await this.touchLatestSession(channelId, sessionKey);
 
     // 多重起動防止: gate 評価の await 中に別イベントが kick 済みなら、
     // 上で enqueue した item はそのセッションの drain が拾う
@@ -777,69 +776,92 @@ export class SessionRunner implements SessionHost {
     // Thread → Session の対応)。合流対象はチャンネル直下投稿のみ
     if (event.conversation.threadTs !== undefined) return naturalKey;
 
-    const state = await this.ctx.store.channels.get(channelId);
-    const pointer = state?.affinity;
-    if (pointer === undefined || pointer.sessionKey === naturalKey) {
+    const latest = await this.ctx.controlState.threads.latest(channelId);
+    if (latest === null || latest.sessionKey === naturalKey) {
       return naturalKey;
     }
 
     // 生きているレーン (debounce 待機 / starting / running / lingering) へは
     // 窓に関わらず合流する
     if (
-      this.sessions.has(pointer.sessionKey) ||
-      this.pendingKicks.has(pointer.sessionKey)
+      this.sessions.has(latest.sessionKey) ||
+      this.pendingKicks.has(latest.sessionKey)
     ) {
-      return pointer.sessionKey;
+      return latest.sessionKey;
     }
 
     // 終了済みレーンは windowSec 以内なら resume 合流。endedAt が無い
     // (クラッシュで書き損ね等) 場合は lastActiveAt で保守的に判定する
     const windowSec = affinity.windowSec ?? 0;
-    const refMs = (pointer.endedAt ?? pointer.lastActiveAt).getTime();
-    if (Date.now() - refMs <= windowSec * 1000) return pointer.sessionKey;
+    const refMs = (latest.endedAt ?? latest.lastActiveAt).getTime();
+    if (Date.now() - refMs <= windowSec * 1000) return latest.sessionKey;
     return naturalKey;
   }
 
-  /** 直近セッションポインタの活動更新 (message-dispatch.md §3.2)。ポインタは合流候補の
-   * 検索用 (advisory) なので、書き込み失敗でイベント処理を止めない */
-  private async touchSessionPointer(
-    channelId: string,
+  /** Thread → Session 対応の解決 (message-dispatch.md §3.1)。対応が引けないときは
+   * 導出した sessionKey をそのまま使う — 対応の読み出し失敗でイベント処理を止めない */
+  private async resolveBoundSession(naturalKey: string): Promise<string> {
+    try {
+      return (
+        (await this.ctx.controlState.threads.resolve(naturalKey)) ?? naturalKey
+      );
+    } catch (err) {
+      this.ctx.logger.warn(
+        { naturalKey, err },
+        "thread binding resolve failed",
+      );
+      return naturalKey;
+    }
+  }
+
+  /** 合流結果の記録 (message-dispatch.md §3.1)。記録できなくても配達は成立する
+   * (このイベント自体は合流先へ届く) ので、失敗はログのみで進行を止めない */
+  private async bindThread(
+    threadKey: string,
     sessionKey: string,
   ): Promise<void> {
     try {
-      await this.ctx.store.channels.putSessionPointer(channelId, {
-        sessionKey,
-        lastActiveAt: new Date(),
-      });
+      await this.ctx.controlState.threads.bind(threadKey, sessionKey);
     } catch (err) {
       this.ctx.logger.warn(
-        { channelId, sessionKey, err },
-        "session pointer touch failed",
+        { threadKey, sessionKey, err },
+        "thread binding failed",
       );
     }
   }
 
-  /** セッション終了時のポインタ endedAt 記録 (message-dispatch.md §3.2。windowSec の
-   * 起点になる)。ポインタが既に別レーンを指していたら書かない — 古いレーンの終了で
-   * 「最後に活動したセッション」を巻き戻さない */
-  private async markSessionPointerEnded(
+  /** 直近 Session の活動更新 (message-dispatch.md §3.2)。合流候補の検索用
+   * (advisory) なので、書き込み失敗でイベント処理を止めない */
+  private async touchLatestSession(
     channelId: string,
     sessionKey: string,
   ): Promise<void> {
     try {
-      const state = await this.ctx.store.channels.get(channelId);
-      const pointer = state?.affinity;
-      if (pointer === undefined || pointer.sessionKey !== sessionKey) return;
-      const now = new Date();
-      await this.ctx.store.channels.putSessionPointer(channelId, {
-        sessionKey,
-        lastActiveAt: now,
-        endedAt: now,
-      });
+      await this.ctx.controlState.threads.touchLatest(channelId, sessionKey);
     } catch (err) {
       this.ctx.logger.warn(
         { channelId, sessionKey, err },
-        "session pointer end mark failed",
+        "latest session touch failed",
+      );
+    }
+  }
+
+  /** Session 終了時の endedAt 記録 (message-dispatch.md §3.2。windowSec の起点に
+   * なる)。直近が既に別 Session を指していれば store 側が no-op にする — 古い
+   * Session の終了で「最後に活動した Session」を巻き戻さない */
+  private async markLatestSessionEnded(
+    channelId: string,
+    sessionKey: string,
+  ): Promise<void> {
+    try {
+      await this.ctx.controlState.threads.markLatestEnded(
+        channelId,
+        sessionKey,
+      );
+    } catch (err) {
+      this.ctx.logger.warn(
+        { channelId, sessionKey, err },
+        "latest session end mark failed",
       );
     }
   }
@@ -856,7 +878,7 @@ export class SessionRunner implements SessionHost {
   ): Promise<void> {
     // 実行ロック。取れなければ別プロセスが保持中 — enqueue 済みなので
     // 保持者側の drain (steer / agent_end / linger) が拾う
-    const lease = await this.ctx.store.leases.acquire(
+    const lease = await this.ctx.controlState.leases.acquire(
       sessionKey,
       this.owner,
       this.ctx.leaseTtlMs,
@@ -871,7 +893,7 @@ export class SessionRunner implements SessionHost {
     if (this.sessions.has(sessionKey)) {
       // acquire の await 中にローカルの別イベントが kick した (そちらが lease を
       // 取れているはずなので通常到達しないが、二重 kick だけは防ぐ)
-      await this.ctx.store.leases.release(lease);
+      await this.ctx.controlState.leases.release(lease);
       return;
     }
 
@@ -897,7 +919,7 @@ export class SessionRunner implements SessionHost {
       lease,
       host: this,
       sharedStagingDir:
-        this.ctx.sharedStorage !== undefined
+        this.ctx.sharedStore !== undefined
           ? this.sharedStagingDir(channelId)
           : undefined,
       ctx: this.ctx,
@@ -917,15 +939,16 @@ export class SessionRunner implements SessionHost {
         sharedDirReal,
         sessionPath,
         resumed,
+        rotateConsumed,
       } = await prepareWorkdir({
         sessionKey,
         channelId,
         workdir,
         policy,
         doc,
-        sessions: this.ctx.store.sessions,
-        workdirStorage: this.ctx.workdirStorage,
-        sharedStorage: this.ctx.sharedStorage,
+        sessions: this.ctx.controlState.sessions,
+        workdirStore: this.ctx.workdirStore,
+        sharedStore: this.ctx.sharedStore,
         sharedStagingDir: (id) => this.sharedStagingDir(id),
         agentUid: this.ctx.agentUid,
         agentGid: this.ctx.agentGid,
@@ -971,15 +994,39 @@ export class SessionRunner implements SessionHost {
         model,
         extraEnv,
       });
+
+      // /new マーカーの消費 (session-model.md §5.1: 「マーカーは次の Session 起動時、
+      // Workdir の復元後に消費される」)。Control State を書くのは Dispatcher の責務
+      // なので、Runtime 準備 (prepareWorkdir) が返した判定をここで確定させる。
+      // start() 後に置くのは、start が SessionRecord を put し直すため — 先に
+      // クリアすると start の put で書き戻される
+      if (rotateConsumed) await this.clearRotateMarker(sessionKey);
     } catch (err) {
       // enqueue 済み item は ack されていないので、同レーンの次のイベント
       // (または再送) で再 kick され拾い直される (message-dispatch.md §7.4)。
       // timer/process の後始末と progress クリアは session.abort に閉じ、
       // lease release / markEnded / warn ログはここで現行と同じ順序で続ける
       await session.abort();
-      await this.ctx.store.leases.release(lease);
-      await this.markSessionPointerEnded(channelId, sessionKey);
+      await this.ctx.controlState.leases.release(lease);
+      await this.markLatestSessionEnded(channelId, sessionKey);
       this.ctx.logger.warn({ sessionKey, err }, "session kick failed");
+    }
+  }
+
+  /** /new マーカー (rotateRequestedAt) のクリア。1 回の起動でちょうど 1 回、
+   * Workdir の復元後に消費する (session-model.md §5.1)。マーカーの書き込みと同じく
+   * Control State の更新なので Dispatcher が行う。クリアに失敗しても次の起動で
+   * もう一度 rotate されるだけなので、進行は止めない */
+  private async clearRotateMarker(sessionKey: string): Promise<void> {
+    try {
+      const current = await this.ctx.controlState.sessions.get(sessionKey);
+      if (current?.rotateRequestedAt === undefined) return;
+      // exactOptionalPropertyTypes: true のため rotateRequestedAt を持つ
+      // プロパティ自体を作らない
+      const { rotateRequestedAt: _rotateRequestedAt, ...cleared } = current;
+      await this.ctx.controlState.sessions.put(sessionKey, cleared);
+    } catch (err) {
+      this.ctx.logger.warn({ sessionKey, err }, "rotate marker clear failed");
     }
   }
 

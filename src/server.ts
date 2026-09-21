@@ -4,7 +4,7 @@
 // だけ通し、SessionRunner に渡す。入口の選択は connector.slack.mode (agent.yaml /
 // SLACK_MODE env) で行い、後段 (gate 評価・inbox・lease・pi の kick/steer。すべて
 // SessionRunner の中, src/session/runner.ts) には入口の別を漏らさない
-// (architecture.md §5)。Store の実装選択 (store.backend, agent.yaml) も同様にここで行う
+// (architecture.md §5)。State backend の実装選択 (store.backend, agent.yaml) も同様にここで行う
 // (state.md §4 / docs/design/architecture.md §3, §6)。
 
 import { mkdirSync } from "node:fs";
@@ -40,10 +40,10 @@ import { HttpIngress } from "./ingress/slack/http-ingress.js";
 import { SocketIngress } from "./ingress/slack/socket-ingress.js";
 import { rootLogger } from "./logger.js";
 import type { PiPermissionConfig } from "./session/spawn.js";
-import { FirestoreStateStore } from "./store/state/backends/firestore.js";
-import { InMemoryStateStore } from "./store/state/backends/memory.js";
-import { SqliteStateStore } from "./store/state/backends/sqlite.js";
-import type { StateStore } from "./store/state/interfaces.js";
+import { FirestoreControlState } from "./state/control/backends/firestore.js";
+import { InMemoryControlState } from "./state/control/backends/memory.js";
+import { SqliteControlState } from "./state/control/backends/sqlite.js";
+import type { ControlState } from "./state/control/interfaces.js";
 
 const logger = rootLogger.child({ component: "server" });
 
@@ -68,21 +68,21 @@ function collectGcpEnv(): Record<string, string> {
   return env;
 }
 
-/** store.backend (agent.yaml, 既定 memory) で永続化バックエンドを選ぶ (state.md §4)。
- * SessionRunner 以下には実装の別を漏らさない。 */
-function buildStateStore(store: ResolvedStoreConfig): StateStore {
+/** store.backend (agent.yaml, 既定 memory) で Control State のバックエンドを選ぶ
+ * (state.md §4)。SessionRunner 以下には実装の別を漏らさない。 */
+function buildControlState(store: ResolvedStoreConfig): ControlState {
   switch (store.backend) {
     case "memory":
-      return new InMemoryStateStore();
+      return new InMemoryControlState();
     case "sqlite": {
       mkdirSync(dirname(store.sqlite.path), { recursive: true });
-      return new SqliteStateStore(store.sqlite.path);
+      return new SqliteControlState(store.sqlite.path);
     }
     case "firestore": {
       // projectId 未指定 ("") なら SDK が GOOGLE_CLOUD_PROJECT / ADC から解決する。
       // エミュレータは FIRESTORE_EMULATOR_HOST を SDK が自動で読む (state.md §4.2)
       const { projectId, database, rootDoc } = store.firestore;
-      return new FirestoreStateStore(
+      return new FirestoreControlState(
         new Firestore({
           ...(projectId !== "" && { projectId }),
           databaseId: database,
@@ -310,11 +310,11 @@ const DEFAULT_LOCAL_CHANNEL_ID = "local";
  * 返す options は startBridge に渡す BridgeOptions のうち eventSource/web/configSource
  * を除いた共通部分 (呼び出し元がそれぞれの入口を追加してから startBridge に渡す)。 */
 async function buildCommonBridgeOptions(configPath: string): Promise<{
-  store: StateStore;
+  controlState: ControlState;
   storeConfig: ResolvedStoreConfig;
   options: Omit<
     BridgeOptions,
-    "eventSource" | "web" | "configSource" | "store"
+    "eventSource" | "web" | "configSource" | "controlState"
   >;
 }> {
   const [storeConfig, agentConfigFile] = await Promise.all([
@@ -339,15 +339,15 @@ async function buildCommonBridgeOptions(configPath: string): Promise<{
     ...agentConfig.env,
     PI_EXPORT_ENTRYPOINT: piPaths.entrypoint,
   };
-  const store = buildStateStore(storeConfig);
+  const controlState = buildControlState(storeConfig);
   const archiveDir = process.env.WORKDIR_ARCHIVE_DIR;
   const sharedDir = process.env.SHARED_DIR;
-  // 未設定/非数値なら createSharedStorage の既定閾値を使う (state.md §5.1)
+  // 未設定/非数値なら createSharedStore の既定閾値を使う (state.md §5.1)
   const sharedShelfWarnBytes = Number(process.env.SHARED_SHELF_WARN_BYTES);
   const piPermission = buildPiPermissionConfig(runtime, piPaths);
 
   return {
-    store,
+    controlState,
     storeConfig,
     options: {
       piEntrypoint: piPaths.entrypoint,
@@ -397,7 +397,7 @@ async function runLocal(argv: string[]): Promise<void> {
   const channelId = argv[3] ?? DEFAULT_LOCAL_CHANNEL_ID;
   const configPath = process.env.CONFIG_PATH ?? DEFAULT_CONFIG_PATH;
 
-  const { store, storeConfig, options } =
+  const { controlState, storeConfig, options } =
     await buildCommonBridgeOptions(configPath);
 
   const chat = createLocalChat({ defaultChannelId: channelId });
@@ -419,7 +419,7 @@ async function runLocal(argv: string[]): Promise<void> {
 
   await startBridge({
     eventSource: chat.ingress,
-    store,
+    controlState,
     configSource: new FileConfigSource(configPath),
     poster: chat.poster,
     reactor: chat.reactor,
@@ -453,10 +453,11 @@ async function main() {
   // connector.slack (設定ファイル内, ${env.X} 参照解決済み) と、store/agent ブロック
   // 共通の組み立て (buildCommonBridgeOptions) を並行に読む (起動時の cold start 短縮)。
   // SLACK_MODE 等の env 直読みはやめ、connector-config.ts 経由に一本化する
-  const [connectorConfig, { store, storeConfig, options }] = await Promise.all([
-    loadConnectorConfig(configPath),
-    buildCommonBridgeOptions(configPath),
-  ]);
+  const [connectorConfig, { controlState, storeConfig, options }] =
+    await Promise.all([
+      loadConnectorConfig(configPath),
+      buildCommonBridgeOptions(configPath),
+    ]);
   const { ingress, botToken } = buildConnector(
     connectorConfig.slack,
     configPath,
@@ -477,7 +478,7 @@ async function main() {
   await startBridge({
     eventSource: ingress,
     web,
-    store,
+    controlState,
     configSource: new FileConfigSource(configPath),
     ...options,
   });

@@ -20,8 +20,8 @@ import { fileURLToPath } from "node:url";
 
 import type { ChannelDoc } from "../config/channel-doc.js";
 import type { Logger } from "../logger.js";
-import type { SessionStore } from "../store/state/interfaces.js";
-import type { SharedStorage, WorkdirStorage } from "../store/workdir.js";
+import type { SharedStore, WorkdirStore } from "../state/agent/interfaces.js";
+import type { SessionStore } from "../state/control/interfaces.js";
 import { isIdleExpired, type SessionPolicy } from "./policy.js";
 import {
   buildPiPermissionOptions,
@@ -262,6 +262,10 @@ export interface PreparedWorkdir {
   sessionPath: string;
   /** kick 開始時点で session.jsonl が既に存在したか (resume 判定用ログに使う) */
   resumed: boolean;
+  /** /new マーカー (rotateRequestedAt) を消費して transcript を世代交代したか。
+   * マーカーのクリア (Control State への書き込み) は Dispatcher 側が行う
+   * (state.md §1「Runtime は Control State を書かない」) */
+  rotateConsumed: boolean;
 }
 
 /** kick 前半、workdir/shared の mkdir + restore、transcript 世代交代 (manual →
@@ -270,17 +274,18 @@ export interface PreparedWorkdir {
  *
  * 副作用の実行順序はそのまま維持する: mkdir → restore (workdir → shared) →
  * transcript 世代交代 (manual → idle → size) → workdir/shared の chown → agentHome
- * 作成/chown → realpath 正規化。sessions store への書き込み (rotateRequestedAt
- * クリア) はここで行うが、SessionRecord の可変状態には触れない。 */
+ * 作成/chown → realpath 正規化。Control State は読むだけで書かない (state.md §1) —
+ * /new マーカーのクリアは rotateConsumed を通じて Dispatcher 側に委ねる。 */
 export async function prepareWorkdir(args: {
   sessionKey: string;
   channelId: string;
   workdir: string;
   policy: SessionPolicy;
   doc: ChannelDoc | null;
+  /** rotateRequestedAt / lastActiveAt の読み出しのみに使う (書き込みはしない) */
   sessions: SessionStore;
-  workdirStorage: WorkdirStorage;
-  sharedStorage: SharedStorage | undefined;
+  workdirStore: WorkdirStore;
+  sharedStore: SharedStore | undefined;
   sharedStagingDir: (channelId: string) => string;
   agentUid: number | undefined;
   agentGid: number | undefined;
@@ -294,8 +299,8 @@ export async function prepareWorkdir(args: {
     policy,
     doc,
     sessions,
-    workdirStorage,
-    sharedStorage,
+    workdirStore,
+    sharedStore,
     sharedStagingDir,
     agentUid,
     agentGid,
@@ -306,16 +311,16 @@ export async function prepareWorkdir(args: {
   // 同 sessionKey は常に同じ workdir/session.jsonl を使う。再 trigger 時は
   // 同じパスで再 spawn され、pi が JSONL を読んで文脈を継続する (再開の専用フローなし)
   await mkdir(workdir, { recursive: true });
-  await workdirStorage.restore(sessionKey, workdir);
+  await workdirStore.restore(sessionKey, workdir);
   // チャンネル共有ディレクトリ (docs/design/state.md §6)。sessionKey ではなく
   // channelId 単位で復元し、スレッド (セッション) を跨いで持ち越す。skills/ は
   // 空でも常に作る — pi の --skill は空ディレクトリを黙って無視するので配線は
   // 無条件でよく、agent は mkdir なしで skill を置ける
   const sharedDir =
-    sharedStorage !== undefined ? sharedStagingDir(channelId) : undefined;
-  if (sharedStorage !== undefined && sharedDir !== undefined) {
+    sharedStore !== undefined ? sharedStagingDir(channelId) : undefined;
+  if (sharedStore !== undefined && sharedDir !== undefined) {
     await mkdir(join(sharedDir, "skills"), { recursive: true });
-    await sharedStorage.restore(channelId, sharedDir);
+    await sharedStore.restore(channelId, sharedDir);
   }
   // 世代交代 (runtime.md §2.1): manual (/new マーカー) → idle 超過 →
   // transcript サイズ超過の優先順位で、いずれか 1 回だけ transcript を
@@ -331,24 +336,23 @@ export async function prepareWorkdir(args: {
     await rotateTranscript(workdir, now);
     rotated = true;
     logger.info({ sessionKey }, "manual reset: transcript rotated");
-    // マーカーをクリアして put し直す (exactOptionalPropertyTypes: true のため
-    // rotateRequestedAt を持つプロパティ自体を作らない)
-    const { rotateRequestedAt: _rotateRequestedAt, ...cleared } = previous;
-    await sessions.put(sessionKey, cleared);
+    // マーカーのクリアはここでは書かない。Runtime の準備は Control State を
+    // 書かない (state.md §1) ので、rotateConsumed を返して Dispatcher に消費させる
   }
+  const rotateConsumed = previous?.rotateRequestedAt !== undefined;
   // idleResetMinutes / maxTranscriptKb は channel モード専用 (runtime.md §2.1)
   if (policy.sessionMode === "channel") {
     const idleResetMinutes = doc?.session?.idleResetMinutes;
     if (!rotated && idleResetMinutes !== undefined && previous !== null) {
       const now = Date.now();
-      if (isIdleExpired(previous.updatedAt, idleResetMinutes, now)) {
+      if (isIdleExpired(previous.lastActiveAt, idleResetMinutes, now)) {
         await rotateTranscript(workdir, now);
         rotated = true;
         logger.info(
           {
             sessionKey,
             idleResetMinutes,
-            idleMs: now - previous.updatedAt.getTime(),
+            idleMs: now - previous.lastActiveAt.getTime(),
           },
           "idle reset: transcript rotated",
         );
@@ -414,7 +418,14 @@ export async function prepareWorkdir(args: {
   const sessionPath = join(workdirReal, SESSION_FILE);
   const resumed = await transcriptExists(sessionPath);
 
-  return { workdirReal, agentHomeReal, sharedDirReal, sessionPath, resumed };
+  return {
+    workdirReal,
+    agentHomeReal,
+    sharedDirReal,
+    sessionPath,
+    resumed,
+    rotateConsumed,
+  };
 }
 
 /** buildSpawnOptions が返す、PiProcess construction に必要な値一式 */

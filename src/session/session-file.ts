@@ -1,5 +1,5 @@
 // セッションファイル名の single source of truth。
-// src/session/runner.ts (spawn 時のパス組み立て・rotate) と src/store/workdir.ts
+// src/session/runner.ts (spawn 時のパス組み立て・rotate) と src/state/agent/copy.ts
 // (境界退避での対象ファイル判定) の両方から参照するため、循環依存を避けられる
 // 中立な場所として src/session/ 配下に置く。
 

@@ -6,14 +6,14 @@ import pino from "pino";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
-  CopySharedStorage,
-  CopyWorkdirStorage,
-  createSharedStorage,
-  createWorkdirStorage,
-  NoopWorkdirStorage,
-} from "../../src/store/workdir.js";
+  CopySharedStore,
+  CopyWorkdirStore,
+  createSharedStore,
+  createWorkdirStore,
+} from "../../../src/state/agent/copy.js";
+import { NoopWorkdirStore } from "../../../src/state/agent/noop.js";
 
-const THREAD_KEY = "C123ABC:1720000000.123456";
+const SESSION_KEY = "C123ABC:1720000000.123456";
 
 let baseDir: string;
 let workdir: string;
@@ -38,17 +38,17 @@ async function writeWorkdirFiles(): Promise<void> {
   );
 }
 
-describe("CopyWorkdirStorage", () => {
+describe("CopyWorkdirStore", () => {
   it("flushes workdir to the shelf and restores it into a fresh workdir", async () => {
-    const storage = new CopyWorkdirStorage(baseDir);
+    const storage = new CopyWorkdirStore(baseDir);
     await writeWorkdirFiles();
 
-    await storage.flush(THREAD_KEY, workdir);
+    await storage.flush(SESSION_KEY, workdir);
 
     // simulate workdir disposal (tmpfs teardown between sessions)
     await rm(workdir, { recursive: true, force: true });
 
-    const restored = await storage.restore(THREAD_KEY, workdir);
+    const restored = await storage.restore(SESSION_KEY, workdir);
 
     expect(restored).toBe(true);
     expect(await readFile(join(workdir, "session.jsonl"), "utf8")).toBe(
@@ -63,9 +63,9 @@ describe("CopyWorkdirStorage", () => {
   });
 
   it("returns false and does nothing when the shelf is empty", async () => {
-    const storage = new CopyWorkdirStorage(baseDir);
+    const storage = new CopyWorkdirStore(baseDir);
 
-    const restored = await storage.restore(THREAD_KEY, workdir);
+    const restored = await storage.restore(SESSION_KEY, workdir);
 
     expect(restored).toBe(false);
     await expect(
@@ -74,7 +74,7 @@ describe("CopyWorkdirStorage", () => {
   });
 
   it("does not restore when the shelf has other files but no session.jsonl", async () => {
-    const storage = new CopyWorkdirStorage(baseDir);
+    const storage = new CopyWorkdirStore(baseDir);
     const shelf = join(baseDir, "C123ABC", "1720000000.123456");
     await mkdir(join(shelf, "workspace"), { recursive: true });
     await writeFile(
@@ -82,7 +82,7 @@ describe("CopyWorkdirStorage", () => {
       "partial flush trace",
     );
 
-    const restored = await storage.restore(THREAD_KEY, workdir);
+    const restored = await storage.restore(SESSION_KEY, workdir);
 
     expect(restored).toBe(false);
     await expect(
@@ -91,16 +91,16 @@ describe("CopyWorkdirStorage", () => {
   });
 
   it("overwrites the shelf content on a second flush", async () => {
-    const storage = new CopyWorkdirStorage(baseDir);
+    const storage = new CopyWorkdirStore(baseDir);
     await writeWorkdirFiles();
-    await storage.flush(THREAD_KEY, workdir);
+    await storage.flush(SESSION_KEY, workdir);
 
     await writeFile(join(workdir, "session.jsonl"), '{"type":"turn2"}\n');
     await writeFile(join(workdir, "workspace", "note.txt"), "updated");
-    await storage.flush(THREAD_KEY, workdir);
+    await storage.flush(SESSION_KEY, workdir);
 
     await rm(workdir, { recursive: true, force: true });
-    const restored = await storage.restore(THREAD_KEY, workdir);
+    const restored = await storage.restore(SESSION_KEY, workdir);
 
     expect(restored).toBe(true);
     expect(await readFile(join(workdir, "session.jsonl"), "utf8")).toBe(
@@ -112,10 +112,10 @@ describe("CopyWorkdirStorage", () => {
   });
 
   it("maps the ':' in threadKey to a path separator on the shelf", async () => {
-    const storage = new CopyWorkdirStorage(baseDir);
+    const storage = new CopyWorkdirStore(baseDir);
     await writeWorkdirFiles();
 
-    await storage.flush(THREAD_KEY, workdir);
+    await storage.flush(SESSION_KEY, workdir);
 
     const expectedShelfTranscript = join(
       baseDir,
@@ -129,11 +129,11 @@ describe("CopyWorkdirStorage", () => {
   });
 });
 
-describe("NoopWorkdirStorage", () => {
+describe("NoopWorkdirStore", () => {
   it("restore returns false and does not create the workdir", async () => {
-    const storage = new NoopWorkdirStorage();
+    const storage = new NoopWorkdirStore();
 
-    const restored = await storage.restore(THREAD_KEY, workdir);
+    const restored = await storage.restore(SESSION_KEY, workdir);
 
     expect(restored).toBe(false);
     await expect(
@@ -163,11 +163,11 @@ function collectingLogger(): { logger: pino.Logger; lines: () => unknown[] } {
   };
 }
 
-describe("CopySharedStorage", () => {
+describe("CopySharedStore", () => {
   const CHANNEL_ID = "C123ABC";
 
   it("flushes staging to the shelf and restores it into a fresh staging dir", async () => {
-    const storage = new CopySharedStorage(baseDir);
+    const storage = new CopySharedStore(baseDir);
     await mkdir(join(workdir, "memory"), { recursive: true });
     await writeFile(join(workdir, "memory", "MEMORY.md"), "- note");
     await writeFile(join(workdir, "notes.md"), "hello");
@@ -183,8 +183,8 @@ describe("CopySharedStorage", () => {
     expect(await readFile(join(workdir, "notes.md"), "utf8")).toBe("hello");
   });
 
-  it("restores without a session.jsonl gate (unlike CopyWorkdirStorage)", async () => {
-    const storage = new CopySharedStorage(baseDir);
+  it("restores without a session.jsonl gate (unlike CopyWorkdirStore)", async () => {
+    const storage = new CopySharedStore(baseDir);
     const shelf = join(baseDir, CHANNEL_ID);
     await mkdir(shelf, { recursive: true });
     await writeFile(join(shelf, "notes.md"), "no transcript here");
@@ -197,7 +197,7 @@ describe("CopySharedStorage", () => {
   });
 
   it("does nothing when the shelf is empty", async () => {
-    const storage = new CopySharedStorage(baseDir);
+    const storage = new CopySharedStore(baseDir);
 
     await storage.restore(CHANNEL_ID, workdir);
 
@@ -207,7 +207,7 @@ describe("CopySharedStorage", () => {
   });
 
   it("uses the channelId as the shelf directory", async () => {
-    const storage = new CopySharedStorage(baseDir);
+    const storage = new CopySharedStore(baseDir);
     await writeFile(join(workdir, "notes.md"), "shelf layout");
 
     await storage.flush(CHANNEL_ID, workdir);
@@ -219,7 +219,7 @@ describe("CopySharedStorage", () => {
 
   it("warns when the staging size exceeds warnBytes after flush", async () => {
     const { logger, lines } = collectingLogger();
-    const storage = new CopySharedStorage(baseDir, logger, 10);
+    const storage = new CopySharedStore(baseDir, logger, 10);
     await writeFile(join(workdir, "notes.md"), "this content is over 10 bytes");
 
     await storage.flush(CHANNEL_ID, workdir);
@@ -237,7 +237,7 @@ describe("CopySharedStorage", () => {
 
   it("does not warn when the staging size is within warnBytes", async () => {
     const { logger, lines } = collectingLogger();
-    const storage = new CopySharedStorage(baseDir, logger, 50 * 1024 * 1024);
+    const storage = new CopySharedStore(baseDir, logger, 50 * 1024 * 1024);
     await writeFile(join(workdir, "notes.md"), "small content");
 
     await storage.flush(CHANNEL_ID, workdir);
@@ -250,7 +250,7 @@ describe("CopySharedStorage", () => {
   });
 
   it("flushes without error when no logger is given, even past the warn threshold", async () => {
-    const storage = new CopySharedStorage(baseDir, undefined, 1);
+    const storage = new CopySharedStore(baseDir, undefined, 1);
     await writeFile(join(workdir, "notes.md"), "content bigger than 1 byte");
 
     await expect(storage.flush(CHANNEL_ID, workdir)).resolves.toBeUndefined();
@@ -260,7 +260,7 @@ describe("CopySharedStorage", () => {
   // ファイル (削除が伝播しないため残りうる。#12) は判定に入らない
   it("judges by staging size, not by what already sits on the shelf", async () => {
     const { logger, lines } = collectingLogger();
-    const storage = new CopySharedStorage(baseDir, logger, 100);
+    const storage = new CopySharedStore(baseDir, logger, 100);
     await mkdir(join(baseDir, CHANNEL_ID), { recursive: true });
     await writeFile(join(baseDir, CHANNEL_ID, "old.md"), "x".repeat(500));
     await writeFile(join(workdir, "notes.md"), "small");
@@ -274,21 +274,21 @@ describe("CopySharedStorage", () => {
   });
 });
 
-describe("createSharedStorage", () => {
+describe("createSharedStore", () => {
   it("returns undefined when sharedDir is undefined or empty", () => {
-    expect(createSharedStorage(undefined)).toBeUndefined();
-    expect(createSharedStorage("")).toBeUndefined();
+    expect(createSharedStore(undefined)).toBeUndefined();
+    expect(createSharedStore("")).toBeUndefined();
   });
 
-  it("returns a CopySharedStorage when sharedDir is set", () => {
-    expect(createSharedStorage(baseDir)).toBeInstanceOf(CopySharedStorage);
+  it("returns a CopySharedStore when sharedDir is set", () => {
+    expect(createSharedStore(baseDir)).toBeInstanceOf(CopySharedStore);
   });
 
-  it("wires logger and warnBytes into the CopySharedStorage it creates", async () => {
+  it("wires logger and warnBytes into the CopySharedStore it creates", async () => {
     const { logger, lines } = collectingLogger();
-    const storage = createSharedStorage(baseDir, logger, 10);
+    const storage = createSharedStore(baseDir, logger, 10);
 
-    expect(storage).toBeInstanceOf(CopySharedStorage);
+    expect(storage).toBeInstanceOf(CopySharedStore);
     await writeFile(join(workdir, "notes.md"), "this content is over 10 bytes");
     await storage!.flush("C123ABC", workdir);
 
@@ -300,17 +300,17 @@ describe("createSharedStorage", () => {
   });
 });
 
-describe("createWorkdirStorage", () => {
-  it("returns a NoopWorkdirStorage when archiveDir is undefined", () => {
-    expect(createWorkdirStorage(undefined)).toBeInstanceOf(NoopWorkdirStorage);
+describe("createWorkdirStore", () => {
+  it("returns a NoopWorkdirStore when archiveDir is undefined", () => {
+    expect(createWorkdirStore(undefined)).toBeInstanceOf(NoopWorkdirStore);
   });
 
-  it("returns a NoopWorkdirStorage when archiveDir is an empty string", () => {
-    expect(createWorkdirStorage("")).toBeInstanceOf(NoopWorkdirStorage);
+  it("returns a NoopWorkdirStore when archiveDir is an empty string", () => {
+    expect(createWorkdirStore("")).toBeInstanceOf(NoopWorkdirStore);
   });
 
-  it("returns a CopyWorkdirStorage when archiveDir is set", () => {
-    expect(createWorkdirStorage(baseDir)).toBeInstanceOf(CopyWorkdirStorage);
+  it("returns a CopyWorkdirStore when archiveDir is set", () => {
+    expect(createWorkdirStore(baseDir)).toBeInstanceOf(CopyWorkdirStore);
   });
 });
 
@@ -322,17 +322,17 @@ describe("copy measurement logs", () => {
 
   it("logs duration, file count and bytes on workdir flush", async () => {
     const { logger, lines } = collectingLogger();
-    const storage = new CopyWorkdirStorage(baseDir, logger);
+    const storage = new CopyWorkdirStore(baseDir, logger);
     await writeWorkdirFiles();
 
-    await storage.flush(THREAD_KEY, workdir);
+    await storage.flush(SESSION_KEY, workdir);
 
     const flushLines = lines().filter(
       (line) => (line as { msg: string }).msg === "workdir flush",
     );
     expect(flushLines).toHaveLength(1);
     expect(flushLines[0]).toMatchObject({
-      threadKey: THREAD_KEY,
+      sessionKey: SESSION_KEY,
       files: EXPECTED_FILES,
     });
     const entry = flushLines[0] as { bytes: number; durationMs: number };
@@ -342,35 +342,35 @@ describe("copy measurement logs", () => {
 
   it("logs the same shape on workdir restore", async () => {
     const { logger, lines } = collectingLogger();
-    const storage = new CopyWorkdirStorage(baseDir, logger);
+    const storage = new CopyWorkdirStore(baseDir, logger);
     await writeWorkdirFiles();
-    await storage.flush(THREAD_KEY, workdir);
+    await storage.flush(SESSION_KEY, workdir);
     await rm(workdir, { recursive: true, force: true });
 
-    await storage.restore(THREAD_KEY, workdir);
+    await storage.restore(SESSION_KEY, workdir);
 
     const restoreLines = lines().filter(
       (line) => (line as { msg: string }).msg === "workdir restore",
     );
     expect(restoreLines).toHaveLength(1);
     expect(restoreLines[0]).toMatchObject({
-      threadKey: THREAD_KEY,
+      sessionKey: SESSION_KEY,
       files: EXPECTED_FILES,
     });
   });
 
   it("does not log a restore line when the shelf has no transcript", async () => {
     const { logger, lines } = collectingLogger();
-    const storage = new CopyWorkdirStorage(baseDir, logger);
+    const storage = new CopyWorkdirStore(baseDir, logger);
 
-    expect(await storage.restore(THREAD_KEY, workdir)).toBe(false);
+    expect(await storage.restore(SESSION_KEY, workdir)).toBe(false);
 
     expect(lines()).toHaveLength(0);
   });
 
   it("logs shared flush with the channelId", async () => {
     const { logger, lines } = collectingLogger();
-    const storage = new CopySharedStorage(baseDir, logger);
+    const storage = new CopySharedStore(baseDir, logger);
     await writeFile(join(workdir, "notes.md"), "shared content");
 
     await storage.flush("C123ABC", workdir);

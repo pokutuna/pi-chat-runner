@@ -78,16 +78,19 @@ export { enrichEvent, type UserResolver } from "./ingress/user-resolver.js";
 export type { Logger } from "./logger.js";
 export { SessionRunner, type SessionRunnerOptions } from "./session/runner.js";
 export type { PiPermissionConfig } from "./session/spawn.js";
-export { InMemoryStateStore } from "./store/state/backends/memory.js";
+export { CopyWorkdirStore } from "./state/agent/copy.js";
+export type { SharedStore, WorkdirStore } from "./state/agent/interfaces.js";
+export { InMemoryControlState } from "./state/control/backends/memory.js";
 export type {
+  ChannelLatestSession,
   ChannelStateDoc,
   ChannelStateStore,
+  ControlState,
   InboxItem,
   InboxStore,
   Lease,
   LeaseStore,
-  SessionDoc,
+  SessionRecord,
   SessionStore,
-  StateStore,
-} from "./store/state/interfaces.js";
-export { CopyWorkdirStorage, type WorkdirStorage } from "./store/workdir.js";
+  ThreadStore,
+} from "./state/control/interfaces.js";

@@ -184,7 +184,7 @@ Agent の確定出力が `reply` tool の 1 経路しかなく、地の文を送
 | Session | `ActiveSession` (`src/session/active-session.ts`) |
 | Runtime | `src/session/{spawn,runtime,rpc,pi-events,prompt,session-file}.ts` |
 | Egress | `src/egress/` (`EgressRouter`, `chunker.ts`, `mrkdwn.ts`, `turn-reactor.ts`) |
-| Control State | `StateStore` (`src/store/state/interfaces.ts`) と `src/store/state/backends/` |
-| Agent State | `WorkdirStorage` / `SharedStorage` (`src/store/workdir.ts`) |
+| Control State | `ControlState` (`src/state/control/interfaces.ts`) と `src/state/control/backends/` |
+| Agent State | `WorkdirStore` / `SharedStore` (`src/state/agent/`) |
 | System Config の読み込み | `src/config/{connector-config,store-config,agent-config}.ts` |
 | Channel Config | `ChannelDoc` (`src/config/channel-doc.ts`) |

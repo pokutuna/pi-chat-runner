@@ -1,6 +1,6 @@
 import type { ChannelDoc } from "../config/channel-doc.js";
 import type { InboundMessage } from "../ingress/chat-event.js";
-import type { InboxItem } from "../store/state/interfaces.js";
+import type { InboxItem } from "../state/control/interfaces.js";
 
 /** session.mode / reply.mode の実効値 (doc 未設定時の既定込み。session-model.md §2) */
 export interface SessionPolicy {

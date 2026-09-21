@@ -35,13 +35,9 @@ import { rootLogger } from "./logger.js";
 import type { FetchMessage } from "./session/runner.js";
 import { SessionRunner } from "./session/runner.js";
 import type { PiPermissionConfig } from "./session/spawn.js";
-import type { StateStore } from "./store/state/interfaces.js";
-import {
-  createSharedStorage,
-  createWorkdirStorage,
-  type SharedStorage,
-  type WorkdirStorage,
-} from "./store/workdir.js";
+import { createSharedStore, createWorkdirStore } from "./state/agent/copy.js";
+import type { SharedStore, WorkdirStore } from "./state/agent/interfaces.js";
+import type { ControlState } from "./state/control/interfaces.js";
 
 /** classifier gate 用 LLM client のコード既定モデル (config.md §4.1: 未指定時の
  * fallback は bridge の 1 箇所に集約する)。 */
@@ -55,7 +51,7 @@ export interface BridgeOptions {
    * 省略時は poster/reactor/userResolver/fetchMessage の 4 点すべての注入が必須
    * (local mode 等、Slack を介さない構成のための seam。docs/design/local-dev.md §2)。 */
   web?: WebClient;
-  store: StateStore;
+  controlState: ControlState;
   configSource: ConfigSource;
   turnTimeoutMs?: number;
   progressNoticeIntervalMs?: number;
@@ -72,7 +68,7 @@ export interface BridgeOptions {
    * shared 機能ごと無効。棚は `<sharedDir>/<channelId>/` */
   sharedDir?: string;
   /** shared 棚のサイズがこれを超えたら warn ログを出す閾値 (bytes)。未設定なら
-   * createSharedStorage の既定値 (state.md §5.1: ガードレールでなく気づきのため) */
+   * createSharedStore の既定値 (state.md §5.1: ガードレールでなく気づきのため) */
   sharedShelfWarnBytes?: number;
   agentUid?: number;
   agentGid?: number;
@@ -89,19 +85,19 @@ export interface BridgeOptions {
   /** reaction トリガーの対象メッセージ本文取得の注入口。省略時は web (WebClient) の
    * conversations.replies から内部構築する。 */
   fetchMessage?: FetchMessage;
-  /** workdir の保存先の注入口。省略時は archiveDir があれば CopyWorkdirStorage を、
+  /** workdir の保存先の注入口。省略時は archiveDir があれば CopyWorkdirStore を、
    * なければ境界退避なしで内部構築する。指定時は archiveDir より優先される。 */
-  workdirStorage?: WorkdirStorage;
+  workdirStore?: WorkdirStore;
   /** 共有ディレクトリの保存先の注入口。省略時は sharedDir があれば
-   * CopySharedStorage を内部構築する。指定時は sharedDir より優先される。 */
-  sharedStorage?: SharedStorage;
+   * CopySharedStore を内部構築する。指定時は sharedDir より優先される。 */
+  sharedStore?: SharedStore;
 }
 
 /** SessionRunner を組み立て、eventSource を起動して配線する。呼び出し元 (server.ts の
  * main、または import した Slack app 実装) が env パースを済ませた後に呼ぶ。 */
 export async function startBridge(options: BridgeOptions): Promise<void> {
   const logger = options.logger ?? rootLogger.child({ component: "server" });
-  const { web, eventSource, store, configSource } = options;
+  const { web, eventSource, controlState, configSource } = options;
 
   // web (WebClient) 省略時は poster/reactor/userResolver/fetchMessage の 4 点すべてが
   // 内部構築の代わりを果たす必要がある。1 つでも欠けていれば、どれが欠けているか
@@ -193,18 +189,14 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
         return null;
       }
     });
-  // workdirStorage 注入があれば archiveDir より優先する
-  const workdirStorage =
-    options.workdirStorage ?? createWorkdirStorage(options.archiveDir, logger);
-  // sharedStorage 注入があれば sharedDir より優先する。どちらも無ければ
+  // workdirStore 注入があれば archiveDir より優先する
+  const workdirStore =
+    options.workdirStore ?? createWorkdirStore(options.archiveDir, logger);
+  // sharedStore 注入があれば sharedDir より優先する。どちらも無ければ
   // undefined = shared 機能ごと無効 (docs/design/state.md §8)
-  const sharedStorage =
-    options.sharedStorage ??
-    createSharedStorage(
-      options.sharedDir,
-      logger,
-      options.sharedShelfWarnBytes,
-    );
+  const sharedStore =
+    options.sharedStore ??
+    createSharedStore(options.sharedDir, logger, options.sharedShelfWarnBytes);
 
   // classifier gate 用 LLM client。注入があればそれを使い、なければ
   // GOOGLE_CLOUD_PROJECT があるときだけ GeminiClassifierClient を内部構築する
@@ -223,7 +215,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 
   const runner = new SessionRunner({
     configSource,
-    store,
+    controlState,
     router: new EgressRouter({
       poster,
       formatter: toMrkdwn,
@@ -243,10 +235,10 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
     Object.keys(options.extraEnv).length > 0
       ? { extraEnv: options.extraEnv }
       : {}),
-    // workdirStorage/archiveDir 未設定なら境界退避なし (Step 3 相当の挙動)
-    workdirStorage,
-    // sharedStorage/sharedDir 未設定なら shared 無効
-    ...(sharedStorage !== undefined ? { sharedStorage } : {}),
+    // workdirStore/archiveDir 未設定なら境界退避なし (Step 3 相当の挙動)
+    workdirStore,
+    // sharedStore/sharedDir 未設定なら shared 無効
+    ...(sharedStore !== undefined ? { sharedStore } : {}),
     // agentUid/Gid 未設定なら UID 分離なし (現状動作)
     ...(options.agentUid !== undefined ? { agentUid: options.agentUid } : {}),
     ...(options.agentGid !== undefined ? { agentGid: options.agentGid } : {}),

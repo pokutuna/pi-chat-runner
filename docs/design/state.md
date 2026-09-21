@@ -380,15 +380,15 @@ staging は復元されず、Shared 経由で全 Channel に効く指示は書�
 
 | 設計上の名前 | 現在の実装 |
 |---|---|
-| ControlState | `StateStore` (`src/store/state/interfaces.ts`) |
-| SessionRecord | `SessionDoc` (同上) |
-| ThreadStore | in-memory の `threadAlias` Map (`src/session/runner.ts`) と `ChannelStateDoc.affinity` / `ChannelStateStore.putSessionPointer` |
-| InboxStore / SessionStore / LeaseStore / ChannelStateStore | 同名 (`src/store/state/interfaces.ts`)。引数名は `threadKey` |
-| Control State backend | `InMemoryStateStore` / `SqliteStateStore` / `FirestoreStateStore` (`src/store/state/backends/`) |
-| SQLite / Firestore のキー名 | 列 `thread_key`、`Lease.threadKey`、コレクション `<rootDoc>/inbox/{threadKey}/items/{itemId}` |
-| contract test | `test/store/state/contract.ts` |
-| InboxItem.id の導出 | `inboxItemId` (`src/store/state/inbox-item.ts`) |
-| WorkdirStore / SharedStore | `WorkdirStorage` / `SharedStorage`、`CopyWorkdirStorage` / `CopySharedStorage` / `NoopWorkdirStorage` (`src/store/workdir.ts`) |
-| 棚の選択 | `createWorkdirStorage` / `createSharedStorage` (同上)、`src/server.ts` が env から組み立てる |
+| ControlState | 同名 (`src/state/control/interfaces.ts`) |
+| SessionRecord | 同名 (同上) |
+| ThreadStore | 同名 (同上)。`SessionRunner` は `threads.resolve` / `bind` / `latest` 経由で参照する |
+| InboxStore / SessionStore / LeaseStore / ChannelStateStore | 同名 (同上)。引数名は `sessionKey` |
+| Control State backend | `InMemoryControlState` / `SqliteControlState` / `FirestoreControlState` (`src/state/control/backends/`) |
+| SQLite / Firestore のキー名 | 列 `session_key`、`Lease.sessionKey`、コレクション `<rootDoc>/inbox/{sessionKey}/items/{itemId}`。旧列 `thread_key` の DB は SQLite を開くときに `ALTER TABLE ... RENAME COLUMN` で移行する |
+| contract test | `test/state/control/contract.ts` |
+| InboxItem.id の導出 | `inboxItemId` (`src/state/control/inbox-item.ts`) |
+| WorkdirStore / SharedStore | 同名 (`src/state/agent/interfaces.ts`)、`CopyWorkdirStore` / `CopySharedStore` (`src/state/agent/copy.ts`)、`NoopWorkdirStore` (`src/state/agent/noop.ts`) |
+| 棚の選択 | `createWorkdirStore` / `createSharedStore` (`src/state/agent/copy.ts`)、`src/server.ts` が env から組み立てる |
 | restore / flush の呼び出し | `prepareWorkdir` (`src/session/spawn.ts`)、`ActiveSession.#onAgentEnd` (`src/session/active-session.ts`) |
 | Workdir / staging のパス | `SessionRunner.workdirRoot` / `sharedStagingDir` (`src/session/runner.ts`) |

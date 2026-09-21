@@ -2,7 +2,7 @@
 // - pi     → test/fixtures/fake-pi.mjs (stdin の JSONL を記録し、reply/agent_end を吐く)
 // - Slack  → FakePoster / FakeReactionClient
 // - config → インメモリの ConfigSource
-// - store  → InMemoryStateStore (Step 4: lease / drain-ack / linger の検証もここで行う)
+// - controlState → InMemoryControlState (Step 4: lease / drain-ack / linger の検証もここで行う)
 import {
   mkdir,
   mkdtemp,
@@ -41,16 +41,18 @@ import type { MentionFormat } from "../../src/session/prompt.js";
 import type { FetchedMessage, FetchMessage } from "../../src/session/runner.js";
 import { SessionRunner } from "../../src/session/runner.js";
 import type { PiPermissionConfig } from "../../src/session/spawn.js";
-import { InMemoryStateStore } from "../../src/store/state/backends/memory.js";
-import { inboxItemId } from "../../src/store/state/inbox-item.js";
-import type { StateStore } from "../../src/store/state/interfaces.js";
 import {
-  CopySharedStorage,
-  CopyWorkdirStorage,
-  NoopWorkdirStorage,
-  type SharedStorage,
-  type WorkdirStorage,
-} from "../../src/store/workdir.js";
+  CopySharedStore,
+  CopyWorkdirStore,
+} from "../../src/state/agent/copy.js";
+import type {
+  SharedStore,
+  WorkdirStore,
+} from "../../src/state/agent/interfaces.js";
+import { NoopWorkdirStore } from "../../src/state/agent/noop.js";
+import { InMemoryControlState } from "../../src/state/control/backends/memory.js";
+import { inboxItemId } from "../../src/state/control/inbox-item.js";
+import type { ControlState } from "../../src/state/control/interfaces.js";
 
 const FAKE_PI = fileURLToPath(
   new URL("../fixtures/fake-pi.mjs", import.meta.url),
@@ -162,7 +164,7 @@ function collectingLogger(): {
 interface Harness {
   runner: SessionRunner;
   poster: FakePoster;
-  store: StateStore;
+  controlState: ControlState;
   reactions: { channel: string; timestamp: string; name: string }[];
   workdirRoot: string;
   logLines: () => Record<string, unknown>[];
@@ -173,9 +175,11 @@ interface Harness {
 
 interface HarnessOptions {
   extraEnv?: Record<string, string>;
-  store?: StateStore;
-  workdirStorage?: WorkdirStorage;
-  sharedStorage?: SharedStorage;
+  /** 再起動を模して 2 つの runner で同じレーン (workdir) を共有させたいとき用 */
+  workdirRoot?: string;
+  controlState?: ControlState;
+  workdirStore?: WorkdirStore;
+  sharedStore?: SharedStore;
   /** テストの実待ちを短くするため既定 30ms (本番既定は 3000ms) */
   lingerMs?: number;
   leaseTtlMs?: number;
@@ -196,7 +200,9 @@ async function harness(
   docs: Record<string, ChannelDoc> = {},
   options: HarnessOptions = {},
 ): Promise<Harness> {
-  const workdirRoot = await mkdtemp(join(tmpdir(), "pi-chat-runner-test-"));
+  const workdirRoot =
+    options.workdirRoot ??
+    (await mkdtemp(join(tmpdir(), "pi-chat-runner-test-")));
   // SessionRunner の既定 agentHome ("/home/agent") はテスト実行者に書き込み権限が
   // ないため、テストでは常に書き込み可能な一時ディレクトリへ差し替える
   // (実プロダクション既定を検証したいテストは agentHome を明示指定する)
@@ -207,13 +213,13 @@ async function harness(
       "agent-home",
     );
   const poster = new FakePoster();
-  const store = options.store ?? new InMemoryStateStore();
+  const controlState = options.controlState ?? new InMemoryControlState();
   const reactionCalls: { channel: string; timestamp: string; name: string }[] =
     [];
   const { logger, lines } = collectingLogger();
   const runner = new SessionRunner({
     configSource: new FakeConfigSource(docs),
-    store,
+    controlState,
     router: new EgressRouter({ poster }),
     reactor: new SlackTurnReactor({
       add: async (args) => {
@@ -233,9 +239,9 @@ async function harness(
     lingerMs: options.lingerMs ?? 30,
     logger,
     ...(options.extraEnv !== undefined ? { extraEnv: options.extraEnv } : {}),
-    workdirStorage: options.workdirStorage ?? new NoopWorkdirStorage(),
-    ...(options.sharedStorage !== undefined
-      ? { sharedStorage: options.sharedStorage }
+    workdirStore: options.workdirStore ?? new NoopWorkdirStore(),
+    ...(options.sharedStore !== undefined
+      ? { sharedStore: options.sharedStore }
       : {}),
     ...(options.leaseTtlMs !== undefined
       ? { leaseTtlMs: options.leaseTtlMs }
@@ -263,7 +269,7 @@ async function harness(
   return {
     runner,
     poster,
-    store,
+    controlState,
     reactions: reactionCalls,
     workdirRoot,
     logLines: lines,
@@ -322,11 +328,13 @@ describe("SessionRunner (fake-pi integration)", () => {
 
     // 終了処理で lease が解放され、inbox は ack 済みで空
     const threadKey = threadKeyOf(trigger);
-    expect(await h.store.inbox.drain(threadKey)).toEqual([]);
+    expect(await h.controlState.inbox.drain(threadKey)).toEqual([]);
     expect(
-      await h.store.leases.acquire(threadKey, "probe", 1000),
+      await h.controlState.leases.acquire(threadKey, "probe", 1000),
     ).not.toBeNull();
-    expect((await h.store.sessions.get(threadKey))?.status).toBe("finished");
+    expect(
+      (await h.controlState.sessions.get(threadKey))?.endedAt,
+    ).toBeInstanceOf(Date);
   });
 
   it("marks the trigger message ❌ when the turn ends with stopReason error", async () => {
@@ -446,7 +454,7 @@ describe("SessionRunner (fake-pi integration)", () => {
       join(tmpdir(), "pi-chat-runner-test-shared-"),
     );
     // 過去セッションの蓄積がある棚を模す (docs/design/state.md §5.1:
-    // session.jsonl が無くても復元される — WorkdirStorage との差分)
+    // session.jsonl が無くても復元される — WorkdirStore との差分)
     await mkdir(join(sharedRoot, "C01", "memory"), { recursive: true });
     await writeFile(
       join(sharedRoot, "C01", "memory", "MEMORY.md"),
@@ -455,7 +463,7 @@ describe("SessionRunner (fake-pi integration)", () => {
 
     const h = await harness(
       {},
-      { sharedStorage: new CopySharedStorage(sharedRoot) },
+      { sharedStore: new CopySharedStore(sharedRoot) },
     );
     // 前ターンで agent が staging に書いた体のファイル (flush で棚へ上がるはず)
     const staging = join(h.workdirRoot, "C01", "shared");
@@ -501,7 +509,7 @@ describe("SessionRunner (fake-pi integration)", () => {
     );
     const h = await harness(
       { C01: { memory: false } },
-      { sharedStorage: new CopySharedStorage(sharedRoot) },
+      { sharedStore: new CopySharedStore(sharedRoot) },
     );
     const trigger = message({ mentionsBot: true, text: "hello" });
     await h.runner.handle(trigger);
@@ -534,7 +542,7 @@ describe("SessionRunner (fake-pi integration)", () => {
 
     const h = await harness(
       {},
-      { sharedStorage: new CopySharedStorage(sharedRoot) },
+      { sharedStore: new CopySharedStore(sharedRoot) },
     );
     const trigger = message({ mentionsBot: true, text: "hello" });
     await h.runner.handle(trigger);
@@ -554,7 +562,7 @@ describe("SessionRunner (fake-pi integration)", () => {
 
     const h = await harness(
       {},
-      { sharedStorage: new CopySharedStorage(sharedRoot) },
+      { sharedStore: new CopySharedStore(sharedRoot) },
     );
     const trigger = message({ mentionsBot: true, text: "hello" });
     await h.runner.handle(trigger);
@@ -799,7 +807,7 @@ describe("SessionRunner (fake-pi integration)", () => {
     );
 
     // steer 済み item も flush → ack でまとめて確定される
-    expect(await h.store.inbox.drain(threadKeyOf(trigger))).toEqual([]);
+    expect(await h.controlState.inbox.drain(threadKeyOf(trigger))).toEqual([]);
   });
 
   it("channel モード (session.mode: channel) では、スレッド外の 2 つ目のメッセージが新セッションでなく同一セッションへの steer になる", async () => {
@@ -853,16 +861,17 @@ describe("SessionRunner (fake-pi integration)", () => {
     const sessionKey = "C01";
     const workdir = join(h.workdirRoot, "C01", "channel");
 
-    // 事前に workdir と session.jsonl、および 10 分前の SessionDoc を用意する
+    // 事前に workdir と session.jsonl、および 10 分前の SessionRecord を用意する
     // (前回セッションが idle 期間を超えて放置された状態を模す)
     await mkdir(workdir, { recursive: true });
     await writeFile(join(workdir, "session.jsonl"), "OLD TRANSCRIPT\n");
-    await h.store.sessions.put(sessionKey, {
+    await h.controlState.sessions.put(sessionKey, {
       channelId: "C01",
       threadTs: "channel",
       triggerMessageId: "1699999999.000000",
-      status: "finished",
-      updatedAt: new Date(Date.now() - 10 * 60_000),
+      startedAt: new Date(Date.now() - 10 * 60_000),
+      lastActiveAt: new Date(Date.now() - 10 * 60_000),
+      endedAt: new Date(Date.now() - 10 * 60_000),
     });
 
     const trigger = message({ mentionsBot: true, text: "idle reset please" });
@@ -891,7 +900,7 @@ describe("SessionRunner (fake-pi integration)", () => {
     const workdir = join(h.workdirRoot, "C01", "channel");
 
     // 事前に workdir と 2KB 程度の session.jsonl を用意する (閾値 1KB 超過)。
-    // size 判定は store に依存しないため SessionDoc の事前 put は不要
+    // size 判定は Control State に依存しないため SessionRecord の事前 put は不要
     await mkdir(workdir, { recursive: true });
     await writeFile(join(workdir, "session.jsonl"), "x".repeat(2 * 1024));
 
@@ -946,17 +955,17 @@ describe("SessionRunner (fake-pi integration)", () => {
     );
 
     const sessionKey = threadKeyOf(trigger);
-    const doc = await h.store.sessions.get(sessionKey);
+    const doc = await h.controlState.sessions.get(sessionKey);
     expect(doc?.rotateRequestedAt).toBeInstanceOf(Date);
-    expect(doc?.status).toBe("finished");
+    expect(doc?.endedAt).toBeInstanceOf(Date);
 
     // pi は起動していない (セッションは走らず、inbox にも item は積まれない)
     expect(h.runner.activeSessionCount).toBe(0);
-    expect(await h.store.inbox.drain(sessionKey)).toEqual([]);
+    expect(await h.controlState.inbox.drain(sessionKey)).toEqual([]);
 
     // lease は解放済み (直後に acquire できる)
     expect(
-      await h.store.leases.acquire(sessionKey, "probe", 1000),
+      await h.controlState.leases.acquire(sessionKey, "probe", 1000),
     ).not.toBeNull();
   });
 
@@ -984,7 +993,7 @@ describe("SessionRunner (fake-pi integration)", () => {
     // マーカーは書かれず、実行中セッションにも steer されていない (commands.jsonl に
     // /new の steer が現れない)
     expect(
-      (await h.store.sessions.get(sessionKey))?.rotateRequestedAt,
+      (await h.controlState.sessions.get(sessionKey))?.rotateRequestedAt,
     ).toBeUndefined();
     await waitFor(async () => {
       const commands = await h.commandsLog("C01", trigger.id).catch(() => []);
@@ -1011,7 +1020,7 @@ describe("SessionRunner (fake-pi integration)", () => {
     const h = await harness();
     const trigger = message({ mentionsBot: true, text: "/new" });
     const sessionKey = threadKeyOf(trigger);
-    const heldLease = await h.store.leases.acquire(
+    const heldLease = await h.controlState.leases.acquire(
       sessionKey,
       "other-owner",
       60_000,
@@ -1025,7 +1034,7 @@ describe("SessionRunner (fake-pi integration)", () => {
       ":warning: セッションが実行中のため、いまは /new できません。完了後にもう一度送ってください",
     );
     expect(
-      (await h.store.sessions.get(sessionKey))?.rotateRequestedAt,
+      (await h.controlState.sessions.get(sessionKey))?.rotateRequestedAt,
     ).toBeUndefined();
   });
 
@@ -1038,12 +1047,13 @@ describe("SessionRunner (fake-pi integration)", () => {
 
     await mkdir(workdir, { recursive: true });
     await writeFile(join(workdir, "session.jsonl"), "OLD TRANSCRIPT\n");
-    await h.store.sessions.put(sessionKey, {
+    await h.controlState.sessions.put(sessionKey, {
       channelId: "C01",
       threadTs: "channel",
       triggerMessageId: "1699999999.000000",
-      status: "finished",
-      updatedAt: new Date(),
+      startedAt: new Date(),
+      lastActiveAt: new Date(),
+      endedAt: new Date(),
       rotateRequestedAt: new Date(),
     });
 
@@ -1063,7 +1073,7 @@ describe("SessionRunner (fake-pi integration)", () => {
         .some((line) => line.msg === "manual reset: transcript rotated"),
     ).toBe(true);
     expect(
-      (await h.store.sessions.get(sessionKey))?.rotateRequestedAt,
+      (await h.controlState.sessions.get(sessionKey))?.rotateRequestedAt,
     ).toBeUndefined();
   });
 
@@ -1075,12 +1085,13 @@ describe("SessionRunner (fake-pi integration)", () => {
 
     await mkdir(workdir, { recursive: true });
     await writeFile(join(workdir, "session.jsonl"), "OLD TRANSCRIPT\n");
-    await h.store.sessions.put(sessionKey, {
+    await h.controlState.sessions.put(sessionKey, {
       channelId: "C01",
       threadTs: trigger.id,
       triggerMessageId: trigger.id,
-      status: "finished",
-      updatedAt: new Date(),
+      startedAt: new Date(),
+      lastActiveAt: new Date(),
+      endedAt: new Date(),
       rotateRequestedAt: new Date(),
     });
 
@@ -1099,7 +1110,7 @@ describe("SessionRunner (fake-pi integration)", () => {
         .some((line) => line.msg === "manual reset: transcript rotated"),
     ).toBe(true);
     expect(
-      (await h.store.sessions.get(sessionKey))?.rotateRequestedAt,
+      (await h.controlState.sessions.get(sessionKey))?.rotateRequestedAt,
     ).toBeUndefined();
   });
 
@@ -1123,7 +1134,7 @@ describe("SessionRunner (fake-pi integration)", () => {
         .some((line) => line.msg === "manual reset: transcript rotated"),
     ).toBe(true);
     expect(
-      (await h.store.sessions.get(sessionKey))?.rotateRequestedAt,
+      (await h.controlState.sessions.get(sessionKey))?.rotateRequestedAt,
     ).toBeUndefined();
 
     const commands = await h.commandsLog("C01", trigger.id);
@@ -1143,7 +1154,7 @@ describe("SessionRunner (fake-pi integration)", () => {
 
     expect(h.poster.calls).toEqual([]);
     const sessionKey = threadKeyOf(trigger);
-    expect(await h.store.sessions.get(sessionKey)).toBeNull();
+    expect(await h.controlState.sessions.get(sessionKey)).toBeNull();
     expect(h.runner.activeSessionCount).toBe(0);
   });
 
@@ -1490,7 +1501,7 @@ describe("SessionRunner (fake-pi integration)", () => {
     expect(h.poster.calls).toEqual([]);
     expect(h.runner.activeSessionCount).toBe(0);
     const sessionKey = threadKeyOf(trigger);
-    expect(await h.store.sessions.get(sessionKey)).toBeNull();
+    expect(await h.controlState.sessions.get(sessionKey)).toBeNull();
   });
 
   it("allowBots: true で実行中セッションへの bot 投稿が steer される", async () => {
@@ -1542,7 +1553,7 @@ describe("SessionRunner: /enable /disable (channel mute, session-model.md §5)",
       ":no_bell: このチャンネルでの起動を無効化しました。`/enable` (bot へのメンション付き) で再開できます",
     );
 
-    const doc = await h.store.channels.get("C01");
+    const doc = await h.controlState.channels.get("C01");
     expect(doc?.enabled).toBe(false);
     expect(doc?.updatedBy).toBe("U01");
 
@@ -1551,7 +1562,7 @@ describe("SessionRunner: /enable /disable (channel mute, session-model.md §5)",
 
   it("disabled 状態で mention メッセージ: 起動しない (poster 呼び出しなし)、info ログ 'channel disabled'", async () => {
     const h = await harness();
-    await h.store.channels.put("C01", {
+    await h.controlState.channels.put("C01", {
       enabled: false,
       updatedAt: new Date(),
       updatedBy: "U99",
@@ -1572,7 +1583,7 @@ describe("SessionRunner: /enable /disable (channel mute, session-model.md §5)",
 
   it("disabled 状態で @bot /enable: enabled=true になり :bell: ack。その後の mention は通常どおり起動する", async () => {
     const h = await harness();
-    await h.store.channels.put("C01", {
+    await h.controlState.channels.put("C01", {
       enabled: false,
       updatedAt: new Date(),
       updatedBy: "U99",
@@ -1585,7 +1596,7 @@ describe("SessionRunner: /enable /disable (channel mute, session-model.md §5)",
     expect(h.poster.calls[0]?.text).toBe(
       ":bell: このチャンネルでの起動を有効化しました",
     );
-    expect((await h.store.channels.get("C01"))?.enabled).toBe(true);
+    expect((await h.controlState.channels.get("C01"))?.enabled).toBe(true);
 
     const trigger = message({
       id: "1700000001.000200",
@@ -1617,7 +1628,7 @@ describe("SessionRunner: /enable /disable (channel mute, session-model.md §5)",
     expect(h.poster.calls[0]?.text).toBe(
       ":no_bell: このチャンネルでの起動を無効化しました。`/enable` (bot へのメンション付き) で再開できます",
     );
-    expect((await h.store.channels.get("C01"))?.enabled).toBe(false);
+    expect((await h.controlState.channels.get("C01"))?.enabled).toBe(false);
 
     // disabled 中なので以降のメッセージは steer されない
     const followUp = message({
@@ -1641,7 +1652,7 @@ describe("SessionRunner: /enable /disable (channel mute, session-model.md §5)",
     const h = await harness({
       C01: { trigger: { when: [{ kind: "reaction", emoji: ["eyes"] }] } },
     });
-    await h.store.channels.put("C01", {
+    await h.controlState.channels.put("C01", {
       enabled: false,
       updatedAt: new Date(),
       updatedBy: "U99",
@@ -1692,7 +1703,7 @@ describe("SessionRunner: /enable /disable (channel mute, session-model.md §5)",
     // when (keyword: ALERT) にマッチしないので何も起きない。/disable のコマンド化も
     // されていないため channels store も変わらない
     expect(h.poster.calls).toEqual([]);
-    expect(await h.store.channels.get("C01")).toBeNull();
+    expect(await h.controlState.channels.get("C01")).toBeNull();
     expect(h.runner.activeSessionCount).toBe(0);
   });
 
@@ -1712,7 +1723,7 @@ describe("SessionRunner: /enable /disable (channel mute, session-model.md §5)",
       },
       { classifierClient },
     );
-    await h.store.channels.put("C01", {
+    await h.controlState.channels.put("C01", {
       enabled: false,
       updatedAt: new Date(),
       updatedBy: "U99",
@@ -1734,7 +1745,7 @@ describe("SessionRunner: /enable /disable (channel mute, session-model.md §5)",
 
   it("disabled 状態で @bot /new: drop される (marker 書き込みなし・kick なし・ack なし)", async () => {
     const h = await harness();
-    await h.store.channels.put("C01", {
+    await h.controlState.channels.put("C01", {
       enabled: false,
       updatedAt: new Date(),
       updatedBy: "U99",
@@ -1747,7 +1758,7 @@ describe("SessionRunner: /enable /disable (channel mute, session-model.md §5)",
     expect(h.poster.calls).toEqual([]);
     expect(h.runner.activeSessionCount).toBe(0);
     const sessionKey = threadKeyOf(trigger);
-    expect(await h.store.sessions.get(sessionKey)).toBeNull();
+    expect(await h.controlState.sessions.get(sessionKey)).toBeNull();
     expect(
       h
         .logLines()
@@ -1778,7 +1789,7 @@ describe("SessionRunner: /enable /disable (channel mute, session-model.md §5)",
         metadata: { eventId: "Ev-disable-cmd" },
       });
       await h.runner.handle(disableCmd);
-      expect((await h.store.channels.get("C01"))?.enabled).toBe(false);
+      expect((await h.controlState.channels.get("C01"))?.enabled).toBe(false);
 
       // debounce タイマーを進める
       await vi.advanceTimersByTimeAsync(500);
@@ -1910,20 +1921,20 @@ describe("SessionRunner.handleReaction (reaction trigger for initial kick)", () 
     // sessionKey = channelId:threadTs (fetched.threadTs 転写が効いている証跡として
     // そのキーで workdir が作られ、inbox が空になっていることを確認する)
     const sessionKey = `C01:${parentThreadTs}`;
-    expect(await h.store.inbox.drain(sessionKey)).toEqual([]);
+    expect(await h.controlState.inbox.drain(sessionKey)).toEqual([]);
     expect(
-      await h.store.leases.acquire(sessionKey, "probe", 1000),
+      await h.controlState.leases.acquire(sessionKey, "probe", 1000),
     ).not.toBeNull();
   });
 
   it("reaction 起動が過去セッションと同じ sessionKey に着地すると、棚の transcript が restore されて resumed:true になる (実質再開)", async () => {
     const baseDir = await mkdtemp(join(tmpdir(), "pi-chat-runner-test-shelf-"));
-    const storage = new CopyWorkdirStorage(baseDir);
+    const storage = new CopyWorkdirStore(baseDir);
     const h = await harness(
       {
         C01: { trigger: { when: [{ kind: "reaction", emoji: ["eyes"] }] } },
       },
-      { workdirStorage: storage },
+      { workdirStore: storage },
     );
     const threadTs = "1700000000.000050";
 
@@ -1967,12 +1978,12 @@ describe("SessionRunner.handleReaction (reaction trigger for initial kick)", () 
 
   it("棚に transcript が無ければ resumed:false (新規セッション、再開ではない)", async () => {
     const baseDir = await mkdtemp(join(tmpdir(), "pi-chat-runner-test-shelf-"));
-    const storage = new CopyWorkdirStorage(baseDir);
+    const storage = new CopyWorkdirStore(baseDir);
     const h = await harness(
       {
         C01: { trigger: { when: [{ kind: "reaction", emoji: ["eyes"] }] } },
       },
-      { workdirStorage: storage },
+      { workdirStore: storage },
     );
     const threadTs = "1700000000.000060";
     const { fetch } = fetchReturning({ text: "fresh start please", threadTs });
@@ -1997,7 +2008,7 @@ describe("SessionRunner.handleReaction (reaction trigger for initial kick)", () 
 describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
   it("flushes the workdir before acking inbox items (flush → ack order)", async () => {
     const calls: string[] = [];
-    class RecordingStorage implements WorkdirStorage {
+    class RecordingStore implements WorkdirStore {
       async restore(): Promise<boolean> {
         calls.push("restore");
         return false;
@@ -2006,16 +2017,16 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
         calls.push("flush");
       }
     }
-    const store = new InMemoryStateStore();
-    const originalAck = store.inbox.ack.bind(store.inbox);
-    store.inbox.ack = async (threadKey, itemIds) => {
+    const controlState = new InMemoryControlState();
+    const originalAck = controlState.inbox.ack.bind(controlState.inbox);
+    controlState.inbox.ack = async (sessionKey: string, itemIds: string[]) => {
       calls.push(`ack:${itemIds.length}`);
-      await originalAck(threadKey, itemIds);
+      await originalAck(sessionKey, itemIds);
     };
 
     const h = await harness(
       {},
-      { store, workdirStorage: new RecordingStorage() },
+      { controlState, workdirStore: new RecordingStore() },
     );
     const trigger = message({ mentionsBot: true, text: "flush order" });
     await h.runner.handle(trigger);
@@ -2023,12 +2034,12 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
 
     // kick で restore、agent_end で flush → ack の順 (message-dispatch.md §7.2)
     expect(calls).toEqual(["restore", "flush", "ack:1"]);
-    expect(await h.store.inbox.drain(threadKeyOf(trigger))).toEqual([]);
+    expect(await h.controlState.inbox.drain(threadKeyOf(trigger))).toEqual([]);
   });
 
   it("shared の restore/flush は workdir と同じ境界で走り、flush は ack より前 (docs/design/state.md §5.1)", async () => {
     const calls: string[] = [];
-    class RecordingWorkdir implements WorkdirStorage {
+    class RecordingWorkdir implements WorkdirStore {
       async restore(): Promise<boolean> {
         calls.push("restore");
         return false;
@@ -2037,7 +2048,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
         calls.push("flush");
       }
     }
-    class RecordingShared implements SharedStorage {
+    class RecordingShared implements SharedStore {
       async restore(): Promise<void> {
         calls.push("shared-restore");
       }
@@ -2045,19 +2056,19 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
         calls.push("shared-flush");
       }
     }
-    const store = new InMemoryStateStore();
-    const originalAck = store.inbox.ack.bind(store.inbox);
-    store.inbox.ack = async (threadKey, itemIds) => {
+    const controlState = new InMemoryControlState();
+    const originalAck = controlState.inbox.ack.bind(controlState.inbox);
+    controlState.inbox.ack = async (sessionKey: string, itemIds: string[]) => {
       calls.push(`ack:${itemIds.length}`);
-      await originalAck(threadKey, itemIds);
+      await originalAck(sessionKey, itemIds);
     };
 
     const h = await harness(
       {},
       {
-        store,
-        workdirStorage: new RecordingWorkdir(),
-        sharedStorage: new RecordingShared(),
+        controlState,
+        workdirStore: new RecordingWorkdir(),
+        sharedStore: new RecordingShared(),
       },
     );
     const trigger = message({ mentionsBot: true, text: "shared flush order" });
@@ -2076,7 +2087,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
   it("re-kicks the same thread after a failed kick (item is not lost)", async () => {
     // restore を 1 回だけ失敗させて kick を落とす (kick 失敗 = ack されないので
     // inbox に残り、次のイベントで拾い直される。message-dispatch.md §7.4 の穴の解消)
-    class FailOnceStorage implements WorkdirStorage {
+    class FailOnceStorage implements WorkdirStore {
       private failed = false;
       async restore(): Promise<boolean> {
         if (!this.failed) {
@@ -2087,7 +2098,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
       }
       async flush(): Promise<void> {}
     }
-    const h = await harness({}, { workdirStorage: new FailOnceStorage() });
+    const h = await harness({}, { workdirStore: new FailOnceStorage() });
     const trigger = message({ mentionsBot: true, text: "first try" });
     const threadKey = threadKeyOf(trigger);
 
@@ -2097,7 +2108,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
       h.logLines().some((line) => line.msg === "session kick failed"),
     ).toBe(true);
     // item は ack されず inbox に残っている
-    expect((await h.store.inbox.drain(threadKey)).length).toBe(1);
+    expect((await h.controlState.inbox.drain(threadKey)).length).toBe(1);
 
     // 同スレッドの次のイベントで再 kick され、両方の item が拾い直される
     const retry = message({
@@ -2114,19 +2125,23 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
   });
 
   it("does not kick when the lease is held by another owner", async () => {
-    const store = new InMemoryStateStore();
+    const controlState = new InMemoryControlState();
     const trigger = message({ mentionsBot: true, text: "contended" });
-    const threadKey = threadKeyOf(trigger);
-    const other = await store.leases.acquire(threadKey, "other:999", 60_000);
+    const sessionKey = threadKeyOf(trigger);
+    const other = await controlState.leases.acquire(
+      sessionKey,
+      "other:999",
+      60_000,
+    );
     expect(other).not.toBeNull();
 
-    const h = await harness({}, { store });
+    const h = await harness({}, { controlState });
     await h.runner.handle(trigger);
 
     // kick されない (eyes も付かない) が、item は enqueue 済みで保持者の drain が拾える
     expect(h.runner.activeSessionCount).toBe(0);
     expect(h.reactions).toEqual([]);
-    expect((await store.inbox.drain(threadKey)).length).toBe(1);
+    expect((await controlState.inbox.drain(sessionKey)).length).toBe(1);
     expect(
       h
         .logLines()
@@ -2152,7 +2167,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
       conversation: { channelId: "C01", threadTs: trigger.id },
       text: "late arrival",
     });
-    await h.store.inbox.enqueue(threadKey, {
+    await h.controlState.inbox.enqueue(threadKey, {
       id: inboxItemId(late),
       event: late,
       enqueuedAt: new Date(),
@@ -2172,7 +2187,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
 
     // linger 後に終了し lease が解放されている
     expect(
-      await h.store.leases.acquire(threadKey, "probe", 1000),
+      await h.controlState.leases.acquire(threadKey, "probe", 1000),
     ).not.toBeNull();
   });
 
@@ -2224,7 +2239,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
 
     // lease が解放されている
     expect(
-      await h.store.leases.acquire(threadKey, "probe", 1000),
+      await h.controlState.leases.acquire(threadKey, "probe", 1000),
     ).not.toBeNull();
   });
 
@@ -2247,7 +2262,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
 
     // lease は解放されている
     expect(
-      await h.store.leases.acquire(threadKey, "probe", 1000),
+      await h.controlState.leases.acquire(threadKey, "probe", 1000),
     ).not.toBeNull();
 
     // エラー通知がスレッドへ投稿されている (router.deliver 経由)
@@ -2261,7 +2276,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     // command failed (認証エラー等) はこのターンの入力を ack して捨てる (retry しない。
     // message-dispatch.md §7.4)。捨てないと未 ack のまま次の新規イベントの drain が巻き込み、
     // 同じ入力で再び失敗するループになりうる。flush はしない (workdir は退避させない)
-    expect((await h.store.inbox.drain(threadKey)).length).toBe(0);
+    expect((await h.controlState.inbox.drain(threadKey)).length).toBe(0);
 
     // 異常終了はトリガーメッセージへの ❌ で見える化する
     expect(
@@ -2285,13 +2300,13 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
 
     // lease は解放されている
     expect(
-      await h.store.leases.acquire(threadKey, "probe", 1000),
+      await h.controlState.leases.acquire(threadKey, "probe", 1000),
     ).not.toBeNull();
 
     // クラッシュは workdir/transcript の破損を疑うため、このターンの入力は ack して
     // 捨てる (retry しない。message-dispatch.md §7.4)。捨てないと次の新規イベントの drain が
     // 巻き込んで同じ状態から再 spawn し、決定的に再クラッシュしうる
-    expect((await h.store.inbox.drain(threadKey)).length).toBe(0);
+    expect((await h.controlState.inbox.drain(threadKey)).length).toBe(0);
 
     // クラッシュはユーザーから見えないので ❌ で見える化する
     expect(
@@ -2320,7 +2335,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
 
     // lease は解放されている
     expect(
-      await h.store.leases.acquire(threadKey, "probe", 1000),
+      await h.controlState.leases.acquire(threadKey, "probe", 1000),
     ).not.toBeNull();
 
     // timeout 通知がスレッドへ投稿されている (router.deliver 経由)
@@ -2333,7 +2348,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     // ack して捨てる (retry しない。message-dispatch.md §7.4)。異常終了はコマンド失敗・
     // クラッシュと同じ規則で、残すと同じ重い入力を次 drain が拾って再 timeout する
     // 毒ループになるため。ユーザーには ❌ と通知で伝わる
-    expect((await h.store.inbox.drain(threadKey)).length).toBe(0);
+    expect((await h.controlState.inbox.drain(threadKey)).length).toBe(0);
   });
 
   it("does not fire the turn timeout when agent_end arrives before turnTimeoutMs", async () => {
@@ -2624,7 +2639,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     expect(commands.map((c) => c.type)).toEqual(["prompt"]);
     expect(commands[0]?.message).toContain("first burst message");
     expect(commands[0]?.message).toContain("second burst message");
-    expect(await h.store.inbox.drain(threadKey)).toEqual([]);
+    expect(await h.controlState.inbox.drain(threadKey)).toEqual([]);
   });
 
   it("session.affinity.debounceSec: 連投バースト A→B→C の 3 通が 1 回の kick にまとめられる", async () => {
@@ -2674,7 +2689,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     expect(commands[0]?.message).toContain("message A");
     expect(commands[0]?.message).toContain("message B");
     expect(commands[0]?.message).toContain("message C");
-    expect(await h.store.inbox.drain(threadKey)).toEqual([]);
+    expect(await h.controlState.inbox.drain(threadKey)).toEqual([]);
   });
 
   it("session.affinity.debounceSec: mentionsBot のメッセージは debounce をバイパスして即 kick される", async () => {
@@ -2749,11 +2764,11 @@ describe("session.affinity (セッション合流)", () => {
 
     await h.runner.handle(a);
     await waitFor(() => h.runner.activeSessionCount === 0, "lane A finished");
-    expect((await h.store.channels.get("C01"))?.affinity?.sessionKey).toBe(
+    expect((await h.controlState.threads.latest("C01"))?.sessionKey).toBe(
       threadKeyOf(a),
     );
     expect(
-      (await h.store.channels.get("C01"))?.affinity?.endedAt,
+      (await h.controlState.threads.latest("C01"))?.endedAt,
     ).toBeInstanceOf(Date);
 
     const c = message({
@@ -2956,6 +2971,69 @@ describe("session.affinity (セッション合流)", () => {
     ]);
   });
 
+  it("再起動後の alias: ControlState を共有する別 SessionRunner でも、合流スレッドへの返信が合流先レーンへ届く", async () => {
+    // threads.bind は Control State に永続化されるので、プロセス再起動 (= プロセス内の
+    // alias が失われた状態) でも threads.resolve で合流先 sessionKey を引ける
+    // (state.md §3.3)
+    const controlState = new InMemoryControlState();
+    const docs: Record<string, ChannelDoc> = {
+      C01: { session: { affinity: { scope: "channel" } } },
+    };
+    const h1 = await harness(docs, { controlState });
+
+    const a = message({ mentionsBot: true, text: "first lane message" });
+    await h1.runner.handle(a);
+    await waitFor(() => h1.runner.activeSessionCount === 1, "lane A running");
+
+    // B (チャンネル直下) が稼働中の A へ合流し、alias が張られる
+    const b = message({
+      id: "1700000000.000700",
+      mentionsBot: true,
+      text: "merged follow-up B",
+      metadata: { eventId: "Ev-restart-alias-b" },
+    });
+    await h1.runner.handle(b);
+    expect(h1.runner.activeSessionCount).toBe(1);
+    await waitFor(() => h1.runner.activeSessionCount === 0, "lane A finished");
+
+    // alias が Control State に残っている
+    expect(await controlState.threads.resolve(threadKeyOf(b))).toBe(
+      threadKeyOf(a),
+    );
+
+    // 再起動を模して、同じ Control State / workdirRoot を共有する別 runner を作る
+    // (h2 のプロセス内 alias は空)
+    const h2 = await harness(docs, {
+      controlState,
+      workdirRoot: h1.workdirRoot,
+    });
+
+    // B のスレッド内 (threadTs = b.id) への追い発言。B 用の新レーンではなく、
+    // 永続 alias 経由で A のレーン (sessionKey = C01:<a.id>) で resume される
+    const followUpInBThread = message({
+      id: "1700000000.000800",
+      conversation: { channelId: "C01", threadTs: b.id },
+      mentionsBot: true,
+      text: "再起動後の追い返信",
+      metadata: { eventId: "Ev-restart-alias-followup" },
+    });
+    await h2.runner.handle(followUpInBThread);
+
+    await waitFor(() => h2.poster.calls.length === 1, "resumed reply posted");
+    expect(h2.poster.calls[0]?.text).toBe(
+      `echo: ${renderEvent(followUpInBThread, replyThreadKeyOf(followUpInBThread))}`,
+    );
+    await waitFor(() => h2.runner.activeSessionCount === 0, "session removed");
+
+    // A のレーン (workdir: C01/<a.id>) で 2 回目の prompt が走っている。
+    // B のスレッド (C01/<b.id>) には新しいレーンができていない
+    const commandsA = (await h2.commandsLog("C01", a.id)).map((line) =>
+      JSON.parse(line),
+    );
+    expect(commandsA.filter((cmd) => cmd.type === "prompt").length).toBe(2);
+    await expect(h2.commandsLog("C01", b.id)).rejects.toThrow(/ENOENT/);
+  });
+
   it("progress notice: affinity 合流後も進捗投稿先はターンを kick した先頭発言のスレッドに留まり、新規ターンで差し替わる", async () => {
     // RUNNER_TODO.md「progress-notice が affinity 合流時に別スレッドへ reply
     // すると上書きされず残る」への対応確認。進捗投稿先は「そのターンを kick
@@ -3093,7 +3171,7 @@ describe("session.affinity (セッション合流)", () => {
     await waitFor(() => h.runner.activeSessionCount === 0, "lane A done");
   });
 
-  it("終了時の pointer: セッション完走後、store.channels の affinity に endedAt が入っている", async () => {
+  it("終了時の pointer: セッション完走後、threads.latest に endedAt が入っている", async () => {
     const h = await harness({
       C01: { session: { affinity: { scope: "channel" } } },
     });
@@ -3102,10 +3180,10 @@ describe("session.affinity (セッション合流)", () => {
     await h.runner.handle(a);
     await waitFor(() => h.runner.activeSessionCount === 0, "lane A finished");
 
-    const state = await h.store.channels.get("C01");
-    expect(state?.affinity?.sessionKey).toBe(threadKeyOf(a));
-    expect(state?.affinity?.endedAt).toBeInstanceOf(Date);
-    expect(state?.affinity?.lastActiveAt).toBeInstanceOf(Date);
+    const latest = await h.controlState.threads.latest("C01");
+    expect(latest?.sessionKey).toBe(threadKeyOf(a));
+    expect(latest?.endedAt).toBeInstanceOf(Date);
+    expect(latest?.lastActiveAt).toBeInstanceOf(Date);
   });
 
   it("debounce との合成: scope=channel + debounceSec で、待機中レーンへの後続チャンネル直下投稿が合流し 1 セッションに束ねられる", async () => {

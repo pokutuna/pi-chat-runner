@@ -251,14 +251,14 @@ Inbox は Gate を通ったメッセージの耐久キューで、enqueue が de
 | Session (実行中の実体) | `ActiveSession` (`src/session/active-session.ts`) |
 | Gate 評価 | `SessionRunner.handle` / `handleReaction` 内の `evaluateWhen` (`src/session/runner.ts`, `src/gate/gate.ts`) |
 | `trigger.whileRunning` | 未設定。現在は passthrough の順序のみ実装 (`SessionRunner.trySteerExisting` が Gate より前) |
-| Thread → Session 対応 | `SessionRunner` の `threadAlias` (プロセス内。Control State への永続化は未実装) |
+| Thread → Session 対応 | `ThreadStore.resolve` / `bind` (`src/state/control/interfaces.ts`)。Control State に永続化されるため再起動後も解決できる |
 | affinity 合流先の解決 | `SessionRunner.resolveAffinityTarget` (`src/session/runner.ts`) |
-| Channel の直近 Session | `ChannelStateDoc.affinity` / `putSessionPointer` (`src/store/state/interfaces.ts`) |
+| Channel の直近 Session | `ThreadStore.latest` / `touchLatest` / `markLatestEnded` (`src/state/control/interfaces.ts`) |
 | debounce | `SessionRunner.scheduleDebouncedKick` / `computeKickDelayMs` (`src/session/runner.ts`, `src/session/policy.ts`) |
 | steering | `SessionRunner.trySteerExisting` / `ActiveSession.steerPending` |
-| lease | `LeaseStore` (`src/store/state/interfaces.ts`)、`ActiveSession.#startRenewTimer` |
+| lease | `LeaseStore` (`src/state/control/interfaces.ts`)、`ActiveSession.#startRenewTimer` |
 | Session の起動 (dispatch) | `SessionRunner.acquireLeaseAndKick` → `ActiveSession.start` |
 | Turn 境界 (flush → ack → reaction → linger) | `ActiveSession.#onAgentEnd` |
 | 異常終了 | `ActiveSession.#abnormalShutdown` / `proc.on("exit")` |
 | Turn タイムアウト | `ActiveSession.#resetTurnTimeout` / `#timeoutSession` |
-| Inbox と dedupe | `InboxStore` / `inboxItemId` (`src/store/state/`) |
+| Inbox と dedupe | `InboxStore` / `inboxItemId` (`src/state/control/`) |

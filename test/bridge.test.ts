@@ -1,7 +1,7 @@
 // startBridge の配線を検証する統合テスト。
 //
 // eventSource.start() が呼ばれたら ChatEvent を 1 個流すスタブ Ingress +
-// InMemoryStateStore + FileConfigSource (test/fixtures/config) + fake-pi
+// InMemoryControlState + FileConfigSource (test/fixtures/config) + fake-pi
 // (test/fixtures/fake-pi.mjs。test/session/runner.test.ts の harness と同じ方法) で、
 // mention イベント → 返信が WebClient 相当の poster に届くことを 1 本だけ確認する。
 // SessionRunner 自体の詳細な振る舞い (gate/lease/linger 等) は runner.test.ts の担当。
@@ -19,7 +19,7 @@ import { startBridge } from "../src/bridge.js";
 import { FileConfigSource } from "../src/config/config-source.js";
 import type { ChatEvent } from "../src/ingress/chat-event.js";
 import type { Ack, Ingress } from "../src/ingress/ingress.js";
-import { InMemoryStateStore } from "../src/store/state/backends/memory.js";
+import { InMemoryControlState } from "../src/state/control/backends/memory.js";
 
 /** BridgeOptions.web が要求する @slack/web-api の WebClient のうち、bridge が実際に
  * 呼び出す 2 メソッドだけの最小 IF。テストではこれだけ満たすスタブを渡す。 */
@@ -147,7 +147,7 @@ describe("startBridge", () => {
     await startBridge({
       eventSource,
       web: web.client,
-      store: new InMemoryStateStore(),
+      controlState: new InMemoryControlState(),
       configSource: new FileConfigSource(CONFIG_PATH),
       piEntrypoint: FAKE_PI,
       agentHome,
@@ -208,7 +208,7 @@ describe("startBridge", () => {
     await startBridge({
       eventSource,
       web: web.client,
-      store: new InMemoryStateStore(),
+      controlState: new InMemoryControlState(),
       configSource: new FileConfigSource(CONFIG_PATH),
       piBinary: FAKE_PI,
       agentHome,
@@ -251,7 +251,7 @@ describe("startBridge", () => {
     await startBridge({
       eventSource,
       web: web.client,
-      store: new InMemoryStateStore(),
+      controlState: new InMemoryControlState(),
       configSource: new FileConfigSource(CONFIG_PATH),
       piEntrypoint: FAKE_PI,
       agentHome,
@@ -295,7 +295,7 @@ describe("startBridge", () => {
     await startBridge({
       eventSource,
       web: web.client,
-      store: new InMemoryStateStore(),
+      controlState: new InMemoryControlState(),
       configSource: new FileConfigSource(CONFIG_PATH),
       piEntrypoint: FAKE_PI,
       agentHome,
@@ -337,7 +337,7 @@ describe("startBridge", () => {
     await startBridge({
       eventSource,
       web: web.client,
-      store: new InMemoryStateStore(),
+      controlState: new InMemoryControlState(),
       configSource: new FileConfigSource(CONFIG_PATH),
       piEntrypoint: FAKE_PI,
       agentHome,

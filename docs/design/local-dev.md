@@ -155,6 +155,6 @@ Turn の境界で退避・復元される。未設定なら退避せず、プロ
 | in-memory chat の実装 | `createLocalChat` (`src/ingress/local/local-chat.ts`) |
 | TUI のロジック層 | `src/ingress/local/repl-logic.ts` |
 | TUI の画面 | `src/ingress/local/repl.tsx` (`App` / `startRepl`) |
-| Control State backend の選択 | `buildStateStore` (`src/server.ts`) |
+| Control State backend の選択 | `buildControlState` (`src/server.ts`) |
 | 設定ファイルの既定パス | `DEFAULT_CONFIG_PATH` (`src/server.ts`) |
 | 既定チャンネル ID | `DEFAULT_LOCAL_CHANNEL_ID` (`src/server.ts`) |

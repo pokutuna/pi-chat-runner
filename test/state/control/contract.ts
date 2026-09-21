@@ -1,21 +1,21 @@
-// StateStore の共通コントラクトテスト (docs/design/state.md §4.3)
+// ControlState の共通コントラクトテスト (docs/design/state.md §4.3)
 //
-// InMemory / SQLite など複数の実装が同じ振る舞いをすべきなので、
+// InMemory / SQLite / Firestore の 3 実装が同じ振る舞いをすべきなので、
 // インタフェースに対するテストを 1 セットだけ書き、実装ごとにパラメタライズして流す。
+// backend 固有のテストではなく、この契約スイートに書くことが仕様の追加である。
 
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import type { InboundMessage } from "../../../src/ingress/chat-event.js";
 import type {
-  ChannelSessionPointer,
   ChannelStateDoc,
+  ControlState,
   InboxItem,
-  SessionDoc,
-  StateStore,
-} from "../../../src/store/state/interfaces.js";
+  SessionRecord,
+} from "../../../src/state/control/interfaces.js";
 
-export interface StateStoreHarness {
-  store: StateStore;
+export interface ControlStateHarness {
+  store: ControlState;
   /** 時計を進める。省略時は実待ち (setTimeout) でテストする。 */
   advanceTime?: (ms: number) => void;
   close?: () => void;
@@ -44,7 +44,10 @@ function makeItem(id: string): InboxItem {
 }
 
 /** advanceTime があればそれで、無ければ実待ちで時間経過をシミュレートする。 */
-async function passTime(harness: StateStoreHarness, ms: number): Promise<void> {
+async function passTime(
+  harness: ControlStateHarness,
+  ms: number,
+): Promise<void> {
   if (harness.advanceTime) {
     harness.advanceTime(ms);
   } else {
@@ -52,12 +55,12 @@ async function passTime(harness: StateStoreHarness, ms: number): Promise<void> {
   }
 }
 
-export function describeStateStoreContract(
+export function describeControlStateContract(
   name: string,
-  factory: () => Promise<StateStoreHarness>,
+  factory: () => Promise<ControlStateHarness>,
 ): void {
-  describe(`StateStore contract: ${name}`, () => {
-    let harness: StateStoreHarness;
+  describe(`ControlState contract: ${name}`, () => {
+    let harness: ControlStateHarness;
 
     beforeEach(async () => {
       harness = await factory();
@@ -69,64 +72,64 @@ export function describeStateStoreContract(
 
     describe("InboxStore", () => {
       it("dedupe: 同 id の 2 回目は false", async () => {
-        const threadKey = "T1";
+        const sessionKey = "S1";
         const item = makeItem("evt-1");
-        expect(await harness.store.inbox.enqueue(threadKey, item)).toBe(true);
-        expect(await harness.store.inbox.enqueue(threadKey, item)).toBe(false);
+        expect(await harness.store.inbox.enqueue(sessionKey, item)).toBe(true);
+        expect(await harness.store.inbox.enqueue(sessionKey, item)).toBe(false);
       });
 
       it("ack 後も同 id の再 enqueue は false", async () => {
-        const threadKey = "T1";
+        const sessionKey = "S1";
         const item = makeItem("evt-1");
-        await harness.store.inbox.enqueue(threadKey, item);
-        await harness.store.inbox.ack(threadKey, [item.id]);
-        expect(await harness.store.inbox.enqueue(threadKey, item)).toBe(false);
+        await harness.store.inbox.enqueue(sessionKey, item);
+        await harness.store.inbox.ack(sessionKey, [item.id]);
+        expect(await harness.store.inbox.enqueue(sessionKey, item)).toBe(false);
       });
 
       it("drain は未 ack 全件を enqueue 順に返す", async () => {
-        const threadKey = "T1";
+        const sessionKey = "S1";
         const item1 = makeItem("evt-1");
         const item2 = makeItem("evt-2");
-        await harness.store.inbox.enqueue(threadKey, item1);
-        await harness.store.inbox.enqueue(threadKey, item2);
+        await harness.store.inbox.enqueue(sessionKey, item1);
+        await harness.store.inbox.enqueue(sessionKey, item2);
 
-        const drained = await harness.store.inbox.drain(threadKey);
+        const drained = await harness.store.inbox.drain(sessionKey);
         expect(drained.map((i) => i.id)).toEqual(["evt-1", "evt-2"]);
       });
 
       it("drain は非破壊 (2 回呼んでも同じ結果)", async () => {
-        const threadKey = "T1";
-        await harness.store.inbox.enqueue(threadKey, makeItem("evt-1"));
+        const sessionKey = "S1";
+        await harness.store.inbox.enqueue(sessionKey, makeItem("evt-1"));
 
-        const first = await harness.store.inbox.drain(threadKey);
-        const second = await harness.store.inbox.drain(threadKey);
+        const first = await harness.store.inbox.drain(sessionKey);
+        const second = await harness.store.inbox.drain(sessionKey);
         expect(first.map((i) => i.id)).toEqual(["evt-1"]);
         expect(second.map((i) => i.id)).toEqual(["evt-1"]);
       });
 
       it("ack した item は以後 drain に出ない", async () => {
-        const threadKey = "T1";
+        const sessionKey = "S1";
         const item = makeItem("evt-1");
-        await harness.store.inbox.enqueue(threadKey, item);
-        await harness.store.inbox.ack(threadKey, [item.id]);
+        await harness.store.inbox.enqueue(sessionKey, item);
+        await harness.store.inbox.ack(sessionKey, [item.id]);
 
-        const drained = await harness.store.inbox.drain(threadKey);
+        const drained = await harness.store.inbox.drain(sessionKey);
         expect(drained).toEqual([]);
       });
 
       it("部分 ack: ack した分だけ drain から消える", async () => {
-        const threadKey = "T1";
+        const sessionKey = "S1";
         const item1 = makeItem("evt-1");
         const item2 = makeItem("evt-2");
-        await harness.store.inbox.enqueue(threadKey, item1);
-        await harness.store.inbox.enqueue(threadKey, item2);
-        await harness.store.inbox.ack(threadKey, [item1.id]);
+        await harness.store.inbox.enqueue(sessionKey, item1);
+        await harness.store.inbox.enqueue(sessionKey, item2);
+        await harness.store.inbox.ack(sessionKey, [item1.id]);
 
-        const drained = await harness.store.inbox.drain(threadKey);
+        const drained = await harness.store.inbox.drain(sessionKey);
         expect(drained.map((i) => i.id)).toEqual(["evt-2"]);
       });
 
-      it("thread_key ごとに独立している", async () => {
+      it("sessionKey ごとに独立している", async () => {
         await harness.store.inbox.enqueue("T1", makeItem("evt-1"));
         await harness.store.inbox.enqueue("T2", makeItem("evt-1"));
 
@@ -139,11 +142,11 @@ export function describeStateStoreContract(
       });
 
       it("event の内容 (Date 含む) が往復する", async () => {
-        const threadKey = "T1";
+        const sessionKey = "S1";
         const item = makeItem("evt-1");
-        await harness.store.inbox.enqueue(threadKey, item);
+        await harness.store.inbox.enqueue(sessionKey, item);
 
-        const [drained] = await harness.store.inbox.drain(threadKey);
+        const [drained] = await harness.store.inbox.drain(sessionKey);
         expect(drained).toBeDefined();
         expect(drained?.id).toBe(item.id);
         expect(drained?.event).toEqual(item.event);
@@ -155,71 +158,174 @@ export function describeStateStoreContract(
     });
 
     describe("SessionStore", () => {
+      const base: SessionRecord = {
+        channelId: "C1",
+        threadTs: "1000.0",
+        triggerMessageId: "1000.0",
+        startedAt: new Date("2026-01-01T00:00:00.000Z"),
+        lastActiveAt: new Date("2026-01-01T00:00:03.000Z"),
+      };
+
       it("get: 無ければ null", async () => {
-        expect(await harness.store.sessions.get("T1")).toBeNull();
+        expect(await harness.store.sessions.get("S1")).toBeNull();
       });
 
       it("put/get: 往復する (Date 含む)", async () => {
-        const doc: SessionDoc = {
-          channelId: "C1",
-          threadTs: "1000.0",
-          triggerMessageId: "1000.0",
-          status: "active",
-          updatedAt: new Date("2026-01-01T00:00:00.000Z"),
-        };
-        await harness.store.sessions.put("T1", doc);
+        await harness.store.sessions.put("S1", base);
 
-        const got = await harness.store.sessions.get("T1");
-        expect(got).toEqual(doc);
-        expect(got?.updatedAt).toBeInstanceOf(Date);
+        const got = await harness.store.sessions.get("S1");
+        expect(got).toEqual(base);
+        expect(got?.startedAt).toBeInstanceOf(Date);
+        expect(got?.lastActiveAt).toBeInstanceOf(Date);
+        // 旧 SessionDoc の status は廃止済み (state.md §3.2)
+        expect(got).not.toHaveProperty("status");
       });
 
-      it("put/get: rotateRequestedAt を含む doc は Date として往復する", async () => {
-        const doc: SessionDoc = {
-          channelId: "C1",
-          threadTs: "1000.0",
-          triggerMessageId: "1000.0",
-          status: "active",
-          updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      it("put/get: endedAt を含む record は Date として往復する", async () => {
+        const record: SessionRecord = {
+          ...base,
+          endedAt: new Date("2026-01-01T00:00:09.000Z"),
+        };
+        await harness.store.sessions.put("S1", record);
+
+        const got = await harness.store.sessions.get("S1");
+        expect(got).toEqual(record);
+        expect(got?.endedAt).toBeInstanceOf(Date);
+      });
+
+      it("put/get: endedAt を含まない record は get 後も undefined のまま (= 稼働中)", async () => {
+        await harness.store.sessions.put("S1", base);
+
+        expect(
+          (await harness.store.sessions.get("S1"))?.endedAt,
+        ).toBeUndefined();
+      });
+
+      it("put/get: rotateRequestedAt を含む record は Date として往復する", async () => {
+        const record: SessionRecord = {
+          ...base,
           rotateRequestedAt: new Date("2026-01-01T00:00:05.000Z"),
         };
-        await harness.store.sessions.put("T1", doc);
+        await harness.store.sessions.put("S1", record);
 
-        const got = await harness.store.sessions.get("T1");
-        expect(got).toEqual(doc);
+        const got = await harness.store.sessions.get("S1");
+        expect(got).toEqual(record);
         expect(got?.rotateRequestedAt).toBeInstanceOf(Date);
         expect(got?.rotateRequestedAt?.getTime()).toBe(
-          doc.rotateRequestedAt?.getTime(),
+          record.rotateRequestedAt?.getTime(),
         );
       });
 
-      it("put/get: rotateRequestedAt を含まない doc は get 後も undefined のまま", async () => {
-        const doc: SessionDoc = {
-          channelId: "C1",
-          threadTs: "1000.0",
-          triggerMessageId: "1000.0",
-          status: "active",
-          updatedAt: new Date("2026-01-01T00:00:00.000Z"),
-        };
-        await harness.store.sessions.put("T1", doc);
+      it("put/get: rotateRequestedAt を含まない record は get 後も undefined のまま", async () => {
+        await harness.store.sessions.put("S1", base);
 
-        const got = await harness.store.sessions.get("T1");
-        expect(got?.rotateRequestedAt).toBeUndefined();
+        expect(
+          (await harness.store.sessions.get("S1"))?.rotateRequestedAt,
+        ).toBeUndefined();
       });
 
-      it("put: 同 thread_key への再 put は上書きする", async () => {
-        const doc1: SessionDoc = {
-          channelId: "C1",
-          threadTs: "1000.0",
-          triggerMessageId: "1000.0",
-          status: "active",
-          updatedAt: new Date("2026-01-01T00:00:00.000Z"),
+      it("put: 同 sessionKey への再 put は上書きする (endedAt もクリアできる)", async () => {
+        const ended: SessionRecord = {
+          ...base,
+          endedAt: new Date("2026-01-01T00:00:09.000Z"),
         };
-        const doc2: SessionDoc = { ...doc1, status: "finished" };
-        await harness.store.sessions.put("T1", doc1);
-        await harness.store.sessions.put("T1", doc2);
+        await harness.store.sessions.put("S1", ended);
+        await harness.store.sessions.put("S1", base);
 
-        expect(await harness.store.sessions.get("T1")).toEqual(doc2);
+        expect(await harness.store.sessions.get("S1")).toEqual(base);
+      });
+    });
+
+    describe("ThreadStore", () => {
+      it("resolve: 未登録の threadKey は null", async () => {
+        expect(await harness.store.threads.resolve("C1:1000.0")).toBeNull();
+      });
+
+      it("bind → resolve で合流先 sessionKey が返る", async () => {
+        await harness.store.threads.bind("C1:1000.0", "C1:900.0");
+
+        expect(await harness.store.threads.resolve("C1:1000.0")).toBe(
+          "C1:900.0",
+        );
+      });
+
+      it("bind: 同 threadKey への再 bind は上書きする", async () => {
+        await harness.store.threads.bind("C1:1000.0", "C1:900.0");
+        await harness.store.threads.bind("C1:1000.0", "C1:800.0");
+
+        expect(await harness.store.threads.resolve("C1:1000.0")).toBe(
+          "C1:800.0",
+        );
+      });
+
+      it("latest: 未登録の channelId は null", async () => {
+        expect(await harness.store.threads.latest("C1")).toBeNull();
+      });
+
+      it("touchLatest → latest が lastActiveAt 付きで返る (endedAt は undefined)", async () => {
+        await harness.store.threads.touchLatest("C1", "C1:1000.0");
+
+        const latest = await harness.store.threads.latest("C1");
+        expect(latest?.sessionKey).toBe("C1:1000.0");
+        expect(latest?.lastActiveAt).toBeInstanceOf(Date);
+        expect(latest?.endedAt).toBeUndefined();
+      });
+
+      it("touchLatest: 別 sessionKey で呼ぶと直近が差し替わる", async () => {
+        await harness.store.threads.touchLatest("C1", "C1:1000.0");
+        await passTime(harness, 10);
+        await harness.store.threads.touchLatest("C1", "C1:2000.0");
+
+        expect((await harness.store.threads.latest("C1"))?.sessionKey).toBe(
+          "C1:2000.0",
+        );
+      });
+
+      it("markLatestEnded → endedAt が入り、sessionKey は保たれる", async () => {
+        await harness.store.threads.touchLatest("C1", "C1:1000.0");
+        await passTime(harness, 10);
+        await harness.store.threads.markLatestEnded("C1", "C1:1000.0");
+
+        const latest = await harness.store.threads.latest("C1");
+        expect(latest?.sessionKey).toBe("C1:1000.0");
+        expect(latest?.endedAt).toBeInstanceOf(Date);
+      });
+
+      it("markLatestEnded: 直近でない sessionKey を渡しても何も起きない", async () => {
+        await harness.store.threads.touchLatest("C1", "C1:1000.0");
+        await passTime(harness, 10);
+        await harness.store.threads.touchLatest("C1", "C1:2000.0");
+        // 古い Session の終了で「最後に活動した Session」を巻き戻さない
+        await harness.store.threads.markLatestEnded("C1", "C1:1000.0");
+
+        const latest = await harness.store.threads.latest("C1");
+        expect(latest?.sessionKey).toBe("C1:2000.0");
+        expect(latest?.endedAt).toBeUndefined();
+      });
+
+      it("touchLatest: 終了済みの直近を touch すると endedAt がクリアされる", async () => {
+        await harness.store.threads.touchLatest("C1", "C1:1000.0");
+        await harness.store.threads.markLatestEnded("C1", "C1:1000.0");
+        await passTime(harness, 10);
+        await harness.store.threads.touchLatest("C1", "C1:1000.0");
+
+        expect(
+          (await harness.store.threads.latest("C1"))?.endedAt,
+        ).toBeUndefined();
+      });
+
+      it("channel ごとに独立している", async () => {
+        await harness.store.threads.touchLatest("C1", "C1:1000.0");
+        await harness.store.threads.touchLatest("C2", "C2:1000.0");
+        await harness.store.threads.bind("C1:1000.0", "C1:900.0");
+
+        expect((await harness.store.threads.latest("C1"))?.sessionKey).toBe(
+          "C1:1000.0",
+        );
+        expect((await harness.store.threads.latest("C2"))?.sessionKey).toBe(
+          "C2:1000.0",
+        );
+        expect(await harness.store.threads.resolve("C2:1000.0")).toBeNull();
       });
     });
 
@@ -263,83 +369,13 @@ export function describeStateStoreContract(
 
         expect(await harness.store.channels.get("C1")).toEqual(doc2);
       });
-
-      describe("putSessionPointer (affinity)", () => {
-        it("doc 未存在で putSessionPointer → get で enabled=true + affinity が返る", async () => {
-          const pointer: ChannelSessionPointer = {
-            sessionKey: "C1:1000.0",
-            lastActiveAt: new Date("2026-01-01T00:00:00.000Z"),
-          };
-          await harness.store.channels.putSessionPointer("C1", pointer);
-
-          const got = await harness.store.channels.get("C1");
-          expect(got?.enabled).toBe(true);
-          expect(got?.affinity).toEqual(pointer);
-          expect(got?.affinity?.lastActiveAt).toBeInstanceOf(Date);
-        });
-
-        it("put (toggle) → putSessionPointer → get で両方残る", async () => {
-          await harness.store.channels.put("C1", {
-            enabled: false,
-            updatedAt: new Date("2026-01-01T00:00:00.000Z"),
-            updatedBy: "U1",
-          });
-          const pointer: ChannelSessionPointer = {
-            sessionKey: "C1:1000.0",
-            lastActiveAt: new Date("2026-01-01T00:00:05.000Z"),
-          };
-          await harness.store.channels.putSessionPointer("C1", pointer);
-
-          const got = await harness.store.channels.get("C1");
-          expect(got?.enabled).toBe(false);
-          expect(got?.updatedBy).toBe("U1");
-          expect(got?.affinity).toEqual(pointer);
-        });
-
-        it("putSessionPointer → put (toggle、affinity なしの doc を渡す) → get で affinity が残る", async () => {
-          const pointer: ChannelSessionPointer = {
-            sessionKey: "C1:1000.0",
-            lastActiveAt: new Date("2026-01-01T00:00:00.000Z"),
-          };
-          await harness.store.channels.putSessionPointer("C1", pointer);
-          await harness.store.channels.put("C1", {
-            enabled: false,
-            updatedAt: new Date("2026-01-01T00:00:10.000Z"),
-            updatedBy: "U2",
-          });
-
-          const got = await harness.store.channels.get("C1");
-          expect(got?.enabled).toBe(false);
-          expect(got?.updatedBy).toBe("U2");
-          expect(got?.affinity).toEqual(pointer);
-        });
-
-        it("putSessionPointer を endedAt 付き → endedAt なしで上書き → get で endedAt が消えている", async () => {
-          const withEnded: ChannelSessionPointer = {
-            sessionKey: "C1:1000.0",
-            lastActiveAt: new Date("2026-01-01T00:00:00.000Z"),
-            endedAt: new Date("2026-01-01T00:00:05.000Z"),
-          };
-          await harness.store.channels.putSessionPointer("C1", withEnded);
-
-          const withoutEnded: ChannelSessionPointer = {
-            sessionKey: "C1:1000.0",
-            lastActiveAt: new Date("2026-01-01T00:00:10.000Z"),
-          };
-          await harness.store.channels.putSessionPointer("C1", withoutEnded);
-
-          const got = await harness.store.channels.get("C1");
-          expect(got?.affinity).toEqual(withoutEnded);
-          expect(got?.affinity?.endedAt).toBeUndefined();
-        });
-      });
     });
 
     describe("LeaseStore", () => {
       it("acquire: 成功する", async () => {
         const lease = await harness.store.leases.acquire("T1", "owner-a", 1000);
         expect(lease).not.toBeNull();
-        expect(lease?.threadKey).toBe("T1");
+        expect(lease?.sessionKey).toBe("T1");
         expect(lease?.owner).toBe("owner-a");
       });
 
@@ -447,7 +483,7 @@ export function describeStateStoreContract(
         expect(renewed).toBe(true);
       });
 
-      it("thread_key ごとに独立している", async () => {
+      it("sessionKey ごとに独立している", async () => {
         const leaseA = await harness.store.leases.acquire(
           "T1",
           "owner-a",

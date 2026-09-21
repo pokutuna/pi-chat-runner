@@ -220,5 +220,5 @@ Turn に複数のメッセージが合流していれば全件に付く。Sessio
 | mode 不整合の警告 | `warnPolicyMismatches` (`src/session/spawn.ts`) |
 | Turn の成否判定 | `turnStatusFromAgentEnd` (`src/session/pi-events.ts`) |
 | リアクション | `ActiveSession.#beginTurnMessage` / `#reactMessages` (`src/session/active-session.ts`) |
-| Session 実行状況 (SessionRecord) | `SessionDoc` (`src/store/state/interfaces.ts`) |
-| Channel 有効状態 | `ChannelStateStore` (`src/store/state/interfaces.ts`) |
+| Session 実行状況 (SessionRecord) | `SessionRecord` (`src/state/control/interfaces.ts`) |
+| Channel 有効状態 | `ChannelStateStore` (`src/state/control/interfaces.ts`) |

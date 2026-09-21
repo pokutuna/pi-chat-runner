@@ -6,7 +6,7 @@
 // startBridge が起動できること (bridge.ts の 2 点の変更) を確認する。
 //
 // pi は test/session/runner.test.ts と同じ fake-pi (test/fixtures/fake-pi.mjs) を使う。
-// store は InMemoryStateStore、workdir は一時ディレクトリ (runner.test.ts の流儀)。
+// Control State は InMemoryControlState、workdir は一時ディレクトリ (runner.test.ts の流儀)。
 
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -19,7 +19,7 @@ import { describe, expect, it } from "vitest";
 import { startBridge } from "../src/bridge.js";
 import { FileConfigSource } from "../src/config/config-source.js";
 import { createLocalChat } from "../src/ingress/local/local-chat.js";
-import { InMemoryStateStore } from "../src/store/state/backends/memory.js";
+import { InMemoryControlState } from "../src/state/control/backends/memory.js";
 
 const FAKE_PI = fileURLToPath(
   new URL("./fixtures/fake-pi.mjs", import.meta.url),
@@ -58,7 +58,7 @@ describe("startBridge with LocalChat (no Slack)", () => {
 
     await startBridge({
       eventSource: chat.ingress,
-      store: new InMemoryStateStore(),
+      controlState: new InMemoryControlState(),
       configSource: new FileConfigSource(CONFIG_PATH),
       piEntrypoint: FAKE_PI,
       agentHome,
@@ -102,7 +102,7 @@ describe("startBridge with LocalChat (no Slack)", () => {
 
     await startBridge({
       eventSource: chat.ingress,
-      store: new InMemoryStateStore(),
+      controlState: new InMemoryControlState(),
       configSource: new FileConfigSource(REACTION_CONFIG_PATH),
       piEntrypoint: FAKE_PI,
       agentHome,
@@ -148,7 +148,7 @@ describe("startBridge with LocalChat (no Slack)", () => {
     await expect(
       startBridge({
         eventSource: chat.ingress,
-        store: new InMemoryStateStore(),
+        controlState: new InMemoryControlState(),
         configSource: new FileConfigSource(CONFIG_PATH),
         piEntrypoint: FAKE_PI,
         agentHome,

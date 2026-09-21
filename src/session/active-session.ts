@@ -15,9 +15,9 @@ import type { EgressRouter } from "../egress/router.js";
 import type { ReactionState, TurnReactor } from "../egress/turn-reactor.js";
 import type { InboundMessage } from "../ingress/chat-event.js";
 import type { Logger } from "../logger.js";
-import { inboxItemId } from "../store/state/inbox-item.js";
-import type { Lease, StateStore } from "../store/state/interfaces.js";
-import type { SharedStorage, WorkdirStorage } from "../store/workdir.js";
+import type { SharedStore, WorkdirStore } from "../state/agent/interfaces.js";
+import { inboxItemId } from "../state/control/inbox-item.js";
+import type { ControlState, Lease } from "../state/control/interfaces.js";
 import {
   extractReply,
   extractTurnErrors,
@@ -59,11 +59,11 @@ export interface SessionHost {
  * (mentionFormat/piBinary/piEntrypoint/agentUid/agentGid) は StartArgs にはもう
  * 積まない — プロセス起動中に変わらないのでここから直接参照する */
 export interface SessionContext {
-  store: StateStore;
+  controlState: ControlState;
   router: EgressRouter;
   reactor: TurnReactor;
-  workdirStorage: WorkdirStorage;
-  sharedStorage: SharedStorage | undefined;
+  workdirStore: WorkdirStore;
+  sharedStore: SharedStore | undefined;
   logger: Logger;
   lingerMs: number;
   turnTimeoutMs: number;
@@ -416,11 +416,13 @@ export class ActiveSession {
         // 既に死んでいる分ここでは kill せず lease 解放から始める点だけが違う
         const toAck = [...this.#promptedIds];
         if (toAck.length > 0) {
-          void this.#ctx.store.inbox.ack(sessionKey, toAck).catch((err) => {
-            this.#ctx.logger.warn({ sessionKey, err }, "inbox ack failed");
-          });
+          void this.#ctx.controlState.inbox
+            .ack(sessionKey, toAck)
+            .catch((err) => {
+              this.#ctx.logger.warn({ sessionKey, err }, "inbox ack failed");
+            });
         }
-        void this.#ctx.store.leases.release(this.#lease).catch((err) => {
+        void this.#ctx.controlState.leases.release(this.#lease).catch((err) => {
           this.#ctx.logger.warn({ sessionKey, err }, "lease release failed");
         });
         void this.#host.markEnded(this.channelId, sessionKey);
@@ -452,7 +454,7 @@ export class ActiveSession {
     // enqueue 済みの入力 (spawn 準備中に積まれた分を含む) を束ねて初回 prompt にする。
     // トリガーイベント自身も enqueue 済みなので通常 drain 経由で届く。
     // ChannelDoc.context は初回のみ先頭に注入する (config.md §1.3)
-    const items = (await this.#ctx.store.inbox.drain(sessionKey)).filter(
+    const items = (await this.#ctx.controlState.inbox.drain(sessionKey)).filter(
       (i) => !this.#promptedIds.has(i.id),
     );
     let body: string;
@@ -479,13 +481,9 @@ export class ActiveSession {
     this.#progress.reset(leadKey);
     proc.prompt(prependContext(body, doc));
 
-    await this.#ctx.store.sessions.put(sessionKey, {
-      channelId,
-      threadTs,
-      triggerMessageId: this.triggerMessageId,
-      status: "active",
-      updatedAt: new Date(),
-    });
+    // Session の実行状況 (state.md §3.2)。startedAt は sessionKey に紐づく Session の
+    // 開始時刻なので、resume では既存のものを引き継ぐ。endedAt を書かない = 稼働中
+    await this.#putRecord({ endedAt: undefined });
     this.#ctx.logger.info(
       {
         sessionKey,
@@ -523,7 +521,7 @@ export class ActiveSession {
     const sessionKey = this.sessionKey;
     const proc = this.#process;
     if (proc === undefined) return;
-    const items = await this.#ctx.store.inbox.drain(sessionKey);
+    const items = await this.#ctx.controlState.inbox.drain(sessionKey);
     const pending = items.filter((i) => !this.#promptedIds.has(i.id));
     if (pending.length > 0) {
       // steer 前に宛先登録 (session-model.md §3 の境界規則) と 👀 付け
@@ -627,20 +625,17 @@ export class ActiveSession {
     const toAck = [...this.#promptedIds];
     const reactTargets = this.#turnMessageIds;
     this.#turnMessageIds = [];
-    await this.#ctx.workdirStorage.flush(sessionKey, this.workdir);
+    await this.#ctx.workdirStore.flush(sessionKey, this.workdir);
     // shared も同じ境界で棚へ書き戻す (docs/design/state.md §7)。異常終了パス
     // (exit / abnormalShutdown / renew 失敗) で書き戻さないのは workdir と同じ理由
     if (
-      this.#ctx.sharedStorage !== undefined &&
+      this.#ctx.sharedStore !== undefined &&
       this.#sharedStagingDir !== undefined
     ) {
-      await this.#ctx.sharedStorage.flush(
-        this.channelId,
-        this.#sharedStagingDir,
-      );
+      await this.#ctx.sharedStore.flush(this.channelId, this.#sharedStagingDir);
     }
     if (toAck.length > 0) {
-      await this.#ctx.store.inbox.ack(sessionKey, toAck);
+      await this.#ctx.controlState.inbox.ack(sessionKey, toAck);
       for (const id of toAck) this.#promptedIds.delete(id);
     }
     // このターンの成否を、起こした各メッセージへ ✅ (ok) / ❌ (error) で返す。
@@ -663,18 +658,12 @@ export class ActiveSession {
     // 5. 終了処理。✅/❌ は各ターンの agent_end で既に付けてあるので、ここでは
     // セッションを畳むだけ (セッション終了そのものにはリアクションを付けない)
     this.#state = "stopping";
-    await this.#ctx.store.sessions.put(sessionKey, {
-      channelId: this.channelId,
-      threadTs: this.threadTs,
-      triggerMessageId: this.triggerMessageId,
-      status: "finished",
-      updatedAt: new Date(),
-    });
+    await this.#putRecord({ endedAt: new Date() });
     await proc.stop();
     const progressKey = this.#progress.currentKey;
     this.#clearAllTimers();
     await this.#ctx.router.clearProgress(progressKey);
-    await this.#ctx.store.leases.release(this.#lease);
+    await this.#ctx.controlState.leases.release(this.#lease);
     this.#dispose();
     // windowSec の起点 (message-dispatch.md §3.2。以降このレーンは窓内なら resume 合流できる)
     await this.#host.markEnded(this.channelId, sessionKey);
@@ -775,11 +764,11 @@ export class ActiveSession {
     // このターンで prompt 済みだった item は ack して捨てる (retry しない)
     const toAck = [...this.#promptedIds];
     if (toAck.length > 0) {
-      await this.#ctx.store.inbox.ack(sessionKey, toAck).catch((err) => {
+      await this.#ctx.controlState.inbox.ack(sessionKey, toAck).catch((err) => {
         this.#ctx.logger.warn({ sessionKey, err }, "inbox ack failed");
       });
     }
-    await this.#ctx.store.leases.release(this.#lease).catch((err) => {
+    await this.#ctx.controlState.leases.release(this.#lease).catch((err) => {
       this.#ctx.logger.warn({ sessionKey, err }, "lease release failed");
     });
     proc.kill();
@@ -797,7 +786,7 @@ export class ActiveSession {
    * promptedIds で除外する)。無ければ false */
   async #promptPending(proc: PiProcess): Promise<boolean> {
     const sessionKey = this.sessionKey;
-    const items = (await this.#ctx.store.inbox.drain(sessionKey)).filter(
+    const items = (await this.#ctx.controlState.inbox.drain(sessionKey)).filter(
       (i) => !this.#promptedIds.has(i.id),
     );
     if (items.length === 0) return false;
@@ -827,7 +816,7 @@ export class ActiveSession {
     const timer = setInterval(() => {
       void (async () => {
         if (this.#disposed) return;
-        const ok = await this.#ctx.store.leases.renew(
+        const ok = await this.#ctx.controlState.leases.renew(
           this.#lease,
           this.#ctx.leaseTtlMs,
         );
@@ -885,6 +874,31 @@ export class ActiveSession {
       clearTimeout(this.#turnTimeoutTimer);
       this.#turnTimeoutTimer = undefined;
     }
+  }
+
+  /** SessionRecord (state.md §3.2) の書き込み。startedAt は triggerMessageId で
+   * 同一性を見る Session の開始時刻なので、同じ Session の継続 (resume / 終了) では
+   * 既存値を引き継ぎ、別のトリガーで起きた Session では現在の起動時刻にする。
+   * lastActiveAt は書き込みのたびに更新する。rotateRequestedAt は Dispatcher の
+   * 管轄なので既存値をそのまま残す */
+  async #putRecord(args: { endedAt: Date | undefined }): Promise<void> {
+    const now = new Date();
+    const previous = await this.#ctx.controlState.sessions.get(this.sessionKey);
+    const sameSession = previous?.triggerMessageId === this.triggerMessageId;
+    await this.#ctx.controlState.sessions.put(this.sessionKey, {
+      channelId: this.channelId,
+      threadTs: this.threadTs,
+      triggerMessageId: this.triggerMessageId,
+      startedAt:
+        sameSession && previous !== null
+          ? previous.startedAt
+          : new Date(this.#startedAt),
+      lastActiveAt: now,
+      ...(args.endedAt !== undefined && { endedAt: args.endedAt }),
+      ...(previous?.rotateRequestedAt !== undefined && {
+        rotateRequestedAt: previous.rotateRequestedAt,
+      }),
+    });
   }
 
   /** 全終了経路の共通後始末: 3 タイマー (renew / turn timeout / progress notice) を
