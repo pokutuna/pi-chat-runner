@@ -13,7 +13,7 @@ Extends the pi-chat-runner base image with a single `FROM` step, adding the
 
 pi auto-discovers anything placed under `$AGENT_HOME/.pi/agent/extensions/`
 and applies it to **every** channel (see
-[docs/design/session-runtime.md §5](../../docs/design/session-runtime.md)
+[docs/design/runtime.md §4.3](../../docs/design/runtime.md)
 and `gc-logging-agent`'s `extensions/init-gcloud.ts` for that pattern).
 
 This example deliberately does the opposite: `pi-smart-fetch` is listed in
@@ -66,7 +66,7 @@ have the capability (and its `allowAddons` cost — see below).
 
 `pi-smart-fetch` depends on a native addon (`wreq-js`, a Rust N-API binary).
 Node's Permission Model (`--permission`, on by default for the pi child
-process — see `docs/design/config.md` §6) rejects loading native addons
+process — see `docs/design/runtime.md` §5.2) rejects loading native addons
 (`.node` files) unless `--allow-addons` is passed. `pi-smart-fetch` would
 otherwise fail to load under this runner.
 

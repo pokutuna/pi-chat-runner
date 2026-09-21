@@ -1,6 +1,6 @@
-// ChatEvent 型定義 (docs/design/chat-model.md §2.3)
+// ChatEvent 型定義 (docs/design/ingress-egress.md §1)
 //
-// 汎用モデルの ConversationRef / UserRef は docs/design/architecture.md §0 の
+// 汎用モデルの ConversationRef / UserRef は docs/design/ingress-egress.md §1 の
 // 簡素化方針 (単一組織・Slack のみ) に従い、ここでは以下に潰す:
 //   - ConversationRef -> ConversationRef { channelId, threadTs? }
 //   - UserRef          -> Sender { id, isBot, isSelf, displayName? }
@@ -10,7 +10,7 @@ export interface ConversationRef {
   channelId: string;
   threadTs?: string;
   /** Slack の im (DM)。DM は ChannelDoc の予約名 dm と既定 passthrough gate の対象になる
-   * (docs/design/config.md §1, §2)。 */
+   * (docs/design/config.md §3.1)。 */
   isDm?: boolean;
 }
 
@@ -23,12 +23,12 @@ export interface Sender {
    * 設定に関わらず常に除外する。 */
   isSelf: boolean;
   /** 表示名。EventSource/bridge 層で解決できた場合のみ入る。無ければ id を使う。
-   * sender gate の name 判定 (config.md §7) はこの値との完全一致で行うため、
+   * sender gate の name 判定 (config.md §4.2) はこの値との完全一致で行うため、
    * bridge は message/reaction を gate 評価に渡す前に enrichEvent で解決する。 */
   displayName?: string;
 }
 
-/** hermes と同じ平坦化 5 フィールド (chat-model.md §2.3) */
+/** hermes と同じ平坦化 5 フィールド (ingress-egress.md §1) */
 export interface ReplyContext {
   messageId: string;
   excerpt: string;
@@ -81,7 +81,7 @@ export interface MessageEdited {
   raw?: unknown;
 }
 
-/** channel_joined など。当面はログのみ (chat-model.md §2.3)。Step 1 では最小のスタブ型。 */
+/** channel_joined など。当面はログのみ (ingress-egress.md §1)。Step 1 では最小のスタブ型。 */
 export interface SystemEvent {
   kind: "system";
   subtype: string;

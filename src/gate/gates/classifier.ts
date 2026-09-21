@@ -1,4 +1,4 @@
-// ClassifierGate — session-model.md §5 Layer 2 (LLM classifier)
+// ClassifierGate — config.md §4.1 Layer 2 (LLM classifier)
 //
 // criteria (自然言語) と対象メッセージを ClassifierClient に渡し、起動可否を判定する。
 // message 以外の kind は対象外として trigger=false (keyword/mention と同じ流儀)。

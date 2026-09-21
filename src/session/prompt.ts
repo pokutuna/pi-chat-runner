@@ -1,7 +1,7 @@
 import type { ChannelDoc } from "../config/channel-doc.js";
 
 /** app 共通プロンプトのプラットフォーム中立な固定部分。ChannelDoc.systemPrompt は
- * これへの追記分 (architecture.md §2)。mention 記法の説明は mentionFormat に依存する
+ * これへの追記分 (runtime.md §6)。mention 記法の説明は mentionFormat に依存する
  * ため別関数 (mentionInstruction) で組み立て、buildSystemPrompt で結合する */
 const APP_SYSTEM_PROMPT = [
   "You are an assistant running inside a chat thread.",
@@ -25,7 +25,7 @@ function mentionInstruction(mentionFormat: MentionFormat): string {
 }
 
 /** /new コマンドの拒否通知 (実行中セッションへは v1 の割り切りで交錯させない、
- * session-model.md §6)。abnormalShutdown の noticeText と同じ mrkdwn 絵文字スタイル */
+ * session-model.md §5.1)。abnormalShutdown の noticeText と同じ mrkdwn 絵文字スタイル */
 export const REJECT_NOTICE_TEXT =
   ":warning: セッションが実行中のため、いまは /new できません。完了後にもう一度送ってください";
 
@@ -33,15 +33,15 @@ export const REJECT_NOTICE_TEXT =
 export const ACK_NOTICE_TEXT =
   ":new: 次のメッセージから新しいセッションを開始します";
 
-/** /disable コマンドの受理通知 (session-model.md §5) */
+/** /disable コマンドの受理通知 (session-model.md §5.2) */
 export const DISABLE_NOTICE_TEXT =
   ":no_bell: このチャンネルでの起動を無効化しました。`/enable` (bot へのメンション付き) で再開できます";
 
-/** /enable コマンドの受理通知 (session-model.md §5) */
+/** /enable コマンドの受理通知 (session-model.md §5.2) */
 export const ENABLE_NOTICE_TEXT =
   ":bell: このチャンネルでの起動を有効化しました";
 
-/** shared 有効時に system prompt へ足す説明 (docs/design/shared.md §3)。
+/** shared 有効時に system prompt へ足す説明 (docs/design/runtime.md §6)。
  * 使い方の規約 (memory の書き方) は組み込み memory skill 側が担い、ここでは
  * ディレクトリの存在と性質だけ知らせる */
 const SHARED_DIR_PROMPT =
@@ -51,7 +51,7 @@ const SHARED_DIR_PROMPT =
   "automatically in future sessions.";
 
 /** memory の索引 (MEMORY.md) をそのまま system prompt に注入するための前置き
- * (docs/design/memory.md §2)。索引は常時見える化し、本文ファイルの read は
+ * (docs/design/runtime.md §6)。索引は常時見える化し、本文ファイルの read は
  * 引き続き組み込み skill 側の判断に委ねる (skill 発火に頼らないのは索引だけ) */
 const MEMORY_INDEX_PROMPT_HEADER =
   "The following is this channel's memory index " +
@@ -60,7 +60,7 @@ const MEMORY_INDEX_PROMPT_HEADER =
   "relevant to the current task:";
 
 /** app 共通 + mention 記法の説明 + shared の説明 + memory 索引 +
- * ChannelDoc.systemPrompt + thread_key の指示 (session-runtime.md §2) */
+ * ChannelDoc.systemPrompt + thread_key の指示 (runtime.md §6) */
 export function buildSystemPrompt(
   sessionKey: string,
   doc: ChannelDoc | null,

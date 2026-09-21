@@ -1,4 +1,4 @@
-// KeywordGate — docs/design/session-model.md §5 の安価なプリフィルタ
+// KeywordGate — docs/design/config.md §4.1 の安価なプリフィルタ
 //
 // pattern (正規表現文字列) を message の本文にマッチさせる。message 以外の kind
 // は対象外として trigger=false。不正な正規表現はコンストラクション時にエラーにする。

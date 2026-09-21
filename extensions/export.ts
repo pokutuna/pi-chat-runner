@@ -6,7 +6,7 @@
  * 生成した絶対パスを同期的に返す。agent はそのパスを自由に使ってよい (reply の
  * files に添付する、workdir に残すだけにする、等)。reply の files は workdir 相対
  * パスを期待するが、resolveReplyFiles は path.resolve で解決するため workdir 内の
- * 絶対パスも同じ結果になり、そのまま渡して問題ない (session-runtime.md §2.1)。
+ * 絶対パスも同じ結果になり、そのまま渡して問題ない (runtime.md §5.4)。
  *
  * pi の extension サンドボックス (ExtensionContext) はセッションの読み取り専用
  * ビュー (sessionManager) しか持たず、`exportToHtml` を直接呼べない

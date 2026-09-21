@@ -36,7 +36,7 @@ export interface LoggedMessage {
 export interface PostOptions {
   /** 省略時は createLocalChat の defaultChannelId。 */
   channelId?: string;
-  /** ログに存在しない ts も許す (local-dev.md §3: 未観測メッセージへの
+  /** ログに存在しない ts も許す (local-dev.md §4: 未観測メッセージへの
    * スレッド返信の再現)。 */
   threadTs?: string;
   mentionsBot?: boolean;

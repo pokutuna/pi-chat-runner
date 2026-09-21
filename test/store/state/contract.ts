@@ -1,4 +1,4 @@
-// StateStore の共通コントラクトテスト (docs/design/persistence.md §1)
+// StateStore の共通コントラクトテスト (docs/design/state.md §4.3)
 //
 // InMemory / SQLite など複数の実装が同じ振る舞いをすべきなので、
 // インタフェースに対するテストを 1 セットだけ書き、実装ごとにパラメタライズして流す。

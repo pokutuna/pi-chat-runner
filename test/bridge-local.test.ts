@@ -85,7 +85,7 @@ describe("startBridge with LocalChat (no Slack)", () => {
     expect(botReply?.channelId).toBe(channelId);
     expect(botReply?.text).toContain("local mode smoke test");
 
-    // check reaction (session-model.md §5) もログに記録される
+    // check reaction (session-model.md §7.2) もログに記録される
     await waitFor(
       () => chat.reactionsLog().some((r) => r.emoji === "white_check_mark"),
       "check reaction recorded",
@@ -118,7 +118,7 @@ describe("startBridge with LocalChat (no Slack)", () => {
     const posted = await chat.post("please investigate this alert");
 
     // 人間が :eyes: を付与 — bridge が fetchMessage 経由で対象メッセージ本文を取得し
-    // セッションを起動する (session-model.md §5「人間によるリアクション起動」)。
+    // セッションを起動する (config.md §4.1 の `kind: reaction`)。
     await chat.react(posted.ts, "eyes");
 
     await waitFor(

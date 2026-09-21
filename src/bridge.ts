@@ -1,7 +1,7 @@
 // startBridge — composition root (SessionRunner の組み立てと Ingress の配線)。
 //
 // server.ts (CLI/bin) と、npm パッケージとして import して起動するライブラリ利用
-// (docs/design/config.md §6) の両方から呼ばれる共通の起動シーケンス。env パース・
+// (docs/design/config.md §3) の両方から呼ばれる共通の起動シーケンス。env パース・
 // composition の分離については server.ts のコメントを参照。
 //
 // 組み込み extension (reply/permission-gate/export) の解決と常時注入は SessionRunner
@@ -43,7 +43,7 @@ import {
   type WorkdirStorage,
 } from "./store/workdir.js";
 
-/** classifier gate 用 LLM client のコード既定モデル (config.md §2.3: 未指定時の
+/** classifier gate 用 LLM client のコード既定モデル (config.md §4.1: 未指定時の
  * fallback は bridge の 1 箇所に集約する)。 */
 const CODE_DEFAULT_CLASSIFIER_MODEL = "gemini-3.1-flash-lite";
 
@@ -68,11 +68,11 @@ export interface BridgeOptions {
   piEntrypoint?: string;
   extraEnv?: Record<string, string>;
   archiveDir?: string;
-  /** チャンネル共有ディレクトリの保存先ルート (docs/design/shared.md)。未設定なら
+  /** チャンネル共有ディレクトリの保存先ルート (docs/design/state.md §6)。未設定なら
    * shared 機能ごと無効。棚は `<sharedDir>/<channelId>/` */
   sharedDir?: string;
   /** shared 棚のサイズがこれを超えたら warn ログを出す閾値 (bytes)。未設定なら
-   * createSharedStorage の既定値 (shared.md §7: ガードレールでなく気づきのため) */
+   * createSharedStorage の既定値 (state.md §5.1: ガードレールでなく気づきのため) */
   sharedShelfWarnBytes?: number;
   agentUid?: number;
   agentGid?: number;
@@ -135,7 +135,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
 
   // 注入があればそれを使い、なければ web (WebClient) から内部構築する。files 指定時は
   // files.uploadV2 (initial_comment に text を乗せる)、無指定時は従来の chat.postMessage。
-  // messageId (Slack の ts) は進捗通知 (progress-notice.md) の updateMessage が使う —
+  // messageId (Slack の ts) は進捗通知 (ingress-egress.md §8) の updateMessage が使う —
   // files.uploadV2 は投稿本体のメッセージ ts を返さないため、その場合は messageId 抽象を
   // 持たない (updateMessage の対象にはならない。進捗通知は files を使わないので実害はない)
   const poster: ChatPoster = options.poster ?? {
@@ -168,8 +168,8 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
     new SlackTurnReactor({
       add: (args) => web!.reactions.add(args),
     });
-  // reaction トリガーの対象メッセージ本文取得 (session-model.md §5「人間による
-  // リアクション起動」)。注入があればそれを使い、なければ web (WebClient) の
+  // reaction トリガーの対象メッセージ本文取得 (config.md §4.1 の
+  // `kind: reaction`)。注入があればそれを使い、なければ web (WebClient) の
   // conversations.replies から内部構築する。conversations.replies は ts が親でも
   // スレッド返信でも、その ts のメッセージ自身を先頭で返す
   const fetchMessage: FetchMessage =
@@ -197,7 +197,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
   const workdirStorage =
     options.workdirStorage ?? createWorkdirStorage(options.archiveDir, logger);
   // sharedStorage 注入があれば sharedDir より優先する。どちらも無ければ
-  // undefined = shared 機能ごと無効 (docs/design/shared.md)
+  // undefined = shared 機能ごと無効 (docs/design/state.md §8)
   const sharedStorage =
     options.sharedStorage ??
     createSharedStorage(
@@ -275,13 +275,13 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
   // event_id ベースなので、この二重配信はここでしか防げない
   //
   // 自己エコー (sender.isSelf) はここで無条件に除外する (無限ループ防止)。他 bot の
-  // 投稿はここでは弾かず、runner 側の allowBots 判定・gate に委ねる (session-model.md §5)。
+  // 投稿はここでは弾かず、runner 側の allowBots 判定・gate に委ねる (config.md §4.3)。
   const seenMessages = new Set<string>();
 
   await eventSource.start(async (event: ChatEvent, ack: Ack) => {
     // 3 秒 ACK の意味は入口で違う (Socket Mode = ack コールバック, Events API = 200
     // レスポンス) が、Ack で吸収されているのでここでは「積む前に ack する」だけ書けばよい
-    // (architecture.md §1)。以降の残処理は ack 後も継続する
+    // (architecture.md §5)。以降の残処理は ack 後も継続する
     await ack();
 
     logger.debug(

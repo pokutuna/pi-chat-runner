@@ -1,4 +1,4 @@
-// Firestore 実装 (docs/design/persistence.md §1 の InboxStore/SessionStore/LeaseStore)
+// Firestore 実装 (docs/design/state.md §4.2 の InboxStore/SessionStore/LeaseStore)
 //
 // @google-cloud/firestore を使う。Firestore インスタンスは外から渡す
 // (エミュレータ分岐を持たない。SDK は FIRESTORE_EMULATOR_HOST が立っていれば
@@ -6,11 +6,11 @@
 //
 // 全コレクションは親ドキュメント (rootDoc、既定 "pi-chat-runner/default") の
 // サブコレクションに置く。既存プロジェクトの Firestore に同居してもトップレベルを
-// 散らかさないため (persistence.md §1)。親ドキュメント自体は書かない (Firestore は
+// 散らかさないため (state.md §4.2)。親ドキュメント自体は書かない (Firestore は
 // 実体のない親の下にサブコレクションを置ける。コンソールでは斜体表示になる)。
 //
 // - inbox: `<rootDoc>/inbox/{threadKey}/items/{itemId}`。enqueue は create() を使い
-//   ALREADY_EXISTS を false に写像する (dedupe。session-model.md §4)。
+//   ALREADY_EXISTS を false に写像する (dedupe。message-dispatch.md §8)。
 // - sessions: `<rootDoc>/sessions/{threadKey}`
 // - leases: `<rootDoc>/leases/{threadKey}`
 // - channels: `<rootDoc>/channels/{channelId}`

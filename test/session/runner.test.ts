@@ -395,7 +395,7 @@ describe("SessionRunner (fake-pi integration)", () => {
   });
 
   it("channel skills/extensions are passed to pi as --skill / --extension (additive)", async () => {
-    // チャンネル別の追加 skill / extension (config.md §2)。実在するパスを用意し、
+    // チャンネル別の追加 skill / extension (config.md §1.2)。実在するパスを用意し、
     // fake-pi の argv に反映されることを確認する
     const resourceRoot = await mkdtemp(
       join(tmpdir(), "pi-chat-runner-test-resources-"),
@@ -445,7 +445,7 @@ describe("SessionRunner (fake-pi integration)", () => {
     const sharedRoot = await mkdtemp(
       join(tmpdir(), "pi-chat-runner-test-shared-"),
     );
-    // 過去セッションの蓄積がある棚を模す (docs/design/shared.md §2:
+    // 過去セッションの蓄積がある棚を模す (docs/design/state.md §5.1:
     // session.jsonl が無くても復元される — WorkdirStorage との差分)
     await mkdir(join(sharedRoot, "C01", "memory"), { recursive: true });
     await writeFile(
@@ -517,12 +517,12 @@ describe("SessionRunner (fake-pi integration)", () => {
     expect(skillArgs.some((p) => p.includes("builtin-skills"))).toBe(false);
 
     // memoryEnabled が false になるため、system prompt にも memory index の
-    // 文言が入らない (docs/design/memory.md §2)
+    // 文言が入らない (docs/design/runtime.md §6)
     const appendPrompt = argv[argv.indexOf("--append-system-prompt") + 1];
     expect(appendPrompt).not.toContain("memory index");
   });
 
-  it("shared: 棚に MEMORY.md があると、その中身が system prompt に注入される (memory.md §2)", async () => {
+  it("shared: 棚に MEMORY.md があると、その中身が system prompt に注入される (runtime.md §6)", async () => {
     const sharedRoot = await mkdtemp(
       join(tmpdir(), "pi-chat-runner-test-shared-"),
     );
@@ -736,7 +736,7 @@ describe("SessionRunner (fake-pi integration)", () => {
     await h.runner.handle(trigger);
 
     await waitFor(() => h.poster.calls.length === 1, "reply posted");
-    // DM は既定 session: channel, reply: flat (session-model.md §3) なので、
+    // DM は既定 session: channel, reply: flat (session-model.md §2) なので、
     // スレッド外トリガーの返信先はチャンネル直下 (threadTs 無し) になる
     expect(h.poster.calls[0]).toEqual({
       channelId: "D01",
@@ -820,7 +820,7 @@ describe("SessionRunner (fake-pi integration)", () => {
 
     // トリガーと同じスレッド外 (threadTs 無し) の 2 件目。session.mode: channel
     // なので sessionKey は channelId のみで揃い、同一セッションへの steer になる
-    // (session-model.md §3)
+    // (session-model.md §2.1)
     const second = message({
       id: "1700000000.000250",
       conversation: { channelId: "C01" },
@@ -1116,7 +1116,7 @@ describe("SessionRunner (fake-pi integration)", () => {
 
     const sessionKey = threadKeyOf(trigger);
     // マーカーは書き込まれた後、同じ kick 内で消費 (rotate) されクリアされる
-    // (session-model.md §6)。消費された痕跡は rotate ログで確認する
+    // (session-model.md §5.1)。消費された痕跡は rotate ログで確認する
     expect(
       h
         .logLines()
@@ -1231,7 +1231,7 @@ describe("SessionRunner (fake-pi integration)", () => {
     expect(startedLogs[0]?.resumed).toBe(false);
 
     // fake-pi は session.jsonl を作らないため、pi が実際に書き出した状態を
-    // テスト側で模して置く (session-runtime.md: 再開は同じ --session パスへの
+    // テスト側で模して置く (runtime.md §1: 再開は同じ --session パスへの
     // 再 spawn だけで実現される)
     await writeFile(
       join(h.workdirRoot, "C01", trigger.id, "session.jsonl"),
@@ -1403,7 +1403,7 @@ describe("SessionRunner (fake-pi integration)", () => {
   // 積んだ状態でも実際に Permission Model 下で pi (fake-pi) が起動し reply まで
   // 到達すること (上のテスト) をもって、配線が壊れていないことの回帰保護とする
 
-  // bot 投稿の gate 起動 (opt-in) — session-model.md §5
+  // bot 投稿の gate 起動 (opt-in) — config.md §4.3
   it("bot 投稿は既定 (allowBots なし) では起動しない (when がマッチしても捨てる)", async () => {
     const h = await harness({
       C01: {
@@ -2021,12 +2021,12 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     await h.runner.handle(trigger);
     await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
 
-    // kick で restore、agent_end で flush → ack の順 (persistence.md §3)
+    // kick で restore、agent_end で flush → ack の順 (message-dispatch.md §7.2)
     expect(calls).toEqual(["restore", "flush", "ack:1"]);
     expect(await h.store.inbox.drain(threadKeyOf(trigger))).toEqual([]);
   });
 
-  it("shared の restore/flush は workdir と同じ境界で走り、flush は ack より前 (docs/design/shared.md §2)", async () => {
+  it("shared の restore/flush は workdir と同じ境界で走り、flush は ack より前 (docs/design/state.md §5.1)", async () => {
     const calls: string[] = [];
     class RecordingWorkdir implements WorkdirStorage {
       async restore(): Promise<boolean> {
@@ -2075,7 +2075,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
 
   it("re-kicks the same thread after a failed kick (item is not lost)", async () => {
     // restore を 1 回だけ失敗させて kick を落とす (kick 失敗 = ack されないので
-    // inbox に残り、次のイベントで拾い直される。persistence.md §4 の穴の解消)
+    // inbox に残り、次のイベントで拾い直される。message-dispatch.md §7.4 の穴の解消)
     class FailOnceStorage implements WorkdirStorage {
       private failed = false;
       async restore(): Promise<boolean> {
@@ -2259,7 +2259,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     );
 
     // command failed (認証エラー等) はこのターンの入力を ack して捨てる (retry しない。
-    // session-model.md §6)。捨てないと未 ack のまま次の新規イベントの drain が巻き込み、
+    // message-dispatch.md §7.4)。捨てないと未 ack のまま次の新規イベントの drain が巻き込み、
     // 同じ入力で再び失敗するループになりうる。flush はしない (workdir は退避させない)
     expect((await h.store.inbox.drain(threadKey)).length).toBe(0);
 
@@ -2289,7 +2289,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     ).not.toBeNull();
 
     // クラッシュは workdir/transcript の破損を疑うため、このターンの入力は ack して
-    // 捨てる (retry しない。session-model.md §6)。捨てないと次の新規イベントの drain が
+    // 捨てる (retry しない。message-dispatch.md §7.4)。捨てないと次の新規イベントの drain が
     // 巻き込んで同じ状態から再 spawn し、決定的に再クラッシュしうる
     expect((await h.store.inbox.drain(threadKey)).length).toBe(0);
 
@@ -2302,7 +2302,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
   it("kills pi and cleans up the session when a turn exceeds turnTimeoutMs", async () => {
     // fake-pi の HANG_FOREVER は response も agent_end も返さない。runner が
     // turnTimeoutMs (ここでは短く 100ms) 超過を検知して kill し、セッションを
-    // 異常終了として畳むことを確認する (session-runtime.md §6)
+    // 異常終了として畳むことを確認する (runtime.md §5.1)
     const h = await harness({}, { turnTimeoutMs: 100 });
     const trigger = message({ mentionsBot: true, text: "HANG_FOREVER please" });
     const threadKey = threadKeyOf(trigger);
@@ -2330,7 +2330,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     expect(h.poster.calls[0]?.text).toContain(":warning:");
 
     // timeout 時は flush しないが、このターンで prompt 済みだった item は
-    // ack して捨てる (retry しない。session-model.md §6)。異常終了はコマンド失敗・
+    // ack して捨てる (retry しない。message-dispatch.md §7.4)。異常終了はコマンド失敗・
     // クラッシュと同じ規則で、残すと同じ重い入力を次 drain が拾って再 timeout する
     // 毒ループになるため。ユーザーには ❌ と通知で伝わる
     expect((await h.store.inbox.drain(threadKey)).length).toBe(0);
@@ -2401,7 +2401,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
     // なり、同一テキストは dedupe されて再送しない) ため固定せず、NEXT_TOOL steer で
     // 2 個目の tool_execution_start を発火させて step カウントを進め、進捗テキストが
     // 必ず変わる状態を作って「2 回目以降は同じ message を更新する」ことを確認する
-    // (progress-notice.md)
+    // (ingress-egress.md §8)
     const h = await harness({}, { progressNoticeIntervalMs: 30 });
     const trigger = message({ mentionsBot: true, text: "SLOW_TOOL" });
 
@@ -2454,7 +2454,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
   });
 
   it("progress notice: reply 配送後・agent_end 到達前の隙間でタイマーが再発火しない", async () => {
-    // progress-notice.md: 進捗タイマーは reply の tool_execution_end 到達時点で
+    // ingress-egress.md §8: 進捗タイマーは reply の tool_execution_end 到達時点で
     // 即止める必要がある。agent_end まで待つ実装だと、fake-pi の
     // REPLY_THEN_DELAYED_END が空ける「reply 配送済み・agent_end 未到達」の隙間
     // (500ms) でタイマーが tick し、reply とは別の新規メッセージを投稿してしまう。
@@ -2490,7 +2490,7 @@ describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
   it("progress notice: reply ツールの実行は currentTool/step 数に反映されない", async () => {
     // fake-pi の REPLY_THEN_DELAYED_END は tool_execution_start("reply") →
     // tool_execution_end (reply 本体) → 500ms 後に agent_end、という順で発火する
-    // (progress-notice.md: reply は「最終回答を作っている」段階であり進捗表示の
+    // (ingress-egress.md §8: reply は「最終回答を作っている」段階であり進捗表示の
     // 対象外)。tool_execution_start("reply") と agent_end の間 (500ms) にタイマーが
     // tick しても、reply はここまでのターンで唯一発火したツールなので currentTool は
     // undefined のまま = ":thinking_face: ... (step 0)" 側の表示になるはず。

@@ -62,4 +62,4 @@ Chat (e.g. Slack)
 
 `src/server.ts` + `src/bridge.ts` form the composition root: they read env vars, pick concrete backends (EventSource mode, store backend, workdir archival), and wire everything together. Concrete backend selection happens only there — `SessionRunner` and below receive interfaces only. See `docs/design.md`, `docs/design/architecture.md`, and `docs/design/session-model.md` for the full rationale.
 
-Several directories split a platform-neutral interface from its implementation on purpose (`src/ingress/` vs `src/ingress/slack/`, `src/store/state/` vs `src/store/workdir.ts`, `src/gate/gate.ts` vs `src/gate/gates/`). Match that granularity when extending them — see `docs/design/persistence.md §0` for how the store split was decided.
+Several directories split a platform-neutral interface from its implementation on purpose (`src/ingress/` vs `src/ingress/slack/`, `src/store/state/` vs `src/store/workdir.ts`, `src/gate/gate.ts` vs `src/gate/gates/`). Match that granularity when extending them — see `docs/design/architecture.md §4` for how the store split was decided.

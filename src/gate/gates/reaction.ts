@@ -1,5 +1,5 @@
 // ReactionGate — 特定 emoji のリアクション付与を初回キックの決定的トリガとする
-// (session-model.md §5「人間によるリアクション起動」)。
+// (config.md §4.1)。
 //
 // reaction 以外の kind は対象外として trigger=false。mention/keyword と対称。
 

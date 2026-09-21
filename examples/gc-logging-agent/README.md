@@ -9,7 +9,7 @@ Extends the pi-chat-runner base image with a single `FROM` step, specialized for
 - pi extension: [`extensions/init-gcloud.ts`](extensions/init-gcloud.ts) — on each pi process start, points `gcloud` at the mounted `GOOGLE_APPLICATION_CREDENTIALS` (`auth/credential_file_override`) and sets the default project, so the agent never has to run `gcloud auth`/`gcloud config` itself
 - Config: a mention-triggered channel using the investigation prompt
 
-See [docs/design/session-runtime.md §5](../../docs/design/session-runtime.md) for the image-layering convention this follows (`FROM` one step + skills/extensions under `$AGENT_HOME/.pi/agent/`).
+See [docs/design/runtime.md §4.3](../../docs/design/runtime.md) for the image-layering convention this follows (`FROM` one step + skills/extensions under `$AGENT_HOME/.pi/agent/`).
 
 ## Build
 

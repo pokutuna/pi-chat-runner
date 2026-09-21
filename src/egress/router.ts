@@ -1,8 +1,8 @@
 // EgressRouter — thread_key → 投稿先の解決と postMessage
 //
 // エージェントの確定出力は reply(thread_key, text) ツール経由の 1 本のみで、
-// ホストが tool_execution_end を拾ってここへ流す (docs/design/architecture.md §6 フロー 5、
-// docs/design/chat-model.md §5)。formatter フックで GFM → mrkdwn 変換を差す
+// ホストが tool_execution_end を拾ってここへ流す (docs/design/architecture.md §2、
+// docs/design/ingress-egress.md §5)。formatter フックで GFM → mrkdwn 変換を差す
 // (Slack 配線は bridge.ts が toMrkdwn を注入する)。未注入時は identity。
 
 import type { Logger } from "../logger.js";
@@ -17,7 +17,7 @@ export interface EgressPayload {
   files?: string[];
 }
 
-/** 投稿先。Slack の会話座標は (channelId, threadTs) の 2 つだけ (architecture.md §0)。
+/** 投稿先。Slack の会話座標は (channelId, threadTs) の 2 つだけ (ingress-egress.md §5)。
  * threadTs は省略時はチャンネル直下に投稿する (reply.mode: flat) */
 export interface EgressDestination {
   channelId: string;
@@ -34,7 +34,7 @@ function sameDestination(
 /** WebClient.chat.postMessage/chat.update の薄い IF。テストではフェイクを注入する。
  * files は添付するローカルファイルの絶対パス配列。
  * postMessage の戻り値 messageId は「後から更新できる識別子」の共通抽象
- * (Slack: ts、Discord: message id 等)。進捗通知 (progress-notice.md) が
+ * (Slack: ts、Discord: message id 等)。進捗通知 (ingress-egress.md §8) が
  * updateMessage でこの識別子を使って同一メッセージを上書きする */
 export interface ChatPoster {
   postMessage(
@@ -61,7 +61,7 @@ export interface EgressRouterOptions {
 
 export class EgressRouter {
   private readonly destinations = new Map<string, EgressDestination>();
-  /** 進捗通知メッセージの進捗キー → messageId (progress-notice.md)。
+  /** 進捗通知メッセージの進捗キー → messageId (ingress-egress.md §8)。
    * reply の確定出力とは別レーンなので destinations とは別に持つ */
   private readonly progressMessageIds = new Map<string, string>();
   /** 進捗キーごとの直列化キュー。進捗タイマー (notifyProgress) と reply
@@ -69,7 +69,7 @@ export class EgressRouter {
    * messageId 消費と再投稿の順序が入れ替わりうるため、同一進捗キーへの
    * 呼び出しは常に呼ばれた順に完了させる */
   private readonly queues = new Map<string, Promise<unknown>>();
-  /** reply が配達された進捗キー (progress-notice.md「進捗レーンの閉鎖」)。
+  /** reply が配達された進捗キー (ingress-egress.md §8「reply による閉鎖」)。
    * deliver は同じキューを通るとはいえ、reply 配達の直後に積まれた進捗タイマーの
    * tick は「配達済みの進捗メッセージが跡形もなく消費された後」の stale な
    * スナップショットであり、そのまま流すと消費済みメッセージの跡地に新規投稿して
@@ -179,7 +179,7 @@ export class EgressRouter {
     }
   }
 
-  /** 長時間ターンの進捗スナップショット (progress-notice.md)。reply とは別レーンの
+  /** 長時間ターンの進捗スナップショット (ingress-egress.md §8)。reply とは別レーンの
    * 単一メッセージで、初回は新規投稿、以降は同じメッセージを上書きする。formatter は
    * 通さない (ツール名程度の短い定型文で、GFM→mrkdwn 変換を要さない)。
    * 未知の thread_key は deliver と同様 warn して捨てる */
@@ -280,7 +280,7 @@ export class EgressRouter {
     });
   }
 
-  /** 新しいターンの開始時に進捗レーンを再び開く (progress-notice.md)。deliver
+  /** 新しいターンの開始時に進捗レーンを再び開く (ingress-egress.md §8)。deliver
    * 配達で閉じられたレーンは、reopen するまで notifyProgress を黙って捨て続ける。
    * enqueue 経由にすることで、前ターンの遅延 tick がキューに残っていても
    * reopen より前に処理されて閉鎖中として破棄され、reopen 後に積まれた

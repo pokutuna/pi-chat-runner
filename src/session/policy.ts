@@ -2,14 +2,14 @@ import type { ChannelDoc } from "../config/channel-doc.js";
 import type { InboundMessage } from "../ingress/chat-event.js";
 import type { InboxItem } from "../store/state/interfaces.js";
 
-/** session.mode / reply.mode の実効値 (doc 未設定時の既定込み。session-model.md §3) */
+/** session.mode / reply.mode の実効値 (doc 未設定時の既定込み。session-model.md §2) */
 export interface SessionPolicy {
   sessionMode: "thread" | "channel";
   replyMode: "thread" | "flat";
 }
 
 /** ChannelDoc.session / ChannelDoc.reply からポリシーを導出する。DM は既定
- * session: channel, reply: flat (session-model.md §3 「DM は予約名 dm の既定」) */
+ * session: channel, reply: flat (session-model.md §2 「DM は予約名 dm の既定」) */
 export function resolveSessionPolicy(
   doc: ChannelDoc | null,
   isDm: boolean,
@@ -22,7 +22,7 @@ export function resolveSessionPolicy(
 
 /** セッション (文脈) キーの導出。sessionMode "thread" は現行 threadKeyOf と同じ
  * (channelId:threadTs ?? メッセージ ts)、"channel" は channelId のみ
- * (session-model.md §3) */
+ * (session-model.md §2.1) */
 export function sessionKeyOf(
   event: InboundMessage,
   policy: SessionPolicy,
@@ -39,10 +39,10 @@ export function replyThreadKeyOf(event: InboundMessage): string {
   return `${event.conversation.channelId}:${event.conversation.threadTs ?? event.id}`;
 }
 
-/** イベント 1 件のプロンプト描画 (session-runtime.md §4 の renderEvent)。
+/** イベント 1 件のプロンプト描画 (session-model.md §4 の renderEvent)。
  * threadKey 指定時は from/time/thread_key をラベル付きで列挙し、エージェントが
  * reply 時にどの宛先へ返すべきか、いつのメッセージかを判別できるようにする
- * (session-model.md §3)。time は ISO 8601 (タイムゾーン付き) で曖昧さをなくす。 */
+ * (session-model.md §4)。time は ISO 8601 (タイムゾーン付き) で曖昧さをなくす。 */
 // 表示名だけにすると pi が mention (`<@U123>`) を組み立てられなくなるため、
 // UserID は常に併記する
 export function renderEvent(event: InboundMessage, threadKey?: string): string {
@@ -62,7 +62,7 @@ export function renderItems(items: InboxItem[]): string {
     .join("\n\n");
 }
 
-/** 前回活動時刻から idleResetMinutes を超えたかどうかの判定 (session-model.md §3:
+/** 前回活動時刻から idleResetMinutes を超えたかどうかの判定 (session-model.md §6:
  * 時間はキーに入れず、リセットポリシーとして updated_at に対して評価する)。
  * 純関数として export しテストする */
 export function isIdleExpired(

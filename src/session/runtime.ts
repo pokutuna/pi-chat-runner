@@ -2,11 +2,11 @@
  * SessionRuntime の spawn 部分 (Step 2)。
  * pi を `--mode rpc` で子プロセス起動し、stdin JSONL でコマンドを送り、
  * stdout JSONL のイベントを購読する。
- * 参照: docs/design/session-runtime.md §1-§2, §4
+ * 参照: docs/design/runtime.md §1-§3, §7
  *
  * TODO(将来): 現状は pi 専用実装で、AgentProcess のような抽象 interface は
  * 切っていない (ingress/ の EventSource のような抽象/実装分離は未実施)。
- * session-runtime.md §5 が「別の agent 実行コンテナ + RPC 相当のブリッジへの
+ * runtime.md §5 が「別の agent 実行コンテナ + RPC 相当のブリッジへの
  * 差し替え」を昇格パスとして想定しているので、pi 以外の実装が実際に必要になった
  * タイミングで、この境界をインタフェースとして切り出す (今は実装が1つしかなく、
  * 可変点を想像で決めると手戻りするため見送っている)。
@@ -26,7 +26,7 @@ import {
 
 /**
  * Node Permission Model 経由での起動設定 (pi-tools-and-sandbox.md
- * 「リーズナブルな sandbox レイヤ案」、session-runtime.md §6)。指定時のみ有効になる
+ * 「リーズナブルな sandbox レイヤ案」、runtime.md §5.2)。指定時のみ有効になる
  * opt-in。permission の有無に関わらず、解決済みの pi entrypoint を起動できる。
  * bash の子プロセスには効かない (uid 分離が担う層) が、pi 本体の JS 実装ツール
  * (read/write/edit/grep) の fs アクセスを制限する多層防御の一層。
@@ -45,7 +45,7 @@ export interface PiPermissionOptions {
   /** true なら `--allow-addons` を付ける (既定 false)。native addon (.node) を含む
    * extension (例: pi-smart-fetch の wreq-js) は Permission Model 下でロード自体が
    * 拒否されるため opt-in で緩める。native code は fs チェックを素通りできるので、
-   * 有効化するとこのレイヤの隔離は実質 uid 分離だけになる (session-runtime.md §6) */
+   * 有効化するとこのレイヤの隔離は実質 uid 分離だけになる (runtime.md §5.1) */
   allowAddons?: boolean;
 }
 
@@ -85,7 +85,7 @@ export interface PiProcessOptions {
    * (例 /home/agent) に上書きするためここに含めて渡す (Runner の HOME を
    * そのまま継承しない) */
   extraEnv?: Record<string, string>;
-  /** 子プロセスの実行 uid (session-runtime.md §6: UID 分離)。省略時は継承 (現状動作) */
+  /** 子プロセスの実行 uid (runtime.md §5.1: UID 分離)。省略時は継承 (現状動作) */
   uid?: number;
   /** 子プロセスの実行 gid。uid とセットで指定する想定 */
   gid?: number;
@@ -147,7 +147,7 @@ export function buildPiArgs(
   for (const skillPath of options.skillPaths ?? [])
     args.push("--skill", skillPath);
   // --tools は extension ツールにも効くため、reply が落ちると返信経路
-  // (config.md §5 の常時注入方針) が壊れる。allowlist を指定するチャンネルでも
+  // (runtime.md §4.1 の常時注入方針) が壊れる。allowlist を指定するチャンネルでも
   // reply だけは黙って補ってしまい、excludeTools に reply を書いても無視する
   if (options.tools !== undefined && options.tools.length > 0) {
     const tools = options.tools.includes("reply")
@@ -342,7 +342,7 @@ function piBashSpillPatterns(): string[] {
 /**
  * env の allowlist 構築 (純粋関数、テスト対象)。
  * process.env を丸ごと継承せず、PATH / HOME + 明示指定分のみを渡す
- * (docs/design/session-runtime.md §2)。
+ * (docs/design/runtime.md §5.3)。
  */
 export function buildPiEnv(
   baseEnv: Record<string, string | undefined>,
@@ -404,7 +404,7 @@ export class PiProcess extends EventEmitter<PiProcessEvents> {
       env: buildPiEnv(process.env, this.options.extraEnv),
       stdio: ["pipe", "pipe", "pipe"],
       // uid/gid はキー自体を省略すると現行プロセスの uid/gid を継承する
-      // (session-runtime.md §6: UID 分離。コンテナは root 起動、spawn 時に落とす)。
+      // (runtime.md §5.1: UID 分離。コンテナは root 起動、spawn 時に落とす)。
       // キーを渡した上で値を undefined にすると Node の spawn は継承ではなく
       // 明示的に「変更なし」と別扱いする実装差があるため、指定時のみキーを渡す
       ...(this.options.uid !== undefined ? { uid: this.options.uid } : {}),

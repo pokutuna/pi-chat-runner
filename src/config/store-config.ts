@@ -26,7 +26,7 @@ const FirestoreStoreSchema = z
     /** Named database id. */
     database: z.string().default("(default)"),
     /** Parent document all collections nest under, so a shared project's
-     * top level stays clean (persistence.md §1). Validated here so a bad
+     * top level stays clean (state.md §4.2). Validated here so a bad
      * path fails at startup, not at the first store operation. */
     rootDoc: z
       .string()

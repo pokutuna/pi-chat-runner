@@ -1,10 +1,10 @@
-// AgentConfig スキーマ + ローダー — docs/design/config.md §6「agent.yaml — 設定ファイル」
+// AgentConfig スキーマ + ローダー — docs/design/config.md §1.1, §2
 //
 // 設定は単一の YAML (慣例名 agent.yaml, パスは自由) に全ブロックが同居し、この
 // モジュールは agent ブロックだけを担当する (root-config.ts のコメント参照)。
 // zod strict + fail-loud は channel-doc.ts / config-source.ts と同じ流儀。
 //
-// 優先順位は env > agent.yaml > コード既定 (config.md §6)。コード既定 (turnTimeoutMs
+// 優先順位は env > agent.yaml > コード既定 (config.md §2.3)。コード既定 (turnTimeoutMs
 // 600_000 等) はこのモジュールでは埋めない — 既定値の二重管理をしない
 // (旧 server.ts parseTurnTimeoutMs と同じ理由)。SessionRunner 側の既定に委ねる。
 //
@@ -33,7 +33,7 @@ const PermissionModeSchema = z.preprocess((value) => {
   return value;
 }, z.boolean().optional());
 
-/** pi 子プロセスの実行環境設定 (session-runtime.md §6)。${env.X} 解決後に zod で
+/** pi 子プロセスの実行環境設定 (runtime.md §5)。${env.X} 解決後に zod で
  * 型を確定する — uid/gid は文字列でも number に coerce する。permissionMode は
  * coerce の罠を避けるため専用の PermissionModeSchema で解釈する。 */
 const AgentRuntimeSchema = z
@@ -42,7 +42,7 @@ const AgentRuntimeSchema = z
     gid: z.coerce.number().int().optional(),
     permissionMode: PermissionModeSchema,
     /** native addon (.node) を含む extension 用の `--allow-addons` opt-in
-     * (session-runtime.md §6)。boolean 解釈は permissionMode と同じ罠があるため
+     * (runtime.md §5.2)。boolean 解釈は permissionMode と同じ罠があるため
      * PermissionModeSchema を共用する。 */
     allowAddons: PermissionModeSchema,
     home: z.string().optional(),
@@ -53,7 +53,7 @@ const AgentAgentSchema = z
   .object({
     /** ${env.X} 解決後は文字列で来る可能性があるため coerce する (uid/gid 等と同じ理由)。 */
     turnTimeoutMs: z.coerce.number().int().positive().optional(),
-    /** 長時間ターンの進捗通知の間隔 (progress-notice.md)。0 で機能自体を無効化する。 */
+    /** 長時間ターンの進捗通知の間隔 (ingress-egress.md §8)。0 で機能自体を無効化する。 */
     progressNoticeIntervalMs: z.coerce.number().int().nonnegative().optional(),
     /** pi 子プロセスへ渡す env の名前=値マップ (足し算モデル)。値は ${env.X} 参照可。 */
     env: z.record(z.string(), z.string()).optional(),
@@ -70,7 +70,7 @@ export const AgentConfigSchema = z
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
 
 /** 設定ファイル (単一 YAML) から pi / agent ブロックを読む。ファイル自体が無ければ
- * 全項目省略として `{}` を返す (config.md §6: 「ファイル自体が無ければ全項目コード既定」)。
+ * 全項目省略として `{}` を返す (config.md §2.3: 「ファイル自体が無ければ全項目コード既定」)。
  * YAML parse 後・zod 検証前に resolveEnvRefs で ${env.X} 参照を解決する (env-ref.ts の
  * 「A2: parse 後走査」方式)。スキーマ違反・YAML 破損・未解決の env 参照は fail-loud で
  * throw する (config-source.ts と同じ形式)。 */
@@ -171,7 +171,7 @@ function parseProgressNoticeIntervalMsEnv(
   return value;
 }
 
-/** env PI_AGENT_UID / PI_AGENT_GID (session-runtime.md §6: UID 分離) を数値として
+/** env PI_AGENT_UID / PI_AGENT_GID (runtime.md §5.1: UID 分離) を数値として
  * パースする。どちらも省略時は undefined (file の値を使う分岐に委ねる)。片方だけ
  * 設定されているのは誤設定なので fail-loud にする。 */
 function parseAgentIdsEnv(env: NodeJS.ProcessEnv): {
@@ -203,7 +203,7 @@ function parseBooleanFlagEnv(raw: string | undefined): boolean | undefined {
 }
 
 /** agent.yaml の内容と env を合わせて解決する。優先順位は env > agent.yaml
- * (config.md §6)。コード既定はここでは埋めない (turnTimeoutMs 等は undefined のまま
+ * (config.md §2.3)。コード既定はここでは埋めない (turnTimeoutMs 等は undefined のまま
  * 返し、SessionRunner の既定に委ねる) が、env / runtime はこのモジュールが
  * コード既定 (env: {} / permissionMode: true / home: "/home/agent") を埋めて返す
  * (「値を渡さない」「隔離する」がそれぞれの既定挙動そのものであるため)。 */

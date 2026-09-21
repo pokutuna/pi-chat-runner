@@ -140,7 +140,6 @@ describe("NoopWorkdirStorage", () => {
       readFile(join(workdir, "session.jsonl"), "utf8"),
     ).rejects.toThrow(/ENOENT/);
   });
-
 });
 
 /** pino のログ 1 行 (JSON) を配列に集めるテスト用ロガー */

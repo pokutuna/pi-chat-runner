@@ -1,4 +1,4 @@
-// ClassifierClient — session-model.md §5 Layer 2 (LLM classifier) の LLM 呼び出し部。
+// ClassifierClient — config.md §4.1 Layer 2 (LLM classifier) の LLM 呼び出し部。
 //
 // gate (src/gate/gates/classifier.ts) から criteria + 対象メッセージを渡し、
 // {result: boolean, reason: string} を得る薄いトランスポート。gate/bridge/runner が

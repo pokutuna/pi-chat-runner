@@ -1,4 +1,4 @@
-// PassthroughGate — docs/design/session-model.md §5
+// PassthroughGate — docs/design/config.md §4.1
 //
 // mention なしで全部拾う実験・DM 専用チャンネル用に常に trigger=true。
 // ただし bot 発言 (sender.isBot) は無限ループ防止のため内側でも除外する

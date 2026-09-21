@@ -1,11 +1,11 @@
-// WorkdirStorage — docs/design/persistence.md §2, §3
+// WorkdirStorage — docs/design/state.md §5, §7
 //
 // pi の workdir (tmpfs) とセッション境界での退避先 (ローカルディレクトリ or GCS FUSE
 // マウント) の間をファイルコピーだけで往復する。GCS SDK は使わない — baseDir が
 // 普通のディレクトリでも FUSE マウントでも同じコードで動く。
 //
 // タスク指示により restore は「復元があったか」を boolean で返す
-// (persistence.md 本文の擬似コードは Promise<void> だが、実装はこちらを正とする)。
+// (state.md 本文の擬似コードは Promise<void> だが、実装はこちらを正とする)。
 
 import { cp, lstat, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,7 +13,7 @@ import { join } from "node:path";
 import type { Logger } from "../logger.js";
 import { SESSION_FILE } from "../session/session-file.js";
 
-/** workdir の退避と復元。実体はディレクトリコピー (persistence.md §2)。 */
+/** workdir の退避と復元。実体はディレクトリコピー (state.md §5)。 */
 export interface WorkdirStorage {
   /** 保存棚 → workdir へ復元。棚に無ければ何もしない。復元があったか boolean で返す */
   restore(threadKey: string, workdir: string): Promise<boolean>;
@@ -22,14 +22,14 @@ export interface WorkdirStorage {
 }
 
 /** threadKey (`<channelId>:<threadTs>`) を棚のパスに変換する。
- * `:` を `/` に置き換えると session-runtime.md §3 の `/data/channels/<ch>/<threadTs>/`
+ * `:` を `/` に置き換えると state.md §6 の `/data/channels/<ch>/<threadTs>/`
  * と揃う。 */
 function shelfPath(baseDir: string, threadKey: string): string {
   const segments = threadKey.split(":");
   return join(baseDir, ...segments);
 }
 
-/** ファイルコピーのみによる WorkdirStorage 実装 (persistence.md §2)。 */
+/** ファイルコピーのみによる WorkdirStorage 実装 (state.md §5)。 */
 export class CopyWorkdirStorage implements WorkdirStorage {
   constructor(
     private readonly baseDir: string,
@@ -61,7 +61,7 @@ export class CopyWorkdirStorage implements WorkdirStorage {
     const stats: CopyStats = { files: 0, bytes: 0 };
     const entries = await readEntriesOrEmpty(workdir);
     // session.jsonl 以外を先にコピーし、session.jsonl を最後にコピーする
-    // (persistence.md §3: 「アトミック性は transcript を最後に置く順序で担保」)。
+    // (state.md §5.1: 「アトミック性は transcript を最後に置く順序で担保」)。
     const rest = entries.filter((entry) => entry !== SESSION_FILE);
     for (const entry of rest) {
       await copyRegularEntry(workdir, shelf, entry, stats);
@@ -73,7 +73,7 @@ export class CopyWorkdirStorage implements WorkdirStorage {
   }
 }
 
-/** チャンネル単位の共有ディレクトリの退避と復元 (docs/design/shared.md §2)。
+/** チャンネル単位の共有ディレクトリの退避と復元 (docs/design/state.md §5)。
  * WorkdirStorage と違いキーは channelId のみで、transcript を持たないため
  * session.jsonl の有無によるゲートもコピー順序の担保も行わない。 */
 export interface SharedStorage {
@@ -83,7 +83,7 @@ export interface SharedStorage {
   flush(channelId: string, src: string): Promise<void>;
 }
 
-/** 棚のサイズがこれを超えたら warn する既定値 (shared.md §7: ガードレールでは
+/** 棚のサイズがこれを超えたら warn する既定値 (state.md §5.1: ガードレールでは
  * なく気づきのため。想定は memory/skills/小さなドキュメントで数 MB オーダー、
  * その 10 倍程度を「気づくべき」ラインとする)。 */
 const DEFAULT_SHARED_SIZE_WARN_BYTES = 50 * 1024 * 1024;
@@ -122,7 +122,7 @@ export class CopySharedStorage implements SharedStorage {
     this.warnIfOversized(channelId, stats.bytes);
   }
 
-  /** ロックなし・上限なしの割り切り (shared.md §3, §7) を維持したまま、肥大化に
+  /** ロックなし・上限なしの割り切り (state.md §5.2, §5.1) を維持したまま、肥大化に
    * 運用者が気づけるようログだけ出す。
    *
    * 判定は「今 flush した staging の総バイト数」= コピー中に数えた値で行い、棚を

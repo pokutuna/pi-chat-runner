@@ -1,4 +1,4 @@
-// MessageChunker — 長文を Slack 投稿単位に分割する (chat-model.md §3.4)
+// MessageChunker — 長文を Slack 投稿単位に分割する (ingress-egress.md §6)
 //
 // 段落 (\n\n) → 行 (\n) → 文字数ハード分割、の順にフォールバックしながら
 // limit 以下のチャンクへ貪欲パッキングする。コードフェンス ``` をまたぐ場合は

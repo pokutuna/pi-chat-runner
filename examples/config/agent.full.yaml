@@ -106,14 +106,14 @@ channels:
     reply:
       mode: thread
     trigger:
-      # cooldownSec: 120  # implementation on hold — the strict schema rejects it (config.md §7)
+      # cooldownSec: 120  # implementation on hold — the strict schema rejects it (config.md §4.5)
       when:
         - kind: mention
         - kind: reaction
           emoji: [eyes, robot_face]
         - and:
             # restrict keyword auto-trigger to on-call members; matches the
-            # normalized display name resolved by the EventSource (config.md §7).
+            # normalized display name resolved by the EventSource (config.md §4.2).
             # rename-proof alternative: id: [U012AB34CD, U056EF78GH]
             - kind: sender
               name: [alice, bob]

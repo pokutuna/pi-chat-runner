@@ -2,10 +2,10 @@
 // 管理する主語 (Step 4)。SessionRunner はレーン解決とレジストリ
 // (Map<sessionKey, ActiveSession>) だけを持ち、1 セッションの遷移はここに閉じる。
 //
-// docs/design/architecture.md §1 (event は「きっかけ係」、session が「処理の担い手」)、
-// §6 (起動と steering のフロー)、docs/design/session-runtime.md §1 (kick シーケンス)、
-// §3 (tmpfs + 境界 flush)、§6 (turn timeout)、docs/design/persistence.md §3 (flush → ack
-// の順序)。
+// docs/design/architecture.md §6 (event は「きっかけ係」、session が「処理の担い手」)、
+// docs/design/message-dispatch.md §5 (起動と steering のフロー)、§7.2 (Turn 境界の
+// 順序: flush → ack)、§7.4 (turn timeout)、docs/design/runtime.md §1 (kick シーケンス)、
+// docs/design/state.md §7 (tmpfs + 境界 flush)。
 
 import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
@@ -101,7 +101,7 @@ export interface ActiveSessionOptions {
   /** このプロセスが保持する実行ロック。renew に失敗したら排他を失っている */
   lease: Lease;
   host: SessionHost;
-  /** チャンネル共有ディレクトリの staging パス (docs/design/shared.md §1) */
+  /** チャンネル共有ディレクトリの staging パス (docs/design/state.md §6) */
   sharedStagingDir: string | undefined;
   ctx: SessionContext;
 }
@@ -152,13 +152,13 @@ export class ActiveSession {
   /** このプロセスが保持する実行ロック。renew に失敗したら排他を失っている */
   readonly #lease: Lease;
   /** このセッションで prompt/steer 済みの item id。drain は非破壊 (未 ack 全件を
-   * 返す) なので、重複除外はこのインメモリ記憶で行う (persistence.md §1) */
+   * 返す) なので、重複除外はこのインメモリ記憶で行う (state.md §3.1) */
   readonly #promptedIds = new Set<string>();
   /** このターンで prompt/steer した入力メッセージの ID (event.id)。ターンの成否が
    * 確定したら (agent_end) これらのメッセージへ ✅/❌ を付けてクリアする。
    * #promptedIds (dedupe キー = event_id、セッション累積) とは軸も寿命も別物 —
    * リアクション対象は「メッセージそのもの」なので event.id、寿命は #turnEpoch と
-   * 同じ 1 ターン。両者を 1 つの器に相乗りさせない (persistence.md §1) */
+   * 同じ 1 ターン。両者を 1 つの器に相乗りさせない (session-model.md §7.2) */
   #turnMessageIds: string[] = [];
   /** prompt/steer を送るたびに増える世代。agent_end 処理中に増えていたら
    * 新しいターンが走り出しているので、終了判定をそのターンの agent_end に譲る */
@@ -166,9 +166,9 @@ export class ActiveSession {
   #renewTimer: NodeJS.Timeout | undefined;
   /** 現ターンの timeout タイマー。prompt/steer 送信 (turnEpoch 増加箇所) ごとに
    * リセットし、agent_end 冒頭でクリアする。セッション終了パスでも必ずクリアする
-   * (session-runtime.md §6 の turn timeout) */
+   * (message-dispatch.md §7.4 の turn timeout) */
   #turnTimeoutTimer: NodeJS.Timeout | undefined;
-  /** 進捗通知 (progress-notice.md)。タイマーの寿命は turnTimeoutTimer と同じく
+  /** 進捗通知 (ingress-egress.md §8)。タイマーの寿命は turnTimeoutTimer と同じく
    * prompt/steer 送信ごとに reset、agent_end 冒頭で clear。currentTool/toolCallCount/
    * lastText の状態は内部に閉じる */
   readonly #progress: ProgressNotice;
@@ -213,7 +213,7 @@ export class ActiveSession {
     return this.#process?.running === true;
   }
 
-  /** kick 後半 (session-runtime.md §1: PiProcess 生成〜イベントハンドラ登録〜start〜
+  /** kick 後半 (runtime.md §1: PiProcess 生成〜イベントハンドラ登録〜start〜
    * register〜初回 prompt〜sessions.put〜started ログ)。spawn 準備 (spawn.ts の
    * 関数群) の結果は args で受け取る — ActiveSession は spawn 準備を持たない */
   async start(args: StartArgs): Promise<void> {
@@ -274,11 +274,11 @@ export class ActiveSession {
           "pi event",
         );
       }
-      // 進捗通知 (progress-notice.md) のための状態更新のみ。LLM 呼び出しも
+      // 進捗通知 (ingress-egress.md §8) のための状態更新のみ。LLM 呼び出しも
       // session.jsonl への書き込みも発生しない — pi の RPC イベントの観測だけ
       if (isToolExecutionStart(piEvent)) {
         // reply は「最終回答を作っている」段階であり進捗表示の対象外
-        // (progress-notice.md)。currentTool/toolCallCount を更新せず、直前の
+        // (ingress-egress.md §8)。currentTool/toolCallCount を更新せず、直前の
         // スナップショットのまま据え置く — reply 実行中の表示がターン最後の
         // 進捗として残るのを避ける。ターン最初のツールが reply なら currentTool
         // は undefined のままで ":thinking_face: ... (step 0)" 側の表示になる
@@ -313,7 +313,7 @@ export class ActiveSession {
               // タイマーを即止める (progressConsumed の真偽によらず)。待つとその間に
               // タイマーが再発火し、進捗メッセージを消費済みなら (古いツール名のまま)
               // 跡地に新規投稿し、消費対象が無かった短いターンでも reply 完了後に
-              // ノイズとなる進捗メッセージを新規投稿してしまう (progress-notice.md)
+              // ノイズとなる進捗メッセージを新規投稿してしまう (ingress-egress.md §8)
               this.#progress.clear();
             })
             .catch((err) => {
@@ -408,7 +408,7 @@ export class ActiveSession {
           );
         });
         // このターンで prompt 済みだった item は ack して捨てる。retry しない
-        // (session-model.md §6)。捨てないと未 ack のまま inbox に残り、次の新規
+        // (message-dispatch.md §7.4)。捨てないと未 ack のまま inbox に残り、次の新規
         // イベントの drain が巻き込んで再 prompt するため、workdir/transcript を
         // 使い回す構造上「同じ入力で pi が再クラッシュし続ける」ループになりうる。
         // 異常終了はユーザーに ❌ で伝わるので、必要なら本人が言い直せばよい。
@@ -451,7 +451,7 @@ export class ActiveSession {
 
     // enqueue 済みの入力 (spawn 準備中に積まれた分を含む) を束ねて初回 prompt にする。
     // トリガーイベント自身も enqueue 済みなので通常 drain 経由で届く。
-    // ChannelDoc.context は初回のみ先頭に注入する (config.md §4)
+    // ChannelDoc.context は初回のみ先頭に注入する (config.md §1.3)
     const items = (await this.#ctx.store.inbox.drain(sessionKey)).filter(
       (i) => !this.#promptedIds.has(i.id),
     );
@@ -605,7 +605,7 @@ export class ActiveSession {
   /**
    * agent_end: flush → ack (この順序が正。逆にするとクラッシュで入力が消える) →
    * 残り入力があれば次の prompt、無ければ linger して再確認、それでも無ければ ✅ で終了
-   * (persistence.md §3, session-model.md §4 の linger)
+   * (state.md §7, message-dispatch.md §7.3 の linger)
    */
   async #onAgentEnd(proc: PiProcess, status: TurnStatus): Promise<void> {
     const sessionKey = this.sessionKey;
@@ -619,7 +619,7 @@ export class ActiveSession {
     // させる。promptPending が新ターンとして拾い、そこで running に戻す
     this.#state = "lingering";
 
-    // 1. ターン境界の flush → 2. flush 成功後に ack (persistence.md §3)。
+    // 1. ターン境界の flush → 2. flush 成功後に ack (state.md §7)。
     // ack 対象は flush 前のスナップショット — flush の await 中に steer が
     // promptedIds へ追加した item を「そのターンの flush 前」に ack しない。
     // リアクション対象 (このターンを起こしたメッセージ) も同じ境界でスナップショット
@@ -628,7 +628,7 @@ export class ActiveSession {
     const reactTargets = this.#turnMessageIds;
     this.#turnMessageIds = [];
     await this.#ctx.workdirStorage.flush(sessionKey, this.workdir);
-    // shared も同じ境界で棚へ書き戻す (docs/design/shared.md §2)。異常終了パス
+    // shared も同じ境界で棚へ書き戻す (docs/design/state.md §7)。異常終了パス
     // (exit / abnormalShutdown / renew 失敗) で書き戻さないのは workdir と同じ理由
     if (
       this.#ctx.sharedStorage !== undefined &&
@@ -676,7 +676,7 @@ export class ActiveSession {
     await this.#ctx.router.clearProgress(progressKey);
     await this.#ctx.store.leases.release(this.#lease);
     this.#dispose();
-    // windowSec の起点 (session-model.md §3。以降このレーンは窓内なら resume 合流できる)
+    // windowSec の起点 (message-dispatch.md §3.2。以降このレーンは窓内なら resume 合流できる)
     await this.#host.markEnded(this.channelId, sessionKey);
     this.#ctx.logger.info(
       {
@@ -733,8 +733,8 @@ export class ActiveSession {
    * 異常終了は種別 (command failed / turn timeout) によらずこのターンの入力を捨てる —
    * 同じ入力を残すと次イベントの drain が巻き込んで同一 workdir/transcript で再び
    * 失敗・timeout する毒ループになりうる。失敗は ❌ と通知でユーザーに伝わるので、
-   * 必要なら本人が言い直せばよい (session-model.md §6)。プロセスは使い捨て設計
-   * (session-runtime.md §6) なので常に kill でよい。state を先に "stopping" にしておく
+   * 必要なら本人が言い直せばよい (message-dispatch.md §7.4)。プロセスは使い捨て設計
+   * (runtime.md §1) なので常に kill でよい。state を先に "stopping" にしておく
    * ことで、kill が引き起こす exit イベントが二重にクリーンアップを走らせない
    * (exit ハンドラは state !== "stopping" のときだけ動く)
    */

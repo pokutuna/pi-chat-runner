@@ -20,7 +20,7 @@ services:
       PI_AGENT_UID: "1001"
       PI_AGENT_GID: "1001"
       PI_PERMISSION_MODE: "1"
-      # チャンネル共有ディレクトリ (docs/design/shared.md)。named volume で永続化し
+      # チャンネル共有ディレクトリ (docs/design/state.md §6)。named volume で永続化し
       # コンテナ再作成を跨いで蓄積を確認できる
       SHARED_DIR: /data/shared
       CONFIG_PATH: develop/config/agent.yaml

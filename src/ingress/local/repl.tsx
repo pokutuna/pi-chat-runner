@@ -1,4 +1,4 @@
-// REPL アダプタ (docs/design/local-dev.md §2, §3) — ink (React ベース TUI) 実装。
+// REPL アダプタ (docs/design/local-dev.md §3) — ink (React ベース TUI) 実装。
 //
 // 画面を上下 2 ペインに分ける (ログ / チャット+入力欄)。文法パース・状態遷移・
 // chat.post/react の呼び出しは repl-logic.ts に切り出し済みで、このファイルは

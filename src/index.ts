@@ -1,5 +1,5 @@
 // 公開面 — 別の Slack app 実装から `import "pi-chat-runner"` してライブラリ利用するための
-// エントリポイント (docs/design/config.md §6)。副作用なしの re-export のみ。
+// エントリポイント (docs/design/config.md §3)。副作用なしの re-export のみ。
 //
 // server.ts (CLI/bin) はこのファイルを経由せず直接内部モジュールを import する。
 

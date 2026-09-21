@@ -1,18 +1,18 @@
-// ChannelDoc スキーマ — docs/design/config.md §2〜§2.3, §7 / docs/design/architecture.md §2
+// ChannelDoc スキーマ — docs/design/config.md §1.2, §1.3, §3.5, §4
 //
 // zod を単一ソースとする (strict 検証と ChannelDoc 型を単一ソース化する狙い)。
 // 手書きの interface は並置せず、型は z.infer で導出する。
-// ただし trigger.when は再帰ブール木のため、循環を切るための型注釈のみ手書きする (§7)。
+// ただし trigger.when は再帰ブール木のため、循環を切るための型注釈のみ手書きする (§4)。
 //
-// YAML の gate は kind: で指定する (config.md §7)。設定ファイルの channels ブロックは
-// { channels: [...] } の配列を持ち、default エントリを必須で置く (config.md §2)。
+// YAML の gate は kind: で指定する (config.md §4.1)。設定ファイルの channels ブロックは
+// { channels: [...] } の配列を持ち、default エントリを必須で置く (config.md §3.1)。
 
 import { isAbsolute } from "node:path";
 
 import { z } from "zod";
 
 /** skills / extensions に書けるパス。絶対パス、または設定ファイルの場所からの
- * 相対 (./ か ../ 始まり) のみ (config.md §2)。裸の相対パス ("foo/bar") は
+ * 相対 (./ か ../ 始まり) のみ (config.md §3.5)。裸の相対パス ("foo/bar") は
  * 基準ディレクトリが曖昧になるため schema で弾く。相対パスの絶対化は
  * ConfigSource (config-source.ts resolveFileReferences) が行う。 */
 const PathRefSchema = z
@@ -26,7 +26,7 @@ const PathRefSchema = z
     },
   );
 
-/** Gate の種別ごとに要るパラメータだけを refinement で強制する (config.md §7)。
+/** Gate の種別ごとに要るパラメータだけを refinement で強制する (config.md §4.5)。
  * keyword は pattern 必須、classifier は criteria 必須、reaction は emoji 必須
  * (非空)、sender は is / id (非空) / name (非空) の少なくとも 1 つが必須。
  * mention/passthrough は無し。 */
@@ -43,17 +43,17 @@ const GateSchema = z
     pattern: z.string().optional(),
     criteria: z.string().optional(),
     /** この classifier ノードの判定モデル (省略時はコード既定)。
-     * ChannelDocSchema.model (pi 本体用) とは別物 (config.md §2.3)。 */
+     * ChannelDocSchema.model (pi 本体用) とは別物 (config.md §4.1)。 */
     model: z.string().optional(),
     /** reaction gate が trigger する emoji 名の一覧 (Slack の正規化名。例 "eyes")。 */
     emoji: z.array(z.string()).optional(),
-    /** sender gate が trigger する送信者種別 (session-model.md §5)。 */
+    /** sender gate が trigger する送信者種別 (config.md §4.2)。 */
     is: z.enum(["bot", "human"]).optional(),
     /** sender gate が trigger する送信者 ID の allowlist。Sender.id との完全一致
-     * (config.md §7)。is/name と併記した場合は AND。 */
+     * (config.md §4.2)。is/name と併記した場合は AND。 */
     id: z.array(z.string()).optional(),
     /** sender gate が trigger する送信者名の allowlist。EventSource が正規化した
-     * Sender.displayName との完全一致 (config.md §7)。is/id と併記した場合は AND。 */
+     * Sender.displayName との完全一致 (config.md §4.2)。is/id と併記した場合は AND。 */
     name: z.array(z.string()).optional(),
   })
   .strict()
@@ -98,7 +98,7 @@ const GateSchema = z
 
 export type GateConfig = z.infer<typeof GateSchema>;
 
-/** trigger.when の合成木 (config.md §7)。配列は OR、{and}/{or} で明示合成する。
+/** trigger.when の合成木 (config.md §4)。配列は OR、{and}/{or} で明示合成する。
  * negate は持たない。z.lazy の型推論の循環を切るため型を手書きし、
  * schema 側は z.ZodType<WhenNode> で明示注釈する。 */
 export type WhenNode = GateConfig | { and: WhenNode[] } | { or: WhenNode[] };
@@ -112,22 +112,22 @@ const WhenNodeSchema: z.ZodType<WhenNode> = z.lazy(() =>
 );
 
 /** trigger = when (gate 合成木) + 発火制御。
- * when は trigger を書くなら必須 (config.md §7 「trigger と gate の役割分担」)。
+ * when は trigger を書くなら必須 (config.md §4)。
  * cooldownSec は実装保留中 (session-model.md 「cooldownSec の実装案」参照)。
  * 実装再開まではスキーマ自体を無効化し、設定しても strict エラーになるようにする。
- * debounceSec は session.affinity.debounceSec へ移設済み (session-model.md §3
+ * debounceSec は session.affinity.debounceSec へ移設済み (message-dispatch.md §4
  * 「debounceSec の置き場所」)。ここには持たない。 */
 const TriggerSchema = z
   .object({
     when: z.array(WhenNodeSchema),
     // cooldownSec: z.number().optional(),
     /** bot 投稿 (自分自身を除く) を gate 評価に届ける opt-in。既定 false = bot
-     * 投稿では起動しない (session-model.md §5)。 */
+     * 投稿では起動しない (config.md §4.3)。 */
     allowBots: z.boolean().optional(),
   })
   .strict();
 
-/** 実行時 ChannelDoc (channel 解決後)。architecture.md §2 の TS 定義に対応。 */
+/** 実行時 ChannelDoc (channel 解決後)。config.md §1.2, §1.3 のフィールド定義に対応。 */
 export const ChannelDocSchema = z
   .object({
     systemPrompt: z.string().optional(),
@@ -154,22 +154,22 @@ export const ChannelDocSchema = z
      * (SKILL.md を直接含む単体 skill dir でも、複数 skill を束ねた親 dir でも
      * よい — pi が再帰発見する)。$AGENT_HOME/.pi/agent/skills/ の自動発見分
      * (全チャンネル共通) への追加 (additive) であり、共通分を外す手段ではない
-     * (config.md §2) */
+     * (config.md §1.3) */
     skills: z.array(PathRefSchema).optional(),
     /** チャンネル別に追加ロードする extension (.ts/.js のファイルパス。pi の
      * --extension はディレクトリを受けない)。常時注入の組み込み
      * (reply/permission-gate/export) と $AGENT_HOME/.pi/agent/extensions/ の
-     * 自動列挙分への追加 (additive) (config.md §2) */
+     * 自動列挙分への追加 (additive) (config.md §1.3) */
     extensions: z.array(PathRefSchema).optional(),
-    /** 組み込み memory skill の配線 (docs/design/memory.md)。shared 有効
+    /** 組み込み memory skill の配線 (docs/design/runtime.md §4.4)。shared 有効
      * (env SHARED_DIR 設定時) の既定は true で、false でチャンネル単位に外せる
      * (opt-out)。shared 無効時はこの値に関わらず配線されない */
     memory: z.boolean().optional(),
-    /** セッション (文脈) の単位。session-model.md §3 */
+    /** セッション (文脈) の単位。session-model.md §2 */
     session: z
       .object({
         mode: z.enum(["thread", "channel"]).optional(),
-        /** 既存セッションへの合流 (session-model.md §3「セッション合流」)。 */
+        /** 既存セッションへの合流 (message-dispatch.md §3.2)。 */
         affinity: z
           .object({
             /** 既定 "session" (= 合流しない)。既定値の適用は読む側 (runner) で行う
@@ -187,7 +187,7 @@ export const ChannelDocSchema = z
       })
       .strict()
       .optional(),
-    /** チャンネル直下トリガーへの返信先。同 §3 */
+    /** チャンネル直下トリガーへの返信先。session-model.md §3 */
     reply: z
       .object({
         mode: z.enum(["thread", "flat"]).optional(),
@@ -202,7 +202,7 @@ export type ChannelDoc = z.infer<typeof ChannelDocSchema>;
 export type Trigger = z.infer<typeof TriggerSchema>;
 
 /** channels ブロックの 1 エントリ。ChannelDoc に「どのチャンネル向けか」を示す
- * `channel` フィールドを加えたもの (config.md §2)。channel は "#name" /
+ * `channel` フィールドを加えたもの (config.md §3.1)。channel は "#name" /
  * チャンネル ID、または予約名 "default" / "dm"。 */
 export const ChannelEntrySchema = ChannelDocSchema.extend({
   channel: z.string(),
@@ -211,7 +211,7 @@ export const ChannelEntrySchema = ChannelDocSchema.extend({
 export type ChannelEntry = z.infer<typeof ChannelEntrySchema>;
 
 /** channels ブロック全体。配列で全チャンネルをまとめ、先頭に置くとは限らないが
- * "default" エントリの存在を必須にする (config.md §2, §2.1)。 */
+ * "default" エントリの存在を必須にする (config.md §3.1)。 */
 export const ChannelsFileSchema = z
   .object({ channels: z.array(ChannelEntrySchema).min(1) })
   .strict()

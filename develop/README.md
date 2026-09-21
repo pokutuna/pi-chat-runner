@@ -17,7 +17,7 @@
 
 `config/` は `.gitignore` されているため、初めて使うときは自分で用意する。
 `examples/config/agent.yaml` を土台に、確認したい Gate (mention/keyword/classifier/
-reaction) ごとの実チャンネル ID を並べるのが早い ([config.md](../docs/design/config.md) §6)。
+reaction) ごとの実チャンネル ID を並べるのが早い ([config.md](../docs/design/config.md) §2)。
 
 ## Firestore エミュレータ
 

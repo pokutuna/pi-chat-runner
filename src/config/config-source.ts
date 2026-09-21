@@ -1,4 +1,4 @@
-// ConfigSource(File) — docs/design/config.md §2〜§2.3, §6
+// ConfigSource(File) — docs/design/config.md §3
 //
 // 「Firestore が実行時の正」は元々の設計方針だが、当面はローカル・本番とも同じ YAML を
 // ファイルから直接読む FileConfigSource で運用する。FirestoreConfigSource と、それに YAML を
@@ -6,12 +6,12 @@
 // 移す判断をしたら FirestoreConfigSource を追加する。
 //
 // チャンネル設定は設定ファイル (単一 YAML, root-config.ts) の channels ブロックに
-// 全チャンネルを配列で並べる (config.md §2)。実行時は常に default (または DM は dm) +
-// そのチャンネル固有エントリをマージした 1 つの ChannelDoc で動く (§2.2 マージ)。
+// 全チャンネルを配列で並べる (config.md §3.1)。実行時は常に default (または DM は dm) +
+// そのチャンネル固有エントリをマージした 1 つの ChannelDoc で動く (§3.2 マージ)。
 // マージはフィールド単位の丸ごと置換のみで、深いマージはしない。
 //
 // channels ブロックは env 参照 (${env.X}) の解決を通らない — connector 等の secrets を
-// 含む他ブロックにも触れないため、dump (config.md §6) が secrets を解決せずに済む
+// 含む他ブロックにも触れないため、dump (config.md §5) が secrets を解決せずに済む
 // 性質がこの経路で成立する。
 //
 // FileConfigSource は mtime ベースでキャッシュする (stat して変化が無ければ前回の
@@ -30,7 +30,7 @@ import {
 } from "./channel-doc.js";
 import { readRootConfig } from "./root-config.js";
 
-/** channels ブロックを id で解決し、実行時 ChannelDoc を返す抽象 (config.md §6)。 */
+/** channels ブロックを id で解決し、実行時 ChannelDoc を返す抽象 (config.md §3)。 */
 export interface ConfigSource {
   channel(id: string): Promise<ChannelDoc | null>;
 }
@@ -41,11 +41,11 @@ export interface ConfigSource {
  * ChannelDoc (振る舞い定義) の解決にのみ作用する。 */
 export const DEFAULT_CHANNEL = "default";
 
-/** DM 用 ChannelDoc の予約名 (config.md §2)。全 DM 共通の振る舞い定義の土台。
+/** DM 用 ChannelDoc の予約名 (config.md §3.1)。全 DM 共通の振る舞い定義の土台。
  * 小文字なので実チャンネル ID (D...) と衝突しない。 */
 export const DM_CHANNEL = "dm";
 
-/** ChannelDoc の各 top-level フィールドがどのエントリ由来かを示す (config.md §6 実効設定)。
+/** ChannelDoc の各 top-level フィールドがどのエントリ由来かを示す (config.md §3.3)。
  * "default" / "dm" は土台エントリ由来、"channel" はチャンネル固有エントリ由来。 */
 export type FieldSource = "default" | "channel" | "dm";
 
@@ -53,7 +53,7 @@ export type FieldSource = "default" | "channel" | "dm";
  * 値が無い (=フィールド自体が undefined) ことを意味する。 */
 export type Provenance = Partial<Record<keyof ChannelDoc, FieldSource>>;
 
-/** ChannelDoc の top-level キー一覧。マージ・provenance 計算で共有する (config.md §2.2)。 */
+/** ChannelDoc の top-level キー一覧。マージ・provenance 計算で共有する (config.md §3.2)。 */
 const CHANNEL_DOC_KEYS = [
   "systemPrompt",
   "context",
@@ -73,14 +73,14 @@ function toChannelDoc(entry: ChannelEntry): ChannelDoc {
   return doc;
 }
 
-/** merge(base, own) の規則は 1 つだけ (config.md §2.2):
+/** merge(base, own) の規則は 1 つだけ (config.md §3.2):
  * own に書いた top-level フィールド = その値。書かないフィールド = base の値。
  * 深いマージ (部分マージ) は一切しない。 */
 export function mergeChannelDoc(base: ChannelDoc, own: ChannelDoc): ChannelDoc {
   return mergeWithProvenance(base, "default", own).doc;
 }
 
-/** マージ結果と、各フィールドがどちらのエントリ由来かを同時に返す (config.md §6 実効設定)。
+/** マージ結果と、各フィールドがどちらのエントリ由来かを同時に返す (config.md §3.3)。
  * baseSource は base エントリの出所 ("default" | "dm")。own 由来のフィールドは常に "channel"。 */
 export function mergeWithProvenance(
   base: ChannelDoc,
@@ -106,9 +106,9 @@ export function mergeWithProvenance(
 }
 
 /** id からエントリを解決し、default (または DM は dm) + 固有エントリをマージした
- * ChannelDoc を返す (config.md §2.1, §6 実効設定)。ファイル参照のインライン化前の値。
+ * ChannelDoc を返す (config.md §3.1, §3.3)。ファイル参照のインライン化前の値。
  *
- * - id === DM_CHANNEL: 土台は dm エントリ。無ければ null (コード既定 = disabled に落ちる、config.md §2.1)。
+ * - id === DM_CHANNEL: 土台は dm エントリ。無ければ null (コード既定 = disabled に落ちる、config.md §3.1)。
  * - それ以外: 土台は default エントリ。ChannelsFileSchema が存在を必須にしているため
  *   通常は必ず在るが、防御的に無ければ fail-loud で throw する。
  * - 固有エントリが無ければ土台単独 (全フィールドが土台由来の provenance) を返す。
@@ -143,7 +143,7 @@ export function resolveChannelConfig(
 }
 
 /** ローカル/お試し用の ConfigSource。設定ファイル (単一 YAML) のパスを受け取り、
- * apply を経ずに直接 channels ブロックを読む (config.md §6)。systemPrompt / context の
+ * apply を経ずに直接 channels ブロックを読む (config.md §3)。systemPrompt / context の
  * ファイル参照 (./...) はこの YAML があるディレクトリからの相対で解決する。
  *
  * mtime が前回と変わっていなければ parse 済みの ChannelsFile を再利用する
@@ -189,7 +189,7 @@ export class FileConfigSource implements ConfigSource {
 /** 設定ファイルから channels ブロックを取り出し、strict 検証する。ファイル不在
  * (ENOENT)・channels ブロック不在は設定ミスとして fail-loud で throw する。YAML 破損・
  * schema 違反もファイルパス + zod issue 付きで throw する。server の通常経路
- * (FileConfigSource) と dump (config.md §6) が同じローダを共有する — dump 専用の
+ * (FileConfigSource) と dump (config.md §5) が同じローダを共有する — dump 専用の
  * 読み込みを持たない。channels ブロックには env 参照 (${env.X}) の解決を適用しない
  * (ファイル冒頭コメント参照)。 */
 export async function loadChannelsFile(
@@ -214,7 +214,7 @@ export async function loadChannelsFile(
 }
 
 /** systemPrompt / context の値が "./" か "../" で始まる場合、設定ファイルがある
- * ディレクトリからの相対パスでファイルを読んでインライン化する (config.md §6)。
+ * ディレクトリからの相対パスでファイルを読んでインライン化する (config.md §3.5)。
  * skills / extensions の相対パスは内容を読まず、同じ基準で絶対パス化だけする —
  * pi の cwd は workdir なので相対のまま渡すと基準がズレる (runner.ts kick)。
  * マージ後の doc に対して一括で適用する — どのエントリ由来でも相対パスの起点は

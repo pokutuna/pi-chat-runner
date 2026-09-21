@@ -1,6 +1,6 @@
 // kick 前半 (spawn 準備) の抽出先 — 「入力 → PiProcess を作るための準備」であり
 // SessionRecord の可変状態にはほぼ依存しない (spawn の引数・env の掃除・
-// workdir と flush は session-runtime.md の関心事)。
+// workdir と flush は runtime.md の関心事)。
 // PiProcess の生成・イベントハンドラ登録・SessionRecord への書き込みは kick に残す。
 
 import { existsSync } from "node:fs";
@@ -29,7 +29,7 @@ import {
 } from "./runtime.js";
 import { rotatedSessionFile, SESSION_FILE } from "./session-file.js";
 
-/** Node Permission Model 有効化の静的パラメタ (session-runtime.md §6)。
+/** Node Permission Model 有効化の静的パラメタ (runtime.md §5.2)。
  * workdir / home はセッションごとに決まるため kick 時に buildPiPermissionOptions
  * へ都度渡す — ここに載るのはイメージ内で固定のパスだけ */
 export interface PiPermissionConfig {
@@ -49,12 +49,12 @@ export interface PiPermissionConfig {
    * 明示する必要はない (appDir 包括許可の廃止に伴う対応) */
   extraRead?: string[];
   /** native addon (.node) を含む extension を使う場合の `--allow-addons` 付与。
-   * agent.runtime.allowAddons 由来 (config.md §6)。既定 false */
+   * agent.runtime.allowAddons 由来 (config.md §1.3)。既定 false */
   allowAddons?: boolean;
 }
 
 /** 組み込み extension のファイル名 (リポジトリ/パッケージ直下の extensions/)。
- * reply は唯一の返信経路、permission-gate は事故防止層 (config.md §5) で、どの
+ * reply は唯一の返信経路、permission-gate は事故防止層 (runtime.md §4.1) で、どの
  * プラットフォームで使う場合も常時注入する — プラットフォーム非依存なので呼び出し側に
  * 渡させず SessionRunner 自身が解決する。export は標準機能として同様に扱う。
  * pi が --extension で TS ソースを直接ロードするためビルド対象外。 */
@@ -81,7 +81,7 @@ export function resolveBuiltinExtensionPaths(): string[] {
 }
 
 /** 組み込み memory skill (リポジトリ/パッケージ直下の builtin-skills/memory/) の
- * 絶対パスを解決する (docs/design/memory.md)。shared 有効時のみ使われる。
+ * 絶対パスを解決する (docs/design/runtime.md §4.4)。shared 有効時のみ使われる。
  * ルート直下の skills/ (利用者が $AGENT_HOME に焼き込む全チャンネル共通 skill の口。
  * Dockerfile 参照) とは別物 — そちらに置くと pi の HOME 自動発見で全チャンネルに
  * 効いてしまい、ChannelDoc.memory の opt-out が効かない。配置と解決規則は
@@ -103,7 +103,7 @@ export function resolveBuiltinMemorySkillPath(): string {
 }
 
 /** チャンネル別の追加 skill / extension パス (ChannelDoc.skills / .extensions,
- * config.md §2) を検証し realpath で正規化する。イメージに焼き込んだパスを指す
+ * config.md §3.5) を検証し realpath で正規化する。イメージに焼き込んだパスを指す
  * 想定なので、実在しないパスは設定ミスとして fail-loud で throw する。
  * extension は pi の --extension がディレクトリを受けないため、拡張子から
  * JS モジュールファイル (.ts/.js/.mjs/.cjs) であることだけ確認する。 */
@@ -147,7 +147,7 @@ export async function transcriptExists(sessionPath: string): Promise<boolean> {
   }
 }
 
-/** channel モードの idle リセット (session-model.md §3): workdir 直下の
+/** channel モードの idle リセット (runtime.md §2.1): workdir 直下の
  * session.jsonl が存在すれば session-<epoch ms>.jsonl にリネームして世代交代する。
  * pi は transcript が無ければ新規会話として開始する。workdir の他のファイルは残す */
 export async function rotateTranscript(
@@ -196,7 +196,7 @@ export async function chownRecursive(
   }
 }
 
-/** kick 前半、設定バリデーション warn 群 (session-model.md §3)。session.mode /
+/** kick 前半、設定バリデーション warn 群 (session-model.md §2)。session.mode /
  * reply.mode の非推奨な組み合わせ、channel モード専用オプションの thread モードでの
  * 指定、affinity.scope=channel の冗長設定を検知して warn するのみ (throw しない)。
  * record への書き込みは行わない */
@@ -208,14 +208,14 @@ export function warnPolicyMismatches(
   doc: ChannelDoc | null,
 ): void {
   // session.mode=thread かつ reply.mode=flat は文脈が切れるのに返事だけ散らばる
-  // 非推奨な組み合わせ。動作は許可するので warn のみ (session-model.md §3)
+  // 非推奨な組み合わせ。動作は許可するので warn のみ (session-model.md §2)
   if (policy.sessionMode === "thread" && policy.replyMode === "flat") {
     logger.warn(
       { sessionKey, channelId },
       "session.mode=thread with reply.mode=flat is discouraged (session-model.md §3)",
     );
   }
-  // idleResetMinutes / maxTranscriptKb は channel モード専用 (session-model.md §3)。
+  // idleResetMinutes / maxTranscriptKb は channel モード専用 (runtime.md §2.1)。
   // thread モードで設定されていても効果がないため warn して無視する
   if (
     policy.sessionMode === "thread" &&
@@ -228,7 +228,7 @@ export function warnPolicyMismatches(
     );
   }
   // affinity は mode=channel では自明に成立 (同一 sessionKey) するため意味を持たない。
-  // windowSec も scope=channel 以外では読まれない (session-model.md §3)
+  // windowSec も scope=channel 以外では読まれない (message-dispatch.md §3.2)
   const affinity = doc?.session?.affinity;
   if (affinity?.scope === "channel" && policy.sessionMode === "channel") {
     logger.warn(
@@ -266,7 +266,7 @@ export interface PreparedWorkdir {
 
 /** kick 前半、workdir/shared の mkdir + restore、transcript 世代交代 (manual →
  * idle → size)、UID 分離 (chown/chmod)、agentHome 作成、realpath 正規化をまとめて
- * 行う (session-runtime.md §1 restore → spawn の restore 側、§6 UID 分離)。
+ * 行う (runtime.md §2 準備順序、§5.1 UID 分離)。
  *
  * 副作用の実行順序はそのまま維持する: mkdir → restore (workdir → shared) →
  * transcript 世代交代 (manual → idle → size) → workdir/shared の chown → agentHome
@@ -307,7 +307,7 @@ export async function prepareWorkdir(args: {
   // 同じパスで再 spawn され、pi が JSONL を読んで文脈を継続する (再開の専用フローなし)
   await mkdir(workdir, { recursive: true });
   await workdirStorage.restore(sessionKey, workdir);
-  // チャンネル共有ディレクトリ (docs/design/shared.md)。sessionKey ではなく
+  // チャンネル共有ディレクトリ (docs/design/state.md §6)。sessionKey ではなく
   // channelId 単位で復元し、スレッド (セッション) を跨いで持ち越す。skills/ は
   // 空でも常に作る — pi の --skill は空ディレクトリを黙って無視するので配線は
   // 無条件でよく、agent は mkdir なしで skill を置ける
@@ -317,7 +317,7 @@ export async function prepareWorkdir(args: {
     await mkdir(join(sharedDir, "skills"), { recursive: true });
     await sharedStorage.restore(channelId, sharedDir);
   }
-  // 世代交代 (session-model.md §3, §6): manual (/new マーカー) → idle 超過 →
+  // 世代交代 (runtime.md §2.1): manual (/new マーカー) → idle 超過 →
   // transcript サイズ超過の優先順位で、いずれか 1 回だけ transcript を
   // 世代交代する。previous は idle 判定にも使うため、ここで常時 1 回だけ fetch
   // して使い回す。rotate は chown より前 (rotate されたファイルの所有権も
@@ -325,7 +325,7 @@ export async function prepareWorkdir(args: {
   const previous = await sessions.get(sessionKey);
   let rotated = false;
   // manual は session.mode に依存しない (thread モードでも効く) — idle/size が
-  // channel モード限定なのとは異なる、明示的なユーザー意図のため (session-model.md §6)
+  // channel モード限定なのとは異なる、明示的なユーザー意図のため (runtime.md §2.1)
   if (previous?.rotateRequestedAt !== undefined) {
     const now = Date.now();
     await rotateTranscript(workdir, now);
@@ -336,7 +336,7 @@ export async function prepareWorkdir(args: {
     const { rotateRequestedAt: _rotateRequestedAt, ...cleared } = previous;
     await sessions.put(sessionKey, cleared);
   }
-  // idleResetMinutes / maxTranscriptKb は channel モード専用 (session-model.md §3)
+  // idleResetMinutes / maxTranscriptKb は channel モード専用 (runtime.md §2.1)
   if (policy.sessionMode === "channel") {
     const idleResetMinutes = doc?.session?.idleResetMinutes;
     if (!rotated && idleResetMinutes !== undefined && previous !== null) {
@@ -370,7 +370,7 @@ export async function prepareWorkdir(args: {
       }
     }
   }
-  // UID 分離 (session-runtime.md §6) が有効なら、workdir を agent 所有 0700 に
+  // UID 分離 (runtime.md §5.1) が有効なら、workdir を agent 所有 0700 に
   // する。mkdir は Runner (root) 実行なので root 所有で作られ、restore で
   // コピーされたファイルも root 所有になる — agent uid で書き込めるよう
   // restore 後に再帰的に chown する (root だけが chown できるので、この処理は
@@ -426,7 +426,7 @@ export interface SpawnPaths {
 }
 
 /** kick 中盤、extension/skill パス解決 (channel resource + builtin) と Node
- * Permission Model オプション組み立てをまとめる (session-runtime.md §5, §6)。
+ * Permission Model オプション組み立てをまとめる (runtime.md §4, §5.2)。
  * record への書き込みは行わない。 */
 export async function buildSpawnOptions(args: {
   agentHomeReal: string;
@@ -448,7 +448,7 @@ export async function buildSpawnOptions(args: {
   } = args;
 
   // 利用者が拡張イメージに焼き込んだ extension を skill と同じ規約で拾う場所
-  // (session-runtime.md §5)。pi の --extension はディレクトリを直接受け付けない
+  // (runtime.md §4.2)。pi の --extension はディレクトリを直接受け付けない
   // ため、直下の .ts/.js を個別に列挙して渡す。ディレクトリが無ければ何も
   // 足さない (ベースイメージのみの利用者はこのディレクトリを持たない)
   const agentExtensionsDir = join(agentHomeReal, ".pi/agent/extensions");
@@ -459,7 +459,7 @@ export async function buildSpawnOptions(args: {
         .map((name) => join(agentExtensionsDir, name)),
     )
     .catch(() => []);
-  // チャンネル別の追加 skill / extension (config.md §2)。相対パスは ConfigSource が
+  // チャンネル別の追加 skill / extension (runtime.md §4.3)。相対パスは ConfigSource が
   // 設定ファイル基準で絶対化済み。イメージに焼いたパスを指す想定なので、存在しなければ
   // 設定ミスとして fail-loud で落とす (黙って無効のまま動くと「skill が効かない」の
   // 調査が辛い)。realpath は workdir/HOME と同じ理由 (macOS /tmp symlink) の正規化
@@ -472,7 +472,7 @@ export async function buildSpawnOptions(args: {
     "extensions",
   );
   // memory 機能 (組み込み skill + MEMORY.md 注入) の有効判定。shared 有効かつ
-  // doc.memory !== false のとき (config.md §2)
+  // doc.memory !== false のとき (runtime.md §4.4)
   const memoryEnabled =
     sharedDirReal !== undefined &&
     doc?.memory !== false &&
@@ -494,7 +494,7 @@ export async function buildSpawnOptions(args: {
     ...channelExtensionFiles,
   ];
 
-  // Node Permission Model (session-runtime.md §6, pi-tools-and-sandbox.md
+  // Node Permission Model (runtime.md §5.2, pi-tools-and-sandbox.md
   // 「リーズナブルな sandbox レイヤ案」) が opt-in で有効なら、pi 本体の
   // JS 実装ツール (read/write/edit/grep) の fs アクセスをこのセッションの
   // workdir/home に閉じ込める。home は pi 子プロセスに渡す HOME (常に agentHome)
@@ -539,7 +539,7 @@ export async function buildSpawnOptions(args: {
   return { extensionPaths, skillPaths, memoryEnabled, permission };
 }
 
-/** kick 後半、memory index (MEMORY.md) の読み込み (docs/design/memory.md §2)。
+/** kick 後半、memory index (MEMORY.md) の読み込み (docs/design/runtime.md §6)。
  * memory 無効 or ファイル未作成なら undefined を返す。ENOENT 以外は fail-loud。 */
 export async function loadMemoryIndex(
   memoryEnabled: boolean,

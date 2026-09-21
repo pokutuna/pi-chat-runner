@@ -223,7 +223,7 @@ describe("buildPiEnv", () => {
   });
 });
 
-describe("PiProcess spawn options (UID 分離, session-runtime.md §6)", () => {
+describe("PiProcess spawn options (UID 分離, runtime.md §5.1)", () => {
   it("does not pass uid/gid keys to spawn when unset (現状動作を維持)", () => {
     const proc = new PiProcess({
       sessionPath: "/s.jsonl",
@@ -266,7 +266,7 @@ describe("PiProcess spawn options (UID 分離, session-runtime.md §6)", () => {
   });
 });
 
-describe("buildSpawnCommand (Node Permission Model, session-runtime.md §6)", () => {
+describe("buildSpawnCommand (Node Permission Model, runtime.md §5.2)", () => {
   it("spawns piBinary directly when permission is unset (現状動作を維持)", () => {
     expect(buildSpawnCommand(["--mode", "rpc"], { piBinary: "pi" })).toEqual({
       command: "pi",
@@ -363,7 +363,7 @@ describe("ancestorDirs", () => {
   });
 });
 
-describe("buildPiPermissionOptions (session-runtime.md §6)", () => {
+describe("buildPiPermissionOptions (runtime.md §5.2)", () => {
   it("builds allow-fs-read/write lists scoped to workdir/home/node_modules", () => {
     const options = buildPiPermissionOptions({
       entrypoint: "/usr/local/lib/node_modules/pi/dist/cli.js",

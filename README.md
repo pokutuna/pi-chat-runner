@@ -162,7 +162,7 @@ flowchart TB
 
 Each stage only knows the interface of its neighbor, not which implementation is behind it. `SessionRunner` restores the workdir via `WorkdirStorage` before a turn; new vs. resume follows from whether a transcript exists after restore. `StateStore` feeds `SessionRunner`'s decisions — whether to run at all (channel mute), which instance runs (lease), and which session a message joins (session info, affinity pointer); the outcome travels down the pipeline as the session part of the turn input.
 
-A real deployment (your own Slack App, your own Cloud Run service) lives in a separate repo that extends the base image with `FROM` and fills in the `examples/` templates with real values — see [docs/design/session-runtime.md](docs/design/session-runtime.md) §5.
+A real deployment (your own Slack App, your own Cloud Run service) lives in a separate repo that extends the base image with `FROM` and fills in the `examples/` templates with real values — see [docs/design/runtime.md](docs/design/runtime.md) §4.3.
 
 ## Core Concepts
 
@@ -325,7 +325,7 @@ channels:
         - and: [{ kind: sender, is: bot }, { kind: keyword, pattern: "ALERT|CRITICAL" }]
 ```
 
-DB defaults to in-memory (`store.backend: memory` in `agent.yaml`); set it to `sqlite` (default path `/tmp/pi-chat-runner/state.db`) or `firestore` for persistence. Workdir archival defaults to no-op unless the `WORKDIR_ARCHIVE_DIR` env var is set. See [docs/design/persistence.md](docs/design/persistence.md).
+DB defaults to in-memory (`store.backend: memory` in `agent.yaml`); set it to `sqlite` (default path `/tmp/pi-chat-runner/state.db`) or `firestore` for persistence. Workdir archival defaults to no-op unless the `WORKDIR_ARCHIVE_DIR` env var is set. See [docs/design/state.md](docs/design/state.md).
 
 See [`examples/config/agent.yaml`](examples/config/agent.yaml) for an annotated template. Full schema and semantics: [docs/design/config.md](docs/design/config.md).
 

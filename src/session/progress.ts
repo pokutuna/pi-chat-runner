@@ -2,7 +2,7 @@ import type { EgressRouter } from "../egress/router.js";
 import type { Logger } from "../logger.js";
 import { preview } from "./pi-events.js";
 
-/** 進捗通知でツール名ごとに絵文字を出し分ける (progress-notice.md)。
+/** 進捗通知でツール名ごとに絵文字を出し分ける (ingress-egress.md §8)。
  * reply は呼び出し元 (tool_execution_start ハンドラ) で除外済みなのでここには
  * 来ない。分類が当たらないツールは既定の :gear: にフォールバックする。bash は
  * 頻出のため呼び出しごとに候補からランダムに1つ選び、単調な見た目にならない
@@ -69,31 +69,31 @@ const BUILTIN_TOOL_PRIMARY_ARG_KEY: Record<string, string> = {
 export interface ProgressNoticeOptions {
   sessionKey: string;
   router: EgressRouter;
-  /** 長時間ターンの進捗通知の間隔 (progress-notice.md)。0 なら機能自体を無効化する */
+  /** 長時間ターンの進捗通知の間隔 (ingress-egress.md §8)。0 なら機能自体を無効化する */
   intervalMs: number;
   logger: Logger;
 }
 
-/** 長時間ターンの進捗通知 (progress-notice.md)。tool_execution_start/end の購読だけで
+/** 長時間ターンの進捗通知 (ingress-egress.md §8)。tool_execution_start/end の購読だけで
  * 状態を更新し (LLM 呼び出し・session.jsonl を経由しない)、intervalMs 間隔で
  * currentTool のスナップショットを Slack へ投稿/更新する。usage の集計は対象外
  * (ActiveSession に残す) */
 export class ProgressNotice {
   /** 直近に開始した、または直近に完了したツール呼び出し。tool_execution_start/end の
-   * 購読だけで更新する (LLM 呼び出し・session.jsonl を経由しない、progress-notice.md)。
+   * 購読だけで更新する (LLM 呼び出し・session.jsonl を経由しない、ingress-egress.md §8)。
    * emoji は tool_execution_start 時点で確定させる (bash は候補からランダムに選ぶため、
    * タイマー発火のたびに選び直すと同じ呼び出し中に表示が変わってしまう)。reply は
-   * 進捗表示の対象外なのでここには反映されない (progress-notice.md) */
+   * 進捗表示の対象外なのでここには反映されない (ingress-egress.md §8) */
   #currentTool:
     | { name: string; emoji: string; argsPreview: string }
     | undefined;
-  /** このセッションでの tool_execution_start 累計回数 (progress-notice.md の
+  /** このセッションでの tool_execution_start 累計回数 (ingress-egress.md §8 の
    * 進捗表示用。ターンをまたいで積算する)。reply は対象外なので含めない */
   #toolCallCount = 0;
-  /** 直前に進捗通知として送信したテキスト (progress-notice.md)。同じ内容なら
+  /** 直前に進捗通知として送信したテキスト (ingress-egress.md §8)。同じ内容なら
    * tick をスキップし、Slack API を呼ばない (状況が進んでいないのに更新し続けない) */
   #lastText: string | undefined;
-  /** 進捗通知タイマー (progress-notice.md)。prompt/steer 送信ごとにリセットし、
+  /** 進捗通知タイマー (ingress-egress.md §8)。prompt/steer 送信ごとにリセットし、
    * agent_end 冒頭でクリアする (turnTimeoutTimer と同じ寿命管理) */
   #timer: NodeJS.Timeout | undefined;
 
@@ -130,7 +130,7 @@ export class ProgressNotice {
 
   /** 進捗通知タイマーをリセットする (prompt/steer 送信ごとに呼ぶ。既存タイマーが
    * あれば止めて張り直す)。turnTimeoutTimer と同じ寿命管理パターン
-   * (progress-notice.md)。間隔ごとに currentTool のスナップショットを投稿/更新する。
+   * (ingress-egress.md §8)。間隔ごとに currentTool のスナップショットを投稿/更新する。
    *
    * newTurnKey: 新規ターンの kick (start/#promptPending) から呼ぶときだけ、
    * そのターンの先頭発言の thread_key を渡す。省略時 (steer) は現在の進捗キーを

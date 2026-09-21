@@ -1,4 +1,4 @@
-// SlackIngressAdapter (codec) — docs/design/chat-model.md §3.2
+// SlackIngressAdapter (codec) — docs/design/ingress-egress.md §2
 //
 // 「届いた生 payload を ChatEvent に正規化する」変換器。transport (Socket Mode /
 // Events API) には依存しない純関数的な codec。Ingress 実装がこれを内部で使う。
@@ -73,7 +73,7 @@ function stripMentions(
 }
 
 /** SlackIngressAdapter: Slack raw event -> ChatEvent の正規化を担う codec。
- * transport 非依存 (Socket Mode / Events API の両方から使う想定, chat-model.md §3.2)。 */
+ * transport 非依存 (Socket Mode / Events API の両方から使う想定, ingress-egress.md §2)。 */
 export class SlackIngressAdapter {
   constructor(private readonly botUserId: string) {}
 
@@ -101,7 +101,7 @@ export class SlackIngressAdapter {
     // subtype 付きイベントは原則対象外だが、bot_message だけは通す。webhook 系
     // アラート (Cloud Monitoring / Mackerel / Security Command Center 等) は
     // Slack 連携で subtype: "bot_message" として届くため、allowBots 経路 (この
-    // 機能の主目的) の入口になる (session-model.md §5)。message_changed /
+    // 機能の主目的) の入口になる (config.md §4.3)。message_changed /
     // message_deleted / thread_broadcast 等、それ以外の subtype は従来どおり drop する。
     if (event.subtype !== undefined && event.subtype !== "bot_message") {
       return null;
@@ -172,7 +172,7 @@ export class SlackIngressAdapter {
     };
   }
 
-  /** 再配送 dedupe 用のイベント ID。Slack の event_id を返す (chat-model.md §3.2)。 */
+  /** 再配送 dedupe 用のイベント ID。Slack の event_id を返す (ingress-egress.md §2)。 */
   dedupeKey(envelope: SlackEventEnvelope): string | undefined {
     return envelope.event_id;
   }

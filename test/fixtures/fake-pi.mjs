@@ -22,7 +22,7 @@
 //                        畳まず、最終的に ✅ が付くことを検証する)
 //     "SLOW_TOOL"      … tool_execution_start ("dummy_tool") を吐いた後、steer が
 //                        届くまで待つ (runner の進捗通知タイマーが currentTool を
-//                        観測できる状態を維持する。progress-notice.md)。
+//                        観測できる状態を維持する。ingress-egress.md §8)。
 //                        "NEXT_TOOL" を含む steer はターンを終わらせず 2 個目の
 //                        tool_execution_start を吐く (進捗テキストの変化を決定的に起こす)
 //     "WITH_FILES"     … workdir に ok.txt を実体として書き、reply の details.files に
@@ -37,7 +37,7 @@
 //     "REPLY_THEN_DELAYED_END" … reply (tool_execution_end) を即座に吐いた後、
 //                        500ms 待ってから agent_end を吐く (reply 配送後・agent_end
 //                        到達前の隙間で進捗タイマーが再発火しないことを検証する。
-//                        progress-notice.md)
+//                        ingress-egress.md §8)
 //     それ以外          … `echo: <本文>` の reply → agent_end を吐く
 // - agent_end.messages には固定の usage 付き assistant message を 1 件含める
 //   (SessionRunner の usage 集計ロジックをテストから確認するため)
@@ -244,7 +244,7 @@ function handleCommand(command) {
   if (command.type === "steer" && waitingForSteer) {
     if (command.message.includes("NEXT_TOOL")) {
       // ターンを終わらせず 2 個目の tool_execution_start を吐く (進捗通知の
-      // step カウントが進み、進捗テキストが必ず変化する。progress-notice.md の
+      // step カウントが進み、進捗テキストが必ず変化する。ingress-egress.md §8 の
       // 「同一テキストは再送しない」dedupe をまたいで update を決定的に起こすため)
       emitToolExecutionStart("dummy_tool", { command: "sleep 300" });
       return;

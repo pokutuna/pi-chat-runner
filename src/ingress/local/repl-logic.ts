@@ -1,4 +1,4 @@
-// REPL のロジック層 (docs/design/local-dev.md §2, §3)
+// REPL のロジック層 (docs/design/local-dev.md §3, §4)
 //
 // stdin 1 行 → 文法パース (純関数) → LocalChat の API 呼び出し、および
 // LocalChat からの変化通知 → 表示用データへの整形、を ink (画面描画) に
@@ -12,7 +12,7 @@ import type { LoggedMessage, LocalChat, ReactionRecord } from "./types.js";
 // ── 1. 行パーサ ──────────────────────────────────────────────────────────
 
 /** スレッド参照。数字のみ = ログ上の seq 番号、`ts:X` = 未観測 ts の生指定
- * (local-dev.md §3)。 */
+ * (local-dev.md §4)。 */
 export type ThreadRef =
   | { kind: "seq"; seq: number }
   | { kind: "ts"; ts: string };
@@ -340,7 +340,7 @@ function seqForTs(chat: LocalChat, ts: string): number | undefined {
 
 /** seq/ts 参照を解決する。seq 参照は対象 LoggedMessage の channelId も返す —
  * 呼び出し側 (react/post) はそれを state.channelId より優先することで、他チャンネル
- * から `>N`/`!react N` した際に N が属するチャンネルへ投稿する (local-dev.md §3)。
+ * から `>N`/`!react N` した際に N が属するチャンネルへ投稿する (local-dev.md §4)。
  * 生 ts 参照はログ非依存 (存在チェックしない) のため channelId を持たず、
  * 呼び出し側は従来どおり state.channelId を使う。 */
 export function resolveThreadRef(
@@ -442,7 +442,7 @@ export async function handleLine(
       }
       await chat.react(resolved.ts, parsed.emoji, {
         // seq 参照なら対象メッセージのチャンネルへ、生 ts 参照なら現在の
-        // チャンネルへ (local-dev.md §3)。
+        // チャンネルへ (local-dev.md §4)。
         channelId: resolved.channelId ?? state.channelId,
         sender: { id: state.userId, isBot: state.isBot },
       });

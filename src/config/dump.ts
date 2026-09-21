@@ -1,4 +1,4 @@
-// 実効設定の書き出し (effective config) — docs/design/config.md §6「実効設定の書き出し」
+// 実効設定の書き出し (effective config) — docs/design/config.md §5
 //
 // dump は解決関数をランタイムと共有する (resolveChannelConfig をそのまま呼ぶ)。
 // dump 専用の別実装を持たないことで、dump と本番で結果がずれないことを保証する。
@@ -15,7 +15,7 @@ import {
   resolveChannelConfig,
 } from "./config-source.js";
 
-/** provenance の出所ラベルを人向け表記に変換する (config.md §6 の出力例:
+/** provenance の出所ラベルを人向け表記に変換する (config.md §5 の出力例:
  * `← channels.yaml #alerts` / `← default`)。 */
 function sourceLabel(source: FieldSource): string {
   switch (source) {
@@ -28,7 +28,7 @@ function sourceLabel(source: FieldSource): string {
   }
 }
 
-/** trigger.when の合成木を 1 行に整形する (config.md §6 の出力例:
+/** trigger.when の合成木を 1 行に整形する (config.md §5 の出力例:
  * `OR[ keyword, AND[classifier(gemini-3.1-flash-lite), classifier(code default)] ]`)。
  * 配列 = OR、{and}/{or} = 明示合成、葉は kind (classifier のみ model を添える)。 */
 export function formatWhen(nodes: WhenNode[]): string {
@@ -72,7 +72,7 @@ function formatBytes(bytes: number): string {
 
 /** フィールドの出所ラベルを解決する。doc にキー自体が無ければ (isSet === false)
  * provenance を見ずに "code default"、あれば provenance (無ければ "default") を使う。
- * pretty (buildFields) / json (formatJson) 共通の provenance 解決規則 (config.md §6)。 */
+ * pretty (buildFields) / json (formatJson) 共通の provenance 解決規則 (config.md §5)。 */
 function fieldSource(
   provenance: FieldSource | undefined,
   isSet: boolean,
@@ -221,7 +221,7 @@ function buildFields(
   return fields;
 }
 
-/** pretty 出力の左カラム幅 (config.md §6 の出力例に倣い、揃えて読みやすくする)。 */
+/** pretty 出力の左カラム幅 (config.md §5 の出力例に倣い、揃えて読みやすくする)。 */
 function padLabel(label: string, width: number): string {
   return `${label}:`.padEnd(width + 1);
 }
@@ -344,7 +344,7 @@ function formatJson(
 }
 
 /** channelId の実効設定 (default/dm + channel をマージした ChannelDoc) を
- * provenance 付きで整形する (config.md §6)。resolveChannelConfig が null を返す
+ * provenance 付きで整形する (config.md §5)。resolveChannelConfig が null を返す
  * ケース (DM で dm エントリが無い等) はコード既定 (DM は disabled) の注記を出す。 */
 export function formatEffectiveConfig(
   file: ChannelsFile,

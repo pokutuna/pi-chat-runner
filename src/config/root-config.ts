@@ -1,11 +1,11 @@
-// 設定ファイル (単一 YAML, 慣例名 agent.yaml) の共通リーダー — docs/design/config.md §6
+// 設定ファイル (単一 YAML, 慣例名 agent.yaml) の共通リーダー — docs/design/config.md §2.1
 //
 // connector / store / pi / agent / channels の全ブロックが 1 つの YAML に同居する。
 // 全体を 1 つの zod スキーマに統合はせず、各ローダー (connector-config.ts /
 // store-config.ts / agent-config.ts / config-source.ts) がこのリーダーで root を
 // 読み、自分の担当ブロックだけを取り出して独立に検証する。env 参照 (${env.X}) の
 // 解決も各ローダーが自分のブロックに対してだけ行う — channels ブロックは env 解決を
-// 通らないため、dump (config.md §6) が secrets に触れない性質がここで担保される。
+// 通らないため、dump (config.md §5) が secrets に触れない性質がここで担保される。
 
 import { readFile } from "node:fs/promises";
 

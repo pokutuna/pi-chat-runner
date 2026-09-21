@@ -1,4 +1,4 @@
-# Firestore エミュレータ (FirestoreStateStore のテスト専用。docs/design/persistence.md §1)
+# Firestore エミュレータ (FirestoreStateStore のテスト専用。docs/design/state.md §4.2)
 #
 # 起動: docker compose up -d
 # テスト: FIRESTORE_EMULATOR_HOST=localhost:8080 pnpm test

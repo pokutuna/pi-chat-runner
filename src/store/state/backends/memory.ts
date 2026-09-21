@@ -1,4 +1,4 @@
-// InMemory 実装 (docs/design/persistence.md §1 の InboxStore/SessionStore/LeaseStore)
+// InMemory 実装 (docs/design/state.md §4 の InboxStore/SessionStore/LeaseStore)
 //
 // Map ベース。プロセス再起動で消えるが、ローカルお試し・単体テストの既定として使う。
 // lease の期限判定は Date.now() を既定とし、テストで時間を進められるよう

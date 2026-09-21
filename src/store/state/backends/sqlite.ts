@@ -1,4 +1,4 @@
-// SQLite 実装 (docs/design/persistence.md §1 の InboxStore/SessionStore/LeaseStore)
+// SQLite 実装 (docs/design/state.md §4.1 の InboxStore/SessionStore/LeaseStore)
 //
 // better-sqlite3 は同期 API。IF は Promise なので async メソッドで包むだけでよい。
 // 1 ファイル (":memory:" も可)。ローカルで永続化・排他込みの動作確認に使う想定。

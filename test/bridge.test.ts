@@ -268,7 +268,7 @@ describe("startBridge", () => {
   });
 
   it("delivers other bots' messages (isBot=true, isSelf=false) to the runner", async () => {
-    // allowBots opt-in channel (session-model.md §5) — allowBots なしでは
+    // allowBots opt-in channel (config.md §4.3) — allowBots なしでは
     // handle() が bot 投稿を既定で捨てるため、bridge がここまで届けることを
     // 検証するにはチャンネル側で明示的に許可する必要がある
     const channelId = "C0000000004";

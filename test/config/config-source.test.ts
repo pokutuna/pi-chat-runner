@@ -73,7 +73,7 @@ describe("FileConfigSource", () => {
 
   it("does not fall back to the 'default' doc for the reserved DM name", async () => {
     // default doc は通常チャンネル向けの土台。dm エントリが無ければ DM は passthrough に
-    // 落ちる必要があり、default を継承してはいけない (config.md §2.2)
+    // 落ちる必要があり、default を継承してはいけない (config.md §3.1)
     const source = new FileConfigSource(
       join(FIXTURES_DIR, "config-default/channels.yaml"),
     );
@@ -317,7 +317,7 @@ describe("resolveChannelConfig", () => {
     const resolved = resolveChannelConfig(file, "dm");
     expect(resolved).not.toBeNull();
     // DM は dm エントリ単独。default の model は継承せず、dm 由来のフィールドは
-    // provenance "dm" (channel ではない) になる (config.md §2.1, §6)。
+    // provenance "dm" (channel ではない) になる (config.md §3.1, §3.3)。
     expect(resolved?.doc).toEqual({ systemPrompt: "dm prompt" });
     expect(resolved?.provenance).toEqual({ systemPrompt: "dm" });
   });

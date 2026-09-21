@@ -1,4 +1,4 @@
-// チャットのテキストコマンド (session-model.md §6, §5)。/new と /enable /disable。
+// チャットのテキストコマンド (session-model.md §5)。/new と /enable /disable。
 // gate を通過したメッセージ本文にのみ適用される (parse 自体は純関数)。
 
 /** チャットのテキストコマンド。/new は rest 付きを許容するが、/enable /disable は
@@ -12,7 +12,7 @@ const NEW_PREFIX = "/new";
 const ENABLE_COMMAND = "/enable";
 const DISABLE_COMMAND = "/disable";
 
-/** メッセージ本文を解析してコマンドを返す。純関数 (session-model.md §6, §5):
+/** メッセージ本文を解析してコマンドを返す。純関数 (session-model.md §5):
  * - trim 後が "/new" に完全一致 → { kind: "new" }
  * - "/new" + 空白 (改行含む) + 残り → { kind: "new", rest: <残りを trim> }
  * - trim 後が "/enable" / "/disable" に完全一致 → { kind: "enable" } / { kind: "disable" }

@@ -1,14 +1,15 @@
 // SessionRunner — event を受けて session を主語に処理するオーケストレーション (Step 4)
 //
-// docs/design/architecture.md §1 (event は「きっかけ係」、session が「処理の担い手」)、
-// §6 (起動と steering のフロー)、docs/design/session-runtime.md §1 (kick シーケンス)、
-// §3 (tmpfs + 境界 flush)、docs/design/persistence.md §1 (Store 群)、§3 (flush → ack の順序)。
+// docs/design/architecture.md §6 (event は「きっかけ係」、session が「処理の担い手」)、
+// docs/design/message-dispatch.md §7 (起動と Turn 境界)、§5 (steering)、
+// docs/design/runtime.md §1 (kick シーケンス)、docs/design/state.md §6 (tmpfs + 境界 flush)、
+// §3 (Store 群)、§7 (flush → ack の順序)。
 //
 // Step 4 のスコープ: lease による多重起動の排他、drain/ack 分離 (drain は非破壊。
 // プロンプト済み item の記憶と重複除外は runner のインメモリ責務)、agent_end 後の
 // linger による追いメッセージ拾い直し、WorkdirStorage による境界退避 (未指定なら
 // Step 3 相当のローカル置きっぱなし)。turn timeout (Step 6) もここで実装する
-// (session-runtime.md §6「ターンにタイムアウトを設け、超過したら pi を kill」)。
+// (runtime.md §5.1「ターンにタイムアウトを設け、超過したら pi を kill」)。
 
 import { hostname } from "node:os";
 import { join } from "node:path";
@@ -61,7 +62,7 @@ import {
   warnPolicyMismatches,
 } from "./spawn.js";
 
-/** reaction の対象メッセージ本文を取得する port (session-model.md §5「人間による
+/** reaction の対象メッセージ本文を取得する port (message-dispatch.md §1「人間による
  * リアクション起動」)。bridge が Slack conversations.replies/history で実装する。
  * 見つからない/取得失敗時は null。 */
 export type FetchMessage = (
@@ -79,13 +80,13 @@ export interface FetchedMessage {
 
 export interface SessionRunnerOptions {
   configSource: ConfigSource;
-  /** 永続化 Store 群 (inbox / sessions / leases)。persistence.md §1 */
+  /** 永続化 Store 群 (inbox / sessions / leases)。state.md §3 */
   store: StateStore;
   router: EgressRouter;
   reactor: TurnReactor;
   /** workdir の境界退避。 */
   workdirStorage: WorkdirStorage;
-  /** チャンネル単位の共有ディレクトリの境界退避 (docs/design/shared.md)。
+  /** チャンネル単位の共有ディレクトリの境界退避 (docs/design/state.md §9)。
    * 未指定なら shared 機能ごと無効 — staging の作成・skill 配線・system prompt
    * への言及をすべて行わない (createSharedStorage が設定から解決する) */
   sharedStorage?: SharedStorage;
@@ -95,16 +96,16 @@ export interface SessionRunnerOptions {
   piBinary?: string;
   /** 解決済みの pi 本体 entrypoint JS。permission の有無に関わらず使用する */
   piEntrypoint?: string;
-  /** allowlist (PATH/HOME) に追加で pi 子プロセスへ渡す env (session-runtime.md §2) */
+  /** allowlist (PATH/HOME) に追加で pi 子プロセスへ渡す env (runtime.md §5.3) */
   extraEnv?: Record<string, string>;
-  /** pi 子プロセスの実行 uid/gid (session-runtime.md §6: UID 分離)。両方指定時のみ有効。
+  /** pi 子プロセスの実行 uid/gid (runtime.md §5.1: UID 分離)。両方指定時のみ有効。
    * 有効な場合のみ workdir の chown/chmod を行う (無効時は現状動作を維持) */
   agentUid?: number;
   agentGid?: number;
   /** pi 子プロセスへ常に HOME として渡すディレクトリ (既定 "/home/agent")。
    * UID 分離の有無に関わらず常にこれを HOME にする — コンテナ側で設定・skill を
    * 固定パスに配置できるようにするため、また Node Permission Model の allow パス
-   * (`${home}/*`) と実際の HOME をズレなく一致させるため (session-runtime.md §6) */
+   * (`${home}/*`) と実際の HOME をズレなく一致させるため (runtime.md §5.2) */
   agentHome?: string;
   /** Node Permission Model 経由での起動を有効にする設定 (opt-in。未指定なら
    * 現状動作 = pi をそのまま spawn する。pi-tools-and-sandbox.md 「リーズナブルな
@@ -112,14 +113,14 @@ export interface SessionRunnerOptions {
   piPermission?: PiPermissionConfig;
   /** lease の TTL。既定 60_000ms。renew は ttl/3 間隔 */
   leaseTtlMs?: number;
-  /** 長時間ターンの進捗通知の間隔 (progress-notice.md)。初回発火までの猶予も同じ値を使う。
+  /** 長時間ターンの進捗通知の間隔 (ingress-egress.md §8)。初回発火までの猶予も同じ値を使う。
    * 既定 5_000ms。0 を渡すと機能自体を無効化する (負値は指定しない想定) */
   progressNoticeIntervalMs?: number;
   /** agent_end 後に追いメッセージを待つ時間。既定 3_000ms */
   lingerMs?: number;
   /** 1 ターン (prompt/steer 送信から agent_end まで) の上限。既定 600_000ms (10 分)。
    * 超過したら pi を kill してセッションを異常終了として畳む
-   * (session-runtime.md §6: 「ターンにタイムアウトを設け、超過したら pi を kill」) */
+   * (runtime.md §5.1: 「ターンにタイムアウトを設け、超過したら pi を kill」) */
   turnTimeoutMs?: number;
   /** lease の owner 識別子。既定 `hostname:pid` */
   owner?: string;
@@ -129,7 +130,7 @@ export interface SessionRunnerOptions {
   mentionFormat: MentionFormat;
   logger?: Logger;
   /** classifier gate 用の LLM client。省略時は classifier gate を使う channel で
-   * createGate が throw する (session-model.md §5 Layer 2)。 */
+   * createGate が throw する (config.md §4.1 Layer 2)。 */
   classifierClient?: ClassifierClient;
 }
 
@@ -148,7 +149,7 @@ interface PendingKick {
   channelId: string;
 }
 
-/** /new コマンドのマーカー書き込み用 lease TTL (session-model.md §6)。実行中との
+/** /new コマンドのマーカー書き込み用 lease TTL (session-model.md §5.1)。実行中との
  * 交錯を避けるためだけの短時間ロックなので、通常の kick 用 leaseTtlMs より短くてよい */
 const NEW_COMMAND_LEASE_TTL_MS = 10_000;
 
@@ -158,11 +159,11 @@ export class SessionRunner implements SessionHost {
    * レーンで gate 通過 → inbox enqueue した後、即 kick する代わりにレーンごとの
    * タイマーで kick を遅らせる」 */
   private readonly pendingKicks = new Map<string, PendingKick>();
-  /** affinity 合流したイベントのスレッド → 合流先レーンの別名 (session-model.md §3
+  /** affinity 合流したイベントのスレッド → 合流先レーンの別名 (message-dispatch.md §3.2
    * 「セッション合流」)。合流先セッションが返信したスレッド内の追い発言を、自
    * スレッド followUp と同じ規則 (稼働中は gate なしで steer、終了後は resume) で
    * 合流先レーンへ届けるための in-memory マップ。プロセス再起動で消える (その後の
-   * スレッド返信は通常の新規判定に落ちる) — 永続化は §6 の chat_ref 逆引き実装時 */
+   * スレッド返信は通常の新規判定に落ちる) — 永続化は §3.1 の Thread → Session 対応の実装時 */
   private readonly threadAlias = new Map<string, string>();
   private readonly configSource: ConfigSource;
   /** 組み込み memory skill の絶対パス。shared 有効時のみ解決する (無効時 undefined) */
@@ -235,11 +236,11 @@ export class SessionRunner implements SessionHost {
     const channelId = event.conversation.channelId;
     const isDm = event.conversation.isDm === true;
     // DM は channelId 個別の doc ではなく予約名 "dm" の doc を全 DM 共通で参照する
-    // (config.md §1, §2)。セッション自体は実 channelId (D...) で管理する
+    // (config.md §3.1, §1.2)。セッション自体は実 channelId (D...) で管理する
     const doc = await this.loadChannelDoc(isDm ? DM_CHANNEL : channelId);
     const policy = resolveSessionPolicy(doc, isDm);
     // affinity で合流したスレッド内の追い発言は合流先レーンの発言として扱う
-    // (session-model.md §3「セッション合流」の別名解決)
+    // (message-dispatch.md §3.2「セッション合流」の別名解決)
     const naturalKey = sessionKeyOf(event, policy);
     const sessionKey = this.threadAlias.get(naturalKey) ?? naturalKey;
     const item: InboxItem = {
@@ -249,7 +250,7 @@ export class SessionRunner implements SessionHost {
     };
 
     // bot 投稿 (自己エコーは bridge で除外済み) は allowBots opt-in の
-    // channel でのみ gate 評価・steer に乗せる (session-model.md §5)
+    // channel でのみ gate 評価・steer に乗せる (config.md §4.3)
     if (event.sender.isBot && doc?.trigger?.allowBots !== true) {
       this.ctx.logger.debug(
         { channelId, sessionKey },
@@ -258,7 +259,7 @@ export class SessionRunner implements SessionHost {
       return;
     }
 
-    // コマンド (session-model.md §6, §5)。gate を通過したメッセージにのみ意味を
+    // コマンド (session-model.md §5)。gate を通過したメッセージにのみ意味を
     // 持たせる (mention gate のチャンネルでは `@bot /new` 等) ため、gate 評価より
     // 前に判定するのはここまで — 実行中レーンへの /new 拒否、および実行中でも
     // 効く /enable /disable だけは gate をバイパスする。
@@ -284,14 +285,14 @@ export class SessionRunner implements SessionHost {
         return;
       }
       // enable/disable は状態書き込みのみでセッションと競合しないため、
-      // 実行中でも即座に処理する (session-model.md §5)
+      // 実行中でも即座に処理する (session-model.md §5.2)
       await this.handleToggleCommand(sessionKey, channelId, policy, event, cmd);
       return;
     }
 
     // disabled 中は steer も gate 評価 (classifier の LLM 呼び出し含む) も行わず drop する。
     // /enable /disable だけは復帰経路としてここを素通りさせ、gate (mention) を経て処理する
-    // (session-model.md §5)。/new も disabled 中は無効
+    // (session-model.md §5.2)。/new も disabled 中は無効
     const isToggleCommand = cmd !== null && cmd.kind !== "new";
     if (!isToggleCommand && (await this.isChannelDisabled(channelId))) {
       this.ctx.logger.info(
@@ -302,7 +303,7 @@ export class SessionRunner implements SessionHost {
     }
 
     // 実行中 (起動中含む) セッションがあるレーン: gate は通さず enqueue して
-    // steer で配達 (architecture.md §6 フロー 6。後続発言は追加指示として扱う)
+    // steer で配達 (message-dispatch.md §2, §5。後続発言は追加指示として扱う)
     if (await this.trySteerExisting(sessionKey, item)) return;
 
     // 実行中でない: gate 評価 → trigger なら enqueue して kick (即 or debounce)
@@ -338,7 +339,7 @@ export class SessionRunner implements SessionHost {
     await this.kickTriggered(sessionKey, channelId, policy, event, doc, item);
   }
 
-  /** reaction によるリアクション起動 (session-model.md §5「人間によるリアクション
+  /** reaction によるリアクション起動 (message-dispatch.md §1「人間によるリアクション
    * 起動」)。reaction event を trigger.when の Gate 木で評価し、trigger したときに
    * のみ対象メッセージ本文を fetch で取得して synthetic InboundMessage に変換し、
    * 既存の message キック経路 (trySteerExisting / kickTriggered) に合流させる。
@@ -352,7 +353,7 @@ export class SessionRunner implements SessionHost {
     const doc = await this.loadChannelDoc(isDm ? DM_CHANNEL : channelId);
 
     // disabled 中は gate 評価 (classifier の LLM 呼び出し含む) 自体を行わず止める
-    // (session-model.md §5)
+    // (session-model.md §5.2)
     if (await this.isChannelDisabled(channelId)) {
       this.ctx.logger.info(
         { channelId },
@@ -425,9 +426,9 @@ export class SessionRunner implements SessionHost {
     );
   }
 
-  /** 実行中 (起動中含む) セッションがあるレーンへの enqueue + steer 配達 (architecture.md
-   * §6 フロー 6。後続発言は追加指示として扱う)。enqueue は「セッションあり」のときだけ
-   * 行う — gate 非通過の全メッセージを永続 store に溜め込まない (dedupe は enqueue 時に
+  /** 実行中 (起動中含む) セッションがあるレーンへの enqueue + steer 配達
+   * (message-dispatch.md §2, §5。後続発言は追加指示として扱う)。enqueue は「セッションあり」の
+   * ときだけ行う — gate 非通過の全メッセージを永続 store に溜め込まない (dedupe は enqueue 時に
    * 効く)。戻り値 true はこのレーンで処理済み (呼び出し元は return してよい) を示す */
   private async trySteerExisting(
     sessionKey: string,
@@ -444,7 +445,7 @@ export class SessionRunner implements SessionHost {
       );
       return true;
     }
-    // steer 配達もレーンの活動 (session-model.md §3 の直近セッションポインタ)
+    // steer 配達もレーンの活動 (message-dispatch.md §3.2 の直近セッションポインタ)
     await this.touchSessionPointer(
       item.event.conversation.channelId,
       sessionKey,
@@ -459,7 +460,7 @@ export class SessionRunner implements SessionHost {
     return true;
   }
 
-  /** /new コマンドの処理 (session-model.md §6)。gate を通過済み、かつこのレーンに
+  /** /new コマンドの処理 (session-model.md §5.1)。gate を通過済み、かつこのレーンに
    * 実行中セッションが無いことが呼び出し元 (handle) で確定した後にのみ呼ばれる。
    * 短時間の lease を取得してマーカー (rotateRequestedAt) を書くだけで、即座の
    * rotate はしない (WorkdirStorage の棚に旧 session.jsonl が残っており、次の
@@ -497,7 +498,7 @@ export class SessionRunner implements SessionHost {
       const existing = await this.ctx.store.sessions.get(sessionKey);
       if (existing !== null) {
         // updatedAt は据え置き — マーカー書き込みは「活動」ではないので
-        // idle 判定を狂わせない (session-model.md §3)
+        // idle 判定を狂わせない (session-model.md §6)
         await this.ctx.store.sessions.put(sessionKey, {
           ...existing,
           rotateRequestedAt: new Date(),
@@ -534,7 +535,7 @@ export class SessionRunner implements SessionHost {
           event.conversation.isDm === true ? DM_CHANNEL : channelId,
         ),
         restItem,
-        // /new は明示的な新規開始なので affinity 合流させない (session-model.md §3)
+        // /new は明示的な新規開始なので affinity 合流させない (session-model.md §5.1)
         { skipAffinity: true },
       );
       return;
@@ -544,14 +545,14 @@ export class SessionRunner implements SessionHost {
     await this.deliverCommandNotice(sessionKey, threadKey, ACK_NOTICE_TEXT);
   }
 
-  /** チャンネルが /disable で無効化されているか (session-model.md §5)。
+  /** チャンネルが /disable で無効化されているか (session-model.md §5.2)。
    * doc 不在 = enabled (既定)。DM 予約名でなく実 channelId で管理する
    * (メッセージ側は実 channelId で判定するため、ChannelDoc の DM 束ねとは別軸) */
   private async isChannelDisabled(channelId: string): Promise<boolean> {
     return (await this.ctx.store.channels.get(channelId))?.enabled === false;
   }
 
-  /** /enable /disable コマンドの処理 (session-model.md §5)。gate をバイパスして
+  /** /enable /disable コマンドの処理 (session-model.md §5.2)。gate をバイパスして
    * 実行中セッションの有無に関わらず呼ばれる — 状態書き込みのみでセッションの
    * プロセスとは競合しないため、実行中でも即座に反映する。冪等: 既に同じ状態
    * でも同じ ack を返す (分岐しない) */
@@ -606,7 +607,7 @@ export class SessionRunner implements SessionHost {
    * store へ積む (dedupe = at-least-once の再送吸収)。この後 debounce タイマーで
    * kick を遅らせても、item は既に永続化済みなのでプロセス死で消えない (拾い直しは
    * 既存の inbox 経路に乗る)。skipAffinity は /new の明示新規 (合流の逃げ道、
-   * session-model.md §3) 用 */
+   * session-model.md §5.1) 用 */
   private async kickTriggered(
     sessionKey: string,
     channelId: string,
@@ -616,7 +617,7 @@ export class SessionRunner implements SessionHost {
     item: InboxItem,
     options?: { skipAffinity?: boolean },
   ): Promise<void> {
-    // affinity 合流 (session-model.md §3「セッション合流」): チャンネル直下投稿を
+    // affinity 合流 (message-dispatch.md §3.2「セッション合流」): チャンネル直下投稿を
     // 直近レーンへ差し替える。以降は既存の配達経路 (steer / debounce / kick=resume)
     // がそのまま働く
     if (options?.skipAffinity !== true) {
@@ -740,7 +741,7 @@ export class SessionRunner implements SessionHost {
   ): Promise<void> {
     if (this.sessions.has(sessionKey)) return;
     // debounce 待機中に /disable された場合、タイマー発火時点で再チェックする
-    // (session-model.md §5)
+    // (session-model.md §5.2)
     if (await this.isChannelDisabled(channelId)) {
       this.ctx.logger.info(
         { channelId, sessionKey },
@@ -760,7 +761,7 @@ export class SessionRunner implements SessionHost {
     this.pendingKicks.delete(sessionKey);
   }
 
-  /** affinity 合流先の解決 (session-model.md §3「セッション合流」)。scope=channel の
+  /** affinity 合流先の解決 (message-dispatch.md §3.2「セッション合流」)。scope=channel の
    * とき、gate 通過したチャンネル直下投稿をチャンネルの直近セッションレーンへ差し替える。
    * 合流しない場合は naturalKey をそのまま返す。判定は時間窓ルールのみ (classifier に
    * 委ねない) */
@@ -772,8 +773,8 @@ export class SessionRunner implements SessionHost {
   ): Promise<string> {
     const affinity = doc?.session?.affinity;
     if (affinity?.scope !== "channel") return naturalKey;
-    // スレッド内の発言はそのスレッドのセッションに属する (session-model.md §6
-    // 再開判定 1)。合流対象はチャンネル直下投稿のみ
+    // スレッド内の発言はそのスレッドのセッションに属する (message-dispatch.md §3.1
+    // Thread → Session の対応)。合流対象はチャンネル直下投稿のみ
     if (event.conversation.threadTs !== undefined) return naturalKey;
 
     const state = await this.ctx.store.channels.get(channelId);
@@ -799,7 +800,7 @@ export class SessionRunner implements SessionHost {
     return naturalKey;
   }
 
-  /** 直近セッションポインタの活動更新 (session-model.md §3)。ポインタは合流候補の
+  /** 直近セッションポインタの活動更新 (message-dispatch.md §3.2)。ポインタは合流候補の
    * 検索用 (advisory) なので、書き込み失敗でイベント処理を止めない */
   private async touchSessionPointer(
     channelId: string,
@@ -818,7 +819,7 @@ export class SessionRunner implements SessionHost {
     }
   }
 
-  /** セッション終了時のポインタ endedAt 記録 (session-model.md §3。windowSec の
+  /** セッション終了時のポインタ endedAt 記録 (message-dispatch.md §3.2。windowSec の
    * 起点になる)。ポインタが既に別レーンを指していたら書かない — 古いレーンの終了で
    * 「最後に活動したセッション」を巻き戻さない */
   private async markSessionPointerEnded(
@@ -876,7 +877,7 @@ export class SessionRunner implements SessionHost {
 
     // レーン根の threadTs は event ではなく sessionKey から導出する (thread モードの
     // key は `${channelId}:${threadTs}`)。affinity 合流の resume では event のスレッド
-    // 位置とレーンが一致しないが、workdir/transcript は常にレーン基準 (session-model.md §3)
+    // 位置とレーンが一致しないが、workdir/transcript は常にレーン基準 (state.md §6)
     const threadTs =
       policy.sessionMode === "channel"
         ? (event.conversation.threadTs ?? event.id)
@@ -904,12 +905,12 @@ export class SessionRunner implements SessionHost {
     this.sessions.set(sessionKey, session);
 
     try {
-      // kick シーケンス前半 (session-runtime.md §1: restore → spawn 準備)。
+      // kick シーケンス前半 (runtime.md §1, §2: restore → spawn 準備)。
       // PiProcess 生成以降 (spawn → prompt) は ActiveSession.start が担う
       warnPolicyMismatches(this.ctx.logger, sessionKey, channelId, policy, doc);
 
       // workdir/shared の mkdir + restore、transcript 世代交代、UID 分離、
-      // agentHome 作成、realpath 正規化 (session-runtime.md §1, §6)
+      // agentHome 作成、realpath 正規化 (runtime.md §2, §5.1)
       const {
         workdirReal,
         agentHomeReal,
@@ -933,7 +934,7 @@ export class SessionRunner implements SessionHost {
       });
 
       // extension/skill パス解決 + Node Permission Model オプション組み立て
-      // (session-runtime.md §5, §6)
+      // (runtime.md §4, §5.2)
       const { extensionPaths, skillPaths, memoryEnabled, permission } =
         await buildSpawnOptions({
           agentHomeReal,
@@ -951,7 +952,7 @@ export class SessionRunner implements SessionHost {
       // 上書きできる実装になっている)
       const extraEnv = { ...this.ctx.extraEnv, HOME: agentHomeReal };
       // memory の索引 (MEMORY.md) は skill 発火 (agent の自発的な read) に頼らず
-      // system prompt に常時注入する (docs/design/memory.md §2)。1 行 1 メモリの
+      // system prompt に常時注入する (docs/design/runtime.md §6)。1 行 1 メモリの
       // 短い索引という規約 (SKILL.md の Save 手順) が前提で、肥大化はしない想定。
       // 本文ファイルは引き続き skill 経由でオンデマンドに read させる
       const memoryIndex = await loadMemoryIndex(memoryEnabled, sharedDirReal);
@@ -972,7 +973,7 @@ export class SessionRunner implements SessionHost {
       });
     } catch (err) {
       // enqueue 済み item は ack されていないので、同レーンの次のイベント
-      // (または再送) で再 kick され拾い直される (persistence.md §4)。
+      // (または再送) で再 kick され拾い直される (message-dispatch.md §7.4)。
       // timer/process の後始末と progress クリアは session.abort に閉じ、
       // lease release / markEnded / warn ログはここで現行と同じ順序で続ける
       await session.abort();
@@ -982,7 +983,7 @@ export class SessionRunner implements SessionHost {
     }
   }
 
-  /** チャンネル共有ディレクトリの staging パス (docs/design/shared.md §1)。
+  /** チャンネル共有ディレクトリの staging パス (docs/design/state.md §6)。
    * workdir の隣に置く — agent からは session.mode に関わらず cwd 相対 ../shared/
    * (`<channelId>/<threadTs>/` と `<channelId>/channel/` のどちらとも隣接する) */
   private sharedStagingDir(channelId: string): string {
@@ -1008,7 +1009,7 @@ export class SessionRunner implements SessionHost {
     };
     if (doc?.trigger === undefined) {
       // doc なし / trigger 未設定は既定 = mention のみ、DM は disabled (起動しない)
-      // (session-model.md §5, config.md §1)
+      // (config.md §4.1, §3.1)
       return buildWhen(defaultWhen(isDm), deps);
     }
     return buildWhen(doc.trigger.when, deps);

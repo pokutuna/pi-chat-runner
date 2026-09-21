@@ -1,4 +1,4 @@
-// SocketIngress — Slack Socket Mode 経由の Ingress — docs/design/architecture.md §1
+// SocketIngress — Slack Socket Mode 経由の Ingress — docs/design/architecture.md §5
 
 import { SocketModeClient } from "@slack/socket-mode";
 import type { WebClient } from "@slack/web-api";
@@ -9,7 +9,7 @@ import type { Ack, Ingress } from "../ingress.js";
 import { SlackIngressAdapter, type SlackRawEvent } from "./adapter.js";
 
 /** Slack Socket Mode 経由の Ingress。ローカル確認・お試し用途
- * (architecture.md §1)。SlackIngressAdapter で正規化し、envelope の ack を Ack として渡す。
+ * (architecture.md §3)。SlackIngressAdapter で正規化し、envelope の ack を Ack として渡す。
  * Socket Mode の接続確立自体は presence には反映されないため (RUNNER_TODO.md)、
  * 接続後に users.setPresence を能動的に呼んでオンライン表示にする。 */
 export class SocketIngress implements Ingress {
@@ -52,7 +52,7 @@ export class SocketIngress implements Ingress {
         const ack: Ack = () => args.ack();
 
         if (chatEvent === null) {
-          // 対象外イベントも 3 秒 ACK の責務は果たす (architecture.md §6 フロー 1-3 相当)
+          // 対象外イベントも 3 秒 ACK の責務は果たす (architecture.md §5)
           await ack();
           return;
         }

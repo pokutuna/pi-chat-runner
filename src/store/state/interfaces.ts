@@ -1,4 +1,4 @@
-// 永続化 Store の抽象 (docs/design/persistence.md §1)
+// 永続化 Store の抽象 (docs/design/state.md §3)
 //
 // InboxStore / SessionStore / LeaseStore / ChannelStateStore の 4 つを独立したインタフェースとして
 // 定義する (1 つの巨大な Store にしない。実装体は 1 つのクラスが 4 つを implements してよい)。
@@ -14,7 +14,7 @@ export interface InboxItem {
   enqueuedAt: Date;
 }
 
-/** イベントの耐久キュー。enqueue は dedupe を兼ねる (session-model.md §4)。 */
+/** イベントの耐久キュー。enqueue は dedupe を兼ねる (message-dispatch.md §8)。 */
 export interface InboxStore {
   /** 積めたら true。同 id が既に見えていれば (ack 後も) 積まず false。
    * at-least-once の再送を吸収する冪等操作。 */
@@ -26,7 +26,7 @@ export interface InboxStore {
   ack(threadKey: string, itemIds: string[]): Promise<void>;
 }
 
-/** thread_key ごとのセッション状態 (session-model.md §9 の状態機械の永続部分)。 */
+/** thread_key ごとのセッション状態 (state.md §3.2 の状態機械の永続部分)。 */
 export interface SessionDoc {
   channelId: string;
   threadTs: string;
@@ -46,7 +46,7 @@ export interface SessionStore {
   put(threadKey: string, doc: SessionDoc): Promise<void>;
 }
 
-/** 実行ロック。TTL 付き lease で多重起動を排他する (session-model.md §4)。 */
+/** 実行ロック。TTL 付き lease で多重起動を排他する (message-dispatch.md §6)。 */
 export interface Lease {
   threadKey: string;
   owner: string;
@@ -70,7 +70,7 @@ export interface LeaseStore {
   release(lease: Lease): Promise<void>;
 }
 
-/** affinity 合流候補: チャンネルの直近セッションレーン (session-model.md §3「セッション合流」) */
+/** affinity 合流候補: チャンネルの直近セッションレーン (message-dispatch.md §3.2「affinity」) */
 export interface ChannelSessionPointer {
   /** 直近レーンの sessionKey (thread モードでは channelId:threadTs) */
   sessionKey: string;
@@ -80,14 +80,14 @@ export interface ChannelSessionPointer {
   endedAt?: Date;
 }
 
-/** チャンネル単位の実行時状態 (session-model.md §5 のチャンネル mute)。
+/** チャンネル単位の実行時状態 (session-model.md §5.2 のチャンネル mute)。
  * doc が無い = enabled が既定。チャットの /enable /disable コマンドで書き換わる */
 export interface ChannelStateDoc {
   enabled: boolean;
   updatedAt: Date;
   /** 最後に切り替えた送信者 id (監査用) */
   updatedBy?: string;
-  /** affinity 合流候補の直近セッションレーン (session-model.md §3) */
+  /** affinity 合流候補の直近セッションレーン (message-dispatch.md §3.2) */
   affinity?: ChannelSessionPointer;
 }
 

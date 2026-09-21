@@ -43,7 +43,7 @@ via `agent.env` — see the commented block in `agent.yaml` and the
 
 Then run the demo — env vars on the command line take precedence over
 `.env.local`, so an existing `CONFIG_PATH` there doesn't interfere.
-`SHARED_DIR` backs the memory skill ([docs/design/shared.md](../../docs/design/shared.md));
+`SHARED_DIR` backs the memory skill ([docs/design/state.md §9](../../docs/design/state.md));
 point it at any writable directory:
 
 ```sh
