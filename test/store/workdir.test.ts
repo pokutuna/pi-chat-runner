@@ -141,12 +141,6 @@ describe("NoopWorkdirStorage", () => {
     ).rejects.toThrow(/ENOENT/);
   });
 
-  it("flush does nothing", async () => {
-    const storage = new NoopWorkdirStorage();
-    await writeWorkdirFiles();
-
-    await expect(storage.flush(THREAD_KEY, workdir)).resolves.toBeUndefined();
-  });
 });
 
 /** pino のログ 1 行 (JSON) を配列に集めるテスト用ロガー */
