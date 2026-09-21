@@ -118,8 +118,8 @@ Node Permission Model + アプリ層の網。Landlock は Step 6 で検証し、
 ただし in-process 化は隔離にならない: Node の vm / ShadowRealm は安全境界でなく、
 Permission Model はプロセス全体に効くため「pi のコードだけ絞る」ことは不可。
 bash はどのみち OS サブプロセスなので、境界はプロセスレベルに置くしかない
-(bridge の spawn 維持の判断は [design/README.md](../design/README.md) の
-Alternatives Considered を参照)。SDK はテストと将来の
+(bridge の spawn 維持の判断は [design overview](../design.md) の
+Agent Runtime を参照)。SDK はテストと将来の
 「SDK ループ + リモート Operations」構成の部品として有用。
 
 ## 設計への含意

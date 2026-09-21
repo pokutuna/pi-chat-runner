@@ -1,6 +1,6 @@
 // TurnReactor — ターンの状態を、そのターンを起こしたメッセージへ視覚的に返す port。
 //
-// docs/design/components.md: 進捗表示 (👀) は Reply レーンとは別レーン。発生源は
+// docs/design/progress-notice.md: 進捗表示 (👀) は Reply レーンとは別レーン。発生源は
 // Runner の観測 (agent_end の中身) で、Runner は kick/ok/error という platform 非依存の
 // 状態を発するだけ。chat 表現 (Slack ならリアクション絵文字) への写像は platform 実装
 // (src/egress/slack/) が持つ — ingress の Ingress vs IngressAdapter と同じ直交。

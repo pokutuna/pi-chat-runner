@@ -59,8 +59,8 @@ bridge 運用に関係するものを中心に (全項目は settings.md 参照)
 
 ## bridge 設計への含意
 
-1. **auto-compaction は pi 既定で有効** — [initial-scope.md](../initial-scope.md) の
-   「compaction は放置」は「pi の自動 compaction に任せる」が正確。bridge 側の
+1. **auto-compaction は pi 既定で有効** — bridge 側は「pi の自動 compaction に任せる」。
+   bridge 側の
    warning ログは transcript の GCS サイズ監視として残す意味だけある
 2. **env allowlist に `GOOGLE_CLOUD_LOCATION` が必要** —
    [session-runtime.md](../design/session-runtime.md) §2 に反映済み

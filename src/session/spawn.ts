@@ -1,6 +1,6 @@
 // kick 前半 (spawn 準備) の抽出先 — 「入力 → PiProcess を作るための準備」であり
-// SessionRecord の可変状態にはほぼ依存しない (docs/design/components.md
-// 「spawn の引数・env の掃除・workdir と flush」は session-runtime.md の関心事)。
+// SessionRecord の可変状態にはほぼ依存しない (spawn の引数・env の掃除・
+// workdir と flush は session-runtime.md の関心事)。
 // PiProcess の生成・イベントハンドラ登録・SessionRecord への書き込みは kick に残す。
 
 import { existsSync } from "node:fs";

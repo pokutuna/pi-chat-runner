@@ -4,7 +4,7 @@ A small bridge between chat and the [pi](https://github.com/earendil-works/pi) c
 
 Running a coding agent on your own machine is easy; keeping one on call from chat is the fiddly part — something has to stay reachable, carry session context and files across turns, and cost nothing while idle. pi-chat-runner is just that part, run serverless.
 
-See [docs/design/README.md](docs/design/README.md) for the design.
+See [docs/design.md](docs/design.md) for the design.
 
 ## Overview
 

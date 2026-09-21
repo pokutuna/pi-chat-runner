@@ -3,7 +3,7 @@
 チャンネルごとに pi の振る舞いを変えるための設定 (Config) の整理。
 「何を Config (ChannelDoc) に入れ、何を入れないか」の判断基準と、
 pi 起動設定への実体化を定める。関連: [architecture.md](architecture.md) §2,
-[components.md](components.md) Config 節, [session-model.md](session-model.md) §7。
+[design.md](../design.md) の Config 節, [session-model.md](session-model.md) §7。
 
 ## 0. 結論 — 置き場所は 4 つ + 秘匿
 
@@ -46,7 +46,7 @@ skill はテキストだが「エージェントの能力」であり、どの�
   起動しない (§2.1) ので、有効化するには `dm` エントリが要る。
   Config は「既定からの差分」だけを持つ
 - 定期実行 (日次レポート等) は Trigger の外 (スケジューラ起動) なので Config の対象外。
-  必要になったら Ingress の追加として扱う ([components.md](components.md) 拡張の軸)
+  必要になったら Ingress の追加として扱う
 
 ## 2. ChannelDoc スキーマ
 

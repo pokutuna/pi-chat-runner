@@ -471,7 +471,7 @@ mention のバイパス可否は debounce と非対称にする: debounce が me
 実装は debounce のレーンごとタイマー機構 (`runner.ts` の debounce 待機ステート) を
 拡張・共用できる見込みで、ゼロから作る必要はない。着手時は
 `warnCooldownIfUnsupported` を置き換え、`docs/design/architecture.md` /
-`docs/design/components.md` / `docs/design/config.md` の「未実装」記述も合わせて
+`docs/design/config.md` の「未実装」記述も合わせて
 更新すること。
 
 ```typescript
