@@ -13,7 +13,7 @@ Extends the pi-chat-runner base image with a single `FROM` step, adding the
 
 pi auto-discovers anything placed under `$AGENT_HOME/.pi/agent/extensions/`
 and applies it to **every** channel (see
-[docs/design/runtime.md §4.3](../../docs/design/runtime.md)
+[docs/design/runtime.md §4.2](../../docs/design/runtime.md)
 and `gc-logging-agent`'s `extensions/init-gcloud.ts` for that pattern).
 
 This example deliberately does the opposite: `pi-smart-fetch` is listed in
@@ -27,8 +27,8 @@ only apply to a channel that actually needs it, rather than to every channel
 the bot is in.
 
 The Dispatcher (`src/dispatch/dispatcher.ts`) automatically adds each `extensions:`
-path's dirname to `--allow-fs-read` at kick time, so no extra filesystem
-permission wiring is needed here. `/app/node_modules/pi-smart-fetch/dist/`
+path's dirname to `--allow-fs-read` when it dispatches the session, so no extra
+filesystem permission wiring is needed here. `/app/node_modules/pi-smart-fetch/dist/`
 is also already covered by the base image's own Permission Model config
 (the whole `/app/node_modules` tree is readable), so nothing has to be added
 for this example either.

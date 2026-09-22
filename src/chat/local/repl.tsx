@@ -66,8 +66,8 @@ export interface Span {
 
 export type Line = Span[];
 
-// chat ペインのウィンドウは行分割後の Line 単位 (旧実装は折り返し前の論理行
-// 単位で 50 だったが、HELP_TEXT 1 回で 18 行前後を消費するため引き上げる)。
+// chat ペインのウィンドウは行分割後の Line 単位。HELP_TEXT 1 回で 18 行前後を
+// 消費するため、余裕を持って 200 とする。
 const CHAT_WINDOW = 200;
 
 const LOG_WINDOW = 200;
@@ -220,7 +220,7 @@ export function formatLogLine(raw: string): Line {
 }
 
 /** span 列を表示幅 width ごとの複数 Row (各 Row は Span[]) へ折り返す
- * (グラフェム単位、string-width 実測。clampSpans の旧実装と同じ流儀)。span の
+ * (グラフェム単位、string-width 実測。clampSpans と同じ流儀)。span の
  * 境界をまたいでも色/bold 属性は維持する (span を分割して次 Row へ続ける)。
  * width に収まらない単独グラフェム (幅 2 の絵文字で width 1 等) でも
  * 無限ループにはならず、そのグラフェム単独で 1 Row になる。width <= 0 の
@@ -449,9 +449,8 @@ export function titleBarText(title: string, width: number): string {
 // れば空行 Row で埋める)。スロットは React key = index で固定し、内容だけを
 // 差し替える。これにより Yoga のツリー構造 (ノード数・高さ) がフレーム間で
 // 一切変わらなくなり、ink の `overflow="hidden"` クリップと実際の端末物理
-// 行数が常に一致する — 論理行数の増減で描画ノード数が変動していた旧実装
-// (justifyContent="flex-end" + slice した可変長配列を描画) が残像の主因
-// だったため、これをやめる。
+// 行数が常に一致する — 論理行数の増減で描画ノード数が変動する構成だと
+// 残像が出るため、それを避けている。
 
 /** グリッドの 1 スロットの内容。log/chat どちらも wrapSpans が返す Row
  * (Span[]) そのものを渡すため、変換なしで統一できる。 */
@@ -646,8 +645,8 @@ export function App({ chat, options, onDone }: AppProps) {
     // Line (折り返し前) しか扱わず、追加した 1 Line が折り返し後に何 Row に
     // なるかを知らない (innerWidth はレンダー側の値)。そのため「スクロール
     // バック中は 1 Line = +1 Row」という誤った仮定で offset を進めるとズレて
-    // 描画が乱れる (旧実装のバグ) — 折り返しで複数行になる CJK/長文だと
-    // 特に顕著。追従中 (offset 0) はそのまま 0 を維持し、スクロールバック中
+    // 描画が乱れる — 折り返しで複数行になる CJK/長文だと特に顕著。そのため
+    // 追従中 (offset 0) はそのまま 0 を維持し、スクロールバック中
     // (offset > 0) は何もせずそのまま据え置く。据え置いた offset は render
     // 側で毎回 clampOffset により Row 数の変化に合わせてクランプされるため、
     // 範囲外にはならない (行が増えるほど「見ている絶対位置」は下にずれて

@@ -19,7 +19,7 @@ bridge 運用に関係するものを中心に (全項目は settings.md 参照)
 
 | カテゴリ | 主な項目 | bridge との関係 |
 |---|---|---|
-| Model & Thinking | `defaultProvider` / `defaultModel` / `defaultThinkingLevel` / `thinkingBudgets` | spawn 引数 `--model` (provider/model-id 形式) で上書きされるので ChannelDoc 側が勝つ |
+| Model & Thinking | `defaultProvider` / `defaultModel` / `defaultThinkingLevel` / `thinkingBudgets` | spawn 引数 `--model` (provider/model-id 形式) で上書きされるので ChannelConfig の agent 設定側が勝つ |
 | **Compaction** | `compaction.enabled` (**既定 true**) / `reserveTokens` (16384) / `keepRecentTokens` (20000) | **pi は自動 compaction が既定で有効**。閾値チューニングもここ |
 | Retry | `retry.enabled` (true) / `maxRetries` (3) / `baseDelayMs` / `retry.provider.*` | 一時エラーの吸収は pi 側に既にある。bridge の再試行と二重にしない |
 | Message Delivery | `steeringMode` / `followUpMode` (共に既定 `"one-at-a-time"`) | inbox 配達 ([message-dispatch.md](../design/message-dispatch.md) §5) と噛み合う既定 |
@@ -66,9 +66,9 @@ bridge 運用に関係するものを中心に (全項目は settings.md 参照)
    [runtime.md](../design/runtime.md) §3 に反映済み
 3. **settings.json は「能力 = イメージ」の一部にできる** — retry / steeringMode /
    compaction 閾値などの挙動既定はイメージ内の `~/.pi/agent/settings.json`
-   (HOME はイメージ内で bridge が管理) に焼く。ChannelDoc からは model と
+   (HOME はイメージ内で管理) に焼く。ChannelConfig の agent 設定からは model と
    プロンプトだけ、の整理が保てる
 4. 本番 spawn では `--offline` (または `PI_OFFLINE=1`) を付け、起動時の
    バージョンチェック・telemetry の外部通信を止める (コールドスタート短縮)
 5. `--no-context-files` は使わない: workdir の AGENTS.md discovery は
-   ChannelDoc.context を実体化する受け皿として活用余地がある
+   ChannelConfig の agent 設定の context を実体化する受け皿として活用余地がある

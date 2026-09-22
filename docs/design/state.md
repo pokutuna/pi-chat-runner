@@ -391,4 +391,4 @@ staging は復元されず、Shared 経由で全 Channel に効く指示は書�
 | WorkdirStore / SharedStore | 同名 (`src/state/agent/interfaces.ts`)、`CopyWorkdirStore` / `CopySharedStore` (`src/state/agent/copy.ts`)、`NoopWorkdirStore` (`src/state/agent/noop.ts`) |
 | 棚の選択 | `createWorkdirStore` / `createSharedStore` (`src/state/agent/copy.ts`)、`src/server.ts` が env から組み立てる |
 | restore / flush の呼び出し | `prepareWorkdir` (`src/runtime/prepare.ts`)、`Session.#onAgentEnd` (`src/session/session.ts`) |
-| Workdir / staging のパス | `Dispatcher.workdirRoot` / `sharedStagingDir` (`src/dispatch/dispatcher.ts`) |
+| Workdir / staging のパス | `RuntimeConfig.workdirRoot` (`src/runtime/config.ts`)、`Dispatcher.sharedStagingDir` (`src/dispatch/dispatcher.ts`) |

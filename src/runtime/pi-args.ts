@@ -226,8 +226,9 @@ export function buildPiPermissionOptions(options: {
    * パス、または --extension に渡す extension ファイルのディレクトリ)。HOME を
    * agentHome に固定するとローカルのユーザー ADC ($HOME/.config/gcloud) は HOME
    * 経由で見えなくなるため、明示指定されたファイルだけ個別に read を許可する用途。
-   * `appDir` (旧 /app 包括許可) は廃止したため、extension を読ませるには呼び出し側
-   * (runner.ts) が extensionPaths の dirname をここへ積む必要がある。既定なし */
+   * `/app` 配下を包括的に許可することはしないため、extension を読ませるには
+   * 呼び出し側 (runner.ts) が extensionPaths の dirname をここへ積む必要がある。
+   * 既定なし */
   extraRead?: string[];
   /** `--allow-addons` の付与 (PiPermissionOptions.allowAddons へ素通し)。既定 false */
   allowAddons?: boolean;

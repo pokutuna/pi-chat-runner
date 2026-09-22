@@ -67,7 +67,7 @@ what a channel's merged config resolves to without starting the REPL:
 ```
 
 The bare message is dropped by the gate (watch the log pane for the gate
-decision); the mention kicks a session and the reply arrives as a thread
+decision); the mention starts a session and the reply arrives as a thread
 (`[N]↳M`). Follow up in the thread with `>N more text` — it resumes the same
 session with context intact.
 
@@ -158,5 +158,5 @@ agent to remember something has no memory skill to land in.
 
 Anywhere along the way: `/disable` mutes a channel (triggers silently
 dropped), `/enable` recovers, `/new <text>` cuts the session and immediately
-kicks a fresh one with that text. In mention-gated channels prefix them:
+dispatches a fresh one with that text. In mention-gated channels prefix them:
 `@bot /new`.

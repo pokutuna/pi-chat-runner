@@ -1522,10 +1522,9 @@ describe("Dispatcher (fake-pi integration)", () => {
   });
 
   it("progress notice: affinity 合流後も進捗投稿先はターンを開始した先頭発言のスレッドに留まり、新規ターンで差し替わる", async () => {
-    // RUNNER_TODO.md「progress-notice が affinity 合流時に別スレッドへ reply
-    // すると上書きされず残る」への対応確認。進捗投稿先は「そのターンを開始
-    // した先頭発言の thread_key」に固定し、同一ターン中に合流した B の宛先が
-    // 異なっていても差し替えない。ターンが終わり C が新規ターンを開始すると、
+    // 進捗投稿先は「そのターンを開始した先頭発言の thread_key」に固定し、
+    // affinity 合流で同一ターン中に合流した B の宛先が異なっていても
+    // 差し替えない。ターンが終わり C が新規ターンを開始すると、
     // 今度は C のスレッドへ差し替わる
     const h = await harness(
       { C01: { session: { affinity: { scope: "channel" } } } },

@@ -42,8 +42,8 @@ export function collectGcpEnv(
 
 /** pi 本体パッケージを import.meta.resolve で解決し、Node Permission Model 用の
  * entrypoint (bin.pi の絶対パス) と nodeModulesDir (pi の全依存を含む node_modules
- * ルート) を自動検出する。決め打ちパス (旧 PI_ENTRYPOINT/PI_NODE_MODULES_DIR env)
- * を廃止し、実際にインストールされた場所から常に正しい値を導く。
+ * ルート) を自動検出する。決め打ちパスの env 変数には頼らず、実際にインストール
+ * された場所から常に正しい値を導く。
  *
  * require.resolve(`${pkg}/package.json`) ではなく import.meta.resolve(pkg) (パッケージ
  * ルート "." の解決) を使う: pi 本体は ESM 専用で package.json の exports に "."

@@ -27,7 +27,7 @@ describe("AgentConfigSchema", () => {
   });
 
   // System Config 側のフィールドが agent ブロックへ紛れ込むのを弾く
-  // (旧スキーマの agent.runtime / agent.turnTimeoutMs は system へ移った)。
+  // (runtime / turnTimeoutMs 等は system の管轄で、agent には存在しない)。
   it.each([
     "runtime",
     "turnTimeoutMs",

@@ -100,9 +100,9 @@ channels:
   # explicit mention, OR (keyword match AND classifier confirmation) so a
   # bare "error" in idle chatter doesn't page the bot, but "error 500 on
   # checkout, spiking" does. Also reaction-startable, so someone can eyeball
-  # a message from before the bot joined and kick a session on it after the
+  # a message from before the bot joined and start a session on it after the
   # fact. debounce absorbs a burst of 3-4 rapid-fire alert lines into one
-  # session kick instead of one per line.
+  # dispatch instead of one per line.
   - channel: "C0INCIDENTS0"
     trigger:
       # cooldownSec: 120  # implementation on hold — the strict schema rejects it (config.md §4.5)

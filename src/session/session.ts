@@ -193,8 +193,8 @@ export class Session {
    * を返すため、ターンごとの増分ではなくセッション累計になる) */
   #usageTotals?: UsageTotals;
 
-  /** レジストリから外れた (旧: this.sessions.get(sessionKey) !== record)。全終了
-   * 経路の Map delete の代わりに立てるフラグ。stale チェックの主語になる */
+  /** レジストリから外れたことを示すフラグ。全終了経路の Map delete の代わりに
+   * 立て、stale チェックの主語になる */
   #disposed = false;
 
   readonly #observer: SessionObserver;
@@ -225,7 +225,7 @@ export class Session {
     return this.#state;
   }
 
-  /** PiProcess がターンを実行中か (steer 可否判定に使う。旧 record.process?.running) */
+  /** PiProcess がターンを実行中か (steer 可否判定に使う) */
   get processRunning(): boolean {
     return this.#process?.running === true;
   }

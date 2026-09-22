@@ -24,7 +24,7 @@
 |---|---|---|
 | Cloud Logging / Monitoring の読み取り | 拡張イメージに `google-cloud-cli` を追加し bash から `gcloud logging read` 等 | [examples/gc-logging-agent](../../examples/gc-logging-agent) に実装済みの拡張イメージ例がある。認証は ADC がそのまま通る — SA に viewer 系ロール (logging.viewer, monitoring.viewer) を追加するだけ |
 | ソースコード | workdir に git clone。`GH_TOKEN` を `PI_ENV_PASSTHROUGH` で pi に渡す | [runtime.md](../design/runtime.md) §5.3 の機構がそのまま使える。読み取り専用 token にする |
-| アプリ・GCP の知識 | skill (`/app/skills/`) に調査手順を書く | Logging クエリのレシピ、アラートポリシー→メトリクス→ログ→コードの手順など。ChannelDoc の systemPrompt / context でチャンネル固有の前提を足す |
+| アプリ・GCP の知識 | skill (`/app/skills/`) に調査手順を書く | Logging クエリのレシピ、アラートポリシー→メトリクス→ログ→コードの手順など。ChannelConfig の agent 設定 (systemPrompt / context) でチャンネル固有の前提を足す |
 | jq / ripgrep / fd | base image に同梱済み | |
 
 extra の WebFetch / WebSearch:

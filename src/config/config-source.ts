@@ -79,7 +79,7 @@ export type ChannelPart = Omit<ChannelConfig, "agent">;
 
 /** マージ・provenance 計算で走査する Channel 部分のキー一覧。
  * `Record<keyof ChannelPart, true>` で網羅を型に強制する — フィールドを足したのに
- * マージから漏れる、という事故 (旧 CHANNEL_DOC_KEYS の memory 抜け) を防ぐ。 */
+ * マージから漏れる事故を防ぐ。 */
 const CHANNEL_PART_KEYS = Object.keys({
   trigger: true,
   session: true,

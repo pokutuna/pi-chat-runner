@@ -80,8 +80,7 @@ export class FakeConfigSource implements ConfigSource {
 }
 
 /** 既存テストの大半は既定ポリシー (thread/thread) を前提に書かれているため、
- * sessionKeyOf の呼び出しをこの既定ポリシーで束ねる薄いヘルパーを用意する
- * (旧 threadKeyOf と同じ値を返す) */
+ * sessionKeyOf の呼び出しをこの既定ポリシーで束ねる薄いヘルパーを用意する */
 export const THREAD_POLICY: SessionPolicy = {
   sessionMode: "thread",
   replyMode: "thread",

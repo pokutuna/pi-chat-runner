@@ -177,7 +177,7 @@ export function describeControlStateContract(
         expect(got).toEqual(base);
         expect(got?.startedAt).toBeInstanceOf(Date);
         expect(got?.lastActiveAt).toBeInstanceOf(Date);
-        // 旧 SessionDoc の status は廃止済み (state.md §3.2)
+        // SessionRecord に status フィールドはない (state.md §3.2)
         expect(got).not.toHaveProperty("status");
       });
 

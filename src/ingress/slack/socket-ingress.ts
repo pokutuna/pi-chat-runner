@@ -10,7 +10,7 @@ import { SlackIngressAdapter, type SlackRawEvent } from "./adapter.js";
 
 /** Slack Socket Mode 経由の Ingress。ローカル確認・お試し用途
  * (architecture.md §3)。SlackIngressAdapter で正規化し、envelope の ack を Ack として渡す。
- * Socket Mode の接続確立自体は presence には反映されないため (RUNNER_TODO.md)、
+ * Socket Mode の接続確立自体は presence には反映されないため、
  * 接続後に users.setPresence を能動的に呼んでオンライン表示にする。 */
 export class SocketIngress implements Ingress {
   private readonly client: SocketModeClient;

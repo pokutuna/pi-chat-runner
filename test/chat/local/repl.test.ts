@@ -220,8 +220,8 @@ describe("parseLine", () => {
 // ── startRepl 用のフェイク LocalChat ────────────────────────────────────
 //
 // types.ts の LocalChat 契約を満たす最小実装。ingress/poster/userResolver/
-// fetchMessage は repl.ts から使われないため no-op のダミーでよい。post は
-// options.postDelayMs で遅延させられる (fix 1 の in-flight 待ちテスト用)。
+// fetchMessage は repl.tsx から使われないため no-op のダミーでよい。post は
+// options.postDelayMs で遅延させられる (in-flight 待ちテスト用)。
 
 function createFakeLocalChat(options?: { postDelayMs?: number }): LocalChat {
   const log: LoggedMessage[] = [];

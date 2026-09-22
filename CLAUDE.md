@@ -29,7 +29,7 @@ pnpm run dev:local                                 # local dev, stdin/stdout REP
 
 After editing a file, run `pnpm exec oxfmt --write <file>` — oxfmt enforces 2-space indentation and import order, and a plain edit commonly leaves unsorted exports.
 
-`STORE_BACKEND=firestore` tests need a live emulator (`FIRESTORE_EMULATOR_HOST`) and skip otherwise. `test/state/control/contract.ts` is a shared contract suite parameterized across backends — add new backend behavior there, not per-backend.
+The Firestore backend's tests need a live emulator (`FIRESTORE_EMULATOR_HOST`) and skip otherwise. `test/state/control/contract.ts` is a shared contract suite parameterized across backends — add new backend behavior there, not per-backend.
 
 ## Architecture
 

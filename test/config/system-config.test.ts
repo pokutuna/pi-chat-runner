@@ -69,9 +69,9 @@ describe("SystemConfigSchema", () => {
     expect(SystemConfigSchema.safeParse({ unknown: true }).success).toBe(false);
   });
 
-  // 旧スキーマの connector / store / agent.runtime は system の下には無い。
+  // system の下に許される子ブロックは chat / state / runtime のみ。
   it.each(["connector", "store", "agent", "channels"])(
-    "rejects the old %s block nested under system",
+    "rejects an unknown %s block nested under system",
     (key) => {
       expect(SystemConfigSchema.safeParse({ [key]: {} }).success).toBe(false);
     },

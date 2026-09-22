@@ -17,13 +17,13 @@ import { parse as parseYaml } from "yaml";
 import { resolveEnvRefs } from "./env-ref.js";
 
 /** 設定ファイルのトップレベルに書ける唯一のブロック集合 (config.md §2)。
- * 旧スキーマの connector / store / pi を含む未知キーは fail-loud で弾く。 */
+ * これ以外の未知キーは fail-loud で弾く。 */
 const ROOT_BLOCKS = ["system", "agent", "channels"] as const;
 
 /** 設定ファイルを読み、YAML として root オブジェクトを返す。ファイルが無ければ
  * undefined (呼び出し側が「全項目省略」として扱うか fail-loud にするかを決める)。
  * 読み込みエラー・YAML 破損・root が object でない場合は fail-loud で throw する。
- * トップレベルに system / agent / channels 以外のブロックがあれば、旧スキーマの
+ * トップレベルに system / agent / channels 以外のブロックがあれば、想定外の
  * 設定ファイルを黙って無視しないよう fail-loud で throw する。
  * コメントだけの YAML (parse 結果が null) は {} 扱い。 */
 export async function readRootConfig(

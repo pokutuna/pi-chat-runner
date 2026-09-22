@@ -194,7 +194,7 @@ There are three ways to use this project, from least to most integration effort.
 
 ### 1. Run the published container image as-is
 
-Deploy the base image directly — published to `ghcr.io/pokutuna/pi-chat-runner` on each tagged release (see `.github/workflows/docker-publish.yaml`) — e.g. to Cloud Run (see `examples/service.yaml`), and only supply config: a single `agent.yaml` (connector/store/agent runtime + per-channel triggers/prompts/models), plus a Slack App from one of the `examples/slack-app-manifest.*.yaml` templates. No image build required.
+Deploy the base image directly — published to `ghcr.io/pokutuna/pi-chat-runner` on each tagged release (see `.github/workflows/docker-publish.yaml`) — e.g. to Cloud Run (see `examples/service.yaml`), and only supply config: a single `agent.yaml` (`system`: chat/state/runtime + per-channel triggers/prompts/models), plus a Slack App from one of the `examples/slack-app-manifest.*.yaml` templates. No image build required.
 
 This gets you mention/keyword/classifier/reaction triggers, threaded replies, and persistence — but only the CLI tools baked into the base image (`git`/`curl`/`jq`/`ripgrep`/`fd`) and whatever skills/extensions ship in the image's agent home (`$AGENT_HOME/.pi/agent/{skills,extensions}` — empty in the base image beyond the built-in reply/permission-gate/export extensions, which are always injected).
 
@@ -241,7 +241,7 @@ Runtime user is uid/gid `1001` (`agent`) when UID separation is enabled (`PI_AGE
 
 ### 3. Embed just the runner (no bundled Slack server)
 
-If you already have a Slack bot (or any other event source) and just want to kick a pi session from it — without running this project's HTTP/Socket-Mode server — import `Dispatcher` directly and call `handle()`/`handleReaction()` from your own event handler:
+If you already have a Slack bot (or any other event source) and just want to dispatch a pi session from it — without running this project's HTTP/Socket-Mode server — import `Dispatcher` directly and call `handle()`/`handleReaction()` from your own event handler:
 
 ```ts
 import {
@@ -282,7 +282,7 @@ Not published to npm yet (planned). Until then, clone this repo, run `pnpm insta
 
 Text commands, sent as a chat message, control a channel without touching config:
 
-- `/new` — cut the session: the next trigger starts with clean context. `/new <text>` kicks a new session with that text immediately. Rejected while a session is running.
+- `/new` — cut the session: the next trigger starts with clean context. `/new <text>` starts a new session with that text immediately. Rejected while a session is running.
 - `/enable` / `/disable` — per-channel kill switch (default enabled). While disabled, all triggers are silently dropped; `/enable` recovers. State persists in the channel-state store.
 
 Commands are exact-match (except `/new <text>`), human-senders only, and normally apply to messages that pass the Gate — in a mention-gated channel send `@bot /new` (which also keeps Slack's client from capturing a bare leading `/` as its own slash command).
@@ -318,7 +318,7 @@ channels:
       # when is a boolean tree of gates: a bare array is OR, {and}/{or} compose explicitly.
       when:
         - kind: mention
-        - kind: reaction   # an emoji reaction on an existing message kicks a session on that message
+        - kind: reaction   # an emoji reaction on an existing message starts a session on that message
           emoji: [eyes, robot_face]
 
   - channel: "dm"

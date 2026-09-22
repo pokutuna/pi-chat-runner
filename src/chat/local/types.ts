@@ -1,6 +1,6 @@
 // LocalChat core の公開契約 (docs/design/local-dev.md §2)
 //
-// I/O を持たないプログラマブルなフェイクチャット。REPL アダプタ (repl.ts) と
+// I/O を持たないプログラマブルなフェイクチャット。REPL アダプタ (repl.tsx) と
 // e2e テストの両方がこの契約に対して書かれる。実装は local-chat.ts。
 
 import type { EventEmitter } from "node:events";

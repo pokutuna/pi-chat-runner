@@ -1,10 +1,9 @@
 // repl-logic.ts の単体テスト (parseLine 以外)。
 //
-// ink 化 (repl.tsx) に伴い、chat.post/react 呼び出し・状態遷移・戻り値種別
-// (handleLine)、seq/ts 解決 (resolveThreadRef)、表示整形 (formatMessageLine
-// 等) を repl.tsx から独立して検証する。旧 repl.test.ts の startRepl 統合
-// テスト (直列化・EOF 待ち・チャンネル越境reply) のうち、chat 呼び出しの
-// 順序・引数として再現できる部分はここで handleLine 単体テストとして再現する。
+// chat.post/react 呼び出し・状態遷移・戻り値種別 (handleLine)、seq/ts 解決
+// (resolveThreadRef)、表示整形 (formatMessageLine 等) を repl.tsx から独立して
+// 検証する。直列化・EOF 待ち・チャンネル越境 reply のうち、chat 呼び出しの
+// 順序・引数として再現できる部分は、ここで handleLine 単体テストとして表す。
 
 import { EventEmitter } from "node:events";
 
@@ -539,8 +538,8 @@ describe("handleLine", () => {
     expect(result.kind).toBe("error");
   });
 
-  // 旧 repl.test.ts の「複数行を一気に書き込んでも post が到着順に直列処理
-  // される」を、呼び出し順序・引数として再現する。
+  // 複数行を一気に書き込んでも post が到着順に直列処理されることを、
+  // 呼び出し順序・引数として確認する。
   it("複数行を順に await すると post が到着順に呼ばれる (直列化相当)", async () => {
     const chat = createFakeLocalChat();
     const state = initialReplState("local");
@@ -552,8 +551,8 @@ describe("handleLine", () => {
     expect(chat.log().map((m) => m.text)).toEqual(["first", "second", "third"]);
   });
 
-  // 旧 repl.test.ts の「B チャンネルに切替後の >1 reply が [1] の属する
-  // チャンネルへ投稿される」を再現する。
+  // B チャンネルに切替後の >1 reply が [1] の属するチャンネルへ投稿される
+  // ことを確認する。
   it("チャンネル切替後の >1 reply は [1] の属するチャンネルへ投稿される", async () => {
     const chat = createFakeLocalChat();
     const state = initialReplState("A");
