@@ -132,6 +132,10 @@ export interface StartArgs {
   memoryIndex: string | undefined;
   /** 起動時点で session.jsonl が既に存在したか ("session started" ログ用) */
   resumed: boolean;
+  /** この起動で Transcript が新しく始まったか (世代交代した、または Session の
+   * 記録がまだ無い)。SessionRecord の startedAt を置き直す条件
+   * (session-model.md §6, state.md §3.2) */
+  freshTranscript: boolean;
   model: string | undefined;
   /** allowlist に追加で pi 子プロセスへ渡す env (HOME=agentHomeReal を含む、
    * 起動ごとに合成されたもの) */
@@ -166,6 +170,9 @@ export class Session {
   #process?: PiProcess;
   /** 起動時刻 (finished ログの durationMs 算出用) */
   readonly #startedAt: number;
+  /** この起動で Transcript が新しく始まったか (StartArgs.freshTranscript)。
+   * #putRecord が startedAt を置き直すかの判断に使う (session-model.md §6) */
+  #freshTranscript = false;
   /** このプロセスが保持する実行ロック。renew に失敗したら排他を失っている */
   readonly #lease: Lease;
   /** このセッションで prompt/steer 済みの item id。drain は非破壊 (未 ack 全件を
@@ -248,9 +255,11 @@ export class Session {
       permission,
       memoryIndex,
       resumed,
+      freshTranscript,
       model,
       extraEnv,
     } = args;
+    this.#freshTranscript = freshTranscript;
     const { mentionFormat } = this.#ctx;
     const { piBinary, piEntrypoint, agentUid, agentGid } = this.#ctx.runtime;
 
@@ -504,7 +513,8 @@ export class Session {
     proc.prompt(prependContext(body, channel));
 
     // Session の実行状況 (state.md §3.2)。startedAt は sessionKey に紐づく Session の
-    // 開始時刻なので、resume では既存のものを引き継ぐ。endedAt を書かない = 稼働中
+    // 開始時刻なので、resume では既存のものを引き継ぐ (#putRecord)。
+    // endedAt を書かない = 稼働中
     await this.#putRecord({ endedAt: undefined });
     this.#ctx.logger.info(
       {
@@ -839,23 +849,23 @@ export class Session {
     }
   }
 
-  /** SessionRecord (state.md §3.2) の書き込み。startedAt は triggerMessageId で
-   * 同一性を見る Session の開始時刻なので、同じ Session の継続 (resume / 終了) では
-   * 既存値を引き継ぎ、別のトリガーで起きた Session では現在の起動時刻にする。
-   * lastActiveAt は書き込みのたびに更新する。rotateRequestedAt は Dispatcher の
-   * 管轄なので既存値をそのまま残す */
+  /** SessionRecord (state.md §3.2) の書き込み。Session の同一性は sessionKey であり、
+   * 起動ごとに変わる triggerMessageId ではない (session-model.md §5.1)。よって
+   * startedAt は resume をまたいで引き継ぎ、Transcript が新しく始まったとき
+   * (世代交代、または記録がまだ無いとき。session-model.md §6) だけこの起動時刻へ
+   * 置き直す。lastActiveAt は書き込みのたびに更新する。rotateRequestedAt は
+   * Dispatcher の管轄なので既存値をそのまま残す */
   async #putRecord(args: { endedAt: Date | undefined }): Promise<void> {
     const now = new Date();
     const previous = await this.#ctx.controlState.sessions.get(this.sessionKey);
-    const sameSession = previous?.triggerMessageId === this.triggerMessageId;
     await this.#ctx.controlState.sessions.put(this.sessionKey, {
       channelId: this.channelId,
       threadTs: this.threadTs,
       triggerMessageId: this.triggerMessageId,
       startedAt:
-        sameSession && previous !== null
-          ? previous.startedAt
-          : new Date(this.#startedAt),
+        this.#freshTranscript || previous === null
+          ? new Date(this.#startedAt)
+          : previous.startedAt,
       lastActiveAt: now,
       ...(args.endedAt !== undefined && { endedAt: args.endedAt }),
       ...(previous?.rotateRequestedAt !== undefined && {

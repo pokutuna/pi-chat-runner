@@ -75,7 +75,7 @@ function stripMentions(
 /** 同一メッセージの二重配送を覚えておく上限。超えたら丸ごと捨てる
  * (取りこぼしても Inbox の event_id dedupe と同じ結果にはならないが、
  * 二重配送は数秒以内に届くため実害がない)。 */
-const SEEN_MESSAGES_LIMIT = 1000;
+export const SEEN_MESSAGES_LIMIT = 1000;
 
 /** SlackIngressAdapter: Slack raw event -> ChatEvent の正規化と、Slack 固有の
  * 二重配送の吸収を担う codec。transport 非依存 (Socket Mode / Events API の
@@ -104,10 +104,12 @@ export class SlackIngressAdapter {
         if (message === null) return null;
         const messageKey = `${message.conversation.channelId}:${message.id}`;
         if (this.seenMessages.has(messageKey)) return null;
-        this.seenMessages.add(messageKey);
-        if (this.seenMessages.size > SEEN_MESSAGES_LIMIT) {
+        // 上限チェックは add の前に行う。後にすると、上限に達した回の追加分が
+        // そのまま clear で消え、直後の再配送を取りこぼす
+        if (this.seenMessages.size >= SEEN_MESSAGES_LIMIT) {
           this.seenMessages.clear();
         }
+        this.seenMessages.add(messageKey);
         return message;
       }
       case "reaction_added":

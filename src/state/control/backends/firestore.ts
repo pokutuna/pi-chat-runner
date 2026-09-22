@@ -45,7 +45,7 @@ import type {
   SessionStore,
   ThreadStore,
 } from "../interfaces.js";
-import { parseInboundMessage } from "./serialize.js";
+import { fillSessionTimestamps, parseInboundMessage } from "./serialize.js";
 
 /** Firestore の gRPC ステータスコード。ALREADY_EXISTS = 6。
  * https://cloud.google.com/apis/design/errors#error_model */
@@ -67,14 +67,22 @@ interface InboxItemDoc {
   seq: number;
 }
 
+/** 永続ドキュメントの生の形。put は常に startedAt / lastActiveAt を書くが、
+ * 以前のスキーマで書かれたドキュメントは代わりに status / updatedAt を持つ。
+ * 読み出し側で補完するため、ここでは全て optional にしておく (state.md §3.2)。
+ * 返す SessionRecord は必須フィールドを満たした形のままである。 */
 interface SessionRecordData {
   channelId: string;
   threadTs: string;
   triggerMessageId: string;
-  startedAt: Timestamp;
-  lastActiveAt: Timestamp;
+  startedAt?: Timestamp;
+  lastActiveAt?: Timestamp;
   endedAt?: Timestamp;
   rotateRequestedAt?: Timestamp;
+  /** 以前のスキーマのフィールド。読み出し時のみ参照する */
+  status?: string;
+  /** 以前のスキーマのフィールド。startedAt / lastActiveAt の補完元 */
+  updatedAt?: Timestamp;
 }
 
 interface ThreadDocData {
@@ -180,12 +188,20 @@ class FirestoreSessionStore implements SessionStore {
     const snap = await this.collection.doc(sessionKey).get();
     if (!snap.exists) return null;
     const data = snap.data() as SessionRecordData;
+    // startedAt / lastActiveAt を持たないドキュメントは updatedAt (無ければ読み取り
+    // 時刻) で補完する。移行は行わない (state.md §3.2)
+    const { startedAt, lastActiveAt } = fillSessionTimestamps({
+      startedAt: data.startedAt?.toDate(),
+      lastActiveAt: data.lastActiveAt?.toDate(),
+      updatedAt: data.updatedAt?.toDate(),
+      now: new Date(),
+    });
     return {
       channelId: data.channelId,
       threadTs: data.threadTs,
       triggerMessageId: data.triggerMessageId,
-      startedAt: data.startedAt.toDate(),
-      lastActiveAt: data.lastActiveAt.toDate(),
+      startedAt,
+      lastActiveAt,
       ...(data.endedAt !== undefined && { endedAt: data.endedAt.toDate() }),
       ...(data.rotateRequestedAt !== undefined && {
         rotateRequestedAt: data.rotateRequestedAt.toDate(),

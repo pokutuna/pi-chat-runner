@@ -750,6 +750,8 @@ export class Dispatcher implements SessionObserver {
 
       // workdir/shared の mkdir + restore、transcript 世代交代、UID 分離、
       // agentHome 作成、realpath 正規化 (runtime.md §2, §5.1)
+      const previousSession =
+        await this.ctx.controlState.sessions.get(sessionKey);
       const {
         workdirReal,
         agentHomeReal,
@@ -757,13 +759,14 @@ export class Dispatcher implements SessionObserver {
         sessionPath,
         resumed,
         rotateConsumed,
+        transcriptRotated,
       } = await prepareWorkdir({
         sessionKey,
         channelId,
         workdir,
         policy,
         channel,
-        previousSession: await this.ctx.controlState.sessions.get(sessionKey),
+        previousSession,
         workdirStore: this.ctx.workdirStore,
         sharedStore: this.ctx.sharedStore,
         sharedStagingDir: (id) => this.sharedStagingDir(id),
@@ -815,6 +818,10 @@ export class Dispatcher implements SessionObserver {
         permission,
         memoryIndex,
         resumed,
+        // Transcript が世代交代したか、まだ Session の記録が無いなら Transcript は
+        // 新しく始まっている。SessionRecord の startedAt をこの起動時刻に置き直す
+        // 条件になる (session-model.md §6, state.md §3.2)
+        freshTranscript: transcriptRotated || previousSession === null,
         model,
         extraEnv,
       });

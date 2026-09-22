@@ -83,6 +83,9 @@ interface InboxItem {
   何度でも返りうる。lease により同一 sessionKey を drain するのは常に 1 プロセスなので、
   「このターンで既に Agent へ渡した item」の記憶と重複除外は Session 側のインメモリ責務
   とする。プロセスが落ちればその記憶は消え、未 ack 分が丸ごと再配達される。
+  順序が保証されるのは 1 つの Runner インスタンス内の enqueue に対してである。別
+  インスタンスからの同一ミリ秒内の enqueue や、インスタンス間の時計のずれをまたぐ
+  enqueue は入れ違いうる。
 - **ack は処理完了の確定**: Agent State の flush に成功した後に呼ぶ
   ([message-dispatch.md](message-dispatch.md) の flush → ack 順序)。
 
@@ -113,6 +116,13 @@ interface SessionStore {
 `lastActiveAt` は idle による Session の終了判定に、`rotateRequestedAt` は明示的な新規
 Session 要求 (`/new`) の伝達に使う。Session が「実行中かどうか」の真実は LeaseStore が
 持ち、SessionRecord は判断材料であって排他の根拠ではない。
+
+`startedAt` は sessionKey に紐づく Session の開始時刻であり、resume をまたいで引き継ぐ。
+置き直すのは Transcript が新しく始まったとき — §6 の切り替え条件が成立した起動、または
+記録がまだ無いとき — だけである ([session-model.md](session-model.md) §6)。
+
+`startedAt` / `lastActiveAt` を持たない永続ドキュメントは、代わりに持つ `updatedAt`
+(それも無ければ読み取り時刻) を代入して読む。移行は行わず、次の `put` で現行の形に揃う。
 
 ### 3.3 ThreadStore
 
@@ -236,7 +246,8 @@ Dispatcher 以下には実装の別を漏らさない ([config.md](config.md))�
 - enqueue は `create()` の `ALREADY_EXISTS` を `false` に写像して dedupe とする。
 - drain の順序は enqueue 時に書く `seq` フィールド (注入された `now()` と同 ms 内の
   単調化カウンタ) でクライアント側ソートする。`where` と `orderBy` の併用は複合
-  インデックスを要求するため使わない。
+  インデックスを要求するため使わない。カウンタはインスタンス内で閉じるため、順序が
+  保証されるのは同一インスタンスからの enqueue に対してである (§3.1)。
 - lease の期限判定は注入された `now()` と数値の `expiresAtMs` の比較で行う。
   `acquire` / `renew` / `release` はトランザクション内で token と owner の一致を確認する。
 

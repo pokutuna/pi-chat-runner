@@ -392,11 +392,12 @@ describe("Dispatcher (fake-pi integration)", () => {
 
     await mkdir(workdir, { recursive: true });
     await writeFile(join(workdir, "session.jsonl"), "OLD TRANSCRIPT\n");
+    const previousStartedAt = new Date(Date.now() - 60_000);
     await h.controlState.sessions.put(sessionKey, {
       channelId: "C01",
       threadTs: "channel",
       triggerMessageId: "1699999999.000000",
-      startedAt: new Date(),
+      startedAt: previousStartedAt,
       lastActiveAt: new Date(),
       endedAt: new Date(),
       rotateRequestedAt: new Date(),
@@ -423,6 +424,11 @@ describe("Dispatcher (fake-pi integration)", () => {
     expect(
       (await h.controlState.sessions.get(sessionKey))?.rotateRequestedAt,
     ).toBeUndefined();
+    // Transcript が世代交代したので startedAt は置き直される
+    // (session-model.md §6, state.md §3.2)
+    const startedAt = (await h.controlState.sessions.get(sessionKey))
+      ?.startedAt;
+    expect(startedAt?.getTime()).toBeGreaterThan(previousStartedAt.getTime());
   });
 
   it("マーカーあり状態で次のメッセージ → dispatch: transcript が rotate される (thread モード)", async () => {
@@ -1228,6 +1234,13 @@ describe("Dispatcher (fake-pi integration)", () => {
       (await h.controlState.threads.latest("C01"))?.endedAt,
     ).toBeInstanceOf(Date);
 
+    // Session の同一性は sessionKey なので、別トリガーで resume しても
+    // startedAt は引き継がれる (session-model.md §6, state.md §3.2)
+    const startedAtAfterFirstTurn = (
+      await h.controlState.sessions.get(threadKeyOf(a))
+    )?.startedAt;
+    expect(startedAtAfterFirstTurn).toBeInstanceOf(Date);
+
     const c = message({
       id: "1700000000.000700",
       mentionsBot: true,
@@ -1240,6 +1253,10 @@ describe("Dispatcher (fake-pi integration)", () => {
       () => h.dispatcher.activeSessionCount === 0,
       "session A done again",
     );
+
+    expect(
+      (await h.controlState.sessions.get(threadKeyOf(a)))?.startedAt,
+    ).toEqual(startedAtAfterFirstTurn);
 
     // A の Session (workdir = C01/<A.id>) の commands.jsonl に両方の prompt が
     // 積まれている = C は自分の Session でなく A の Session で resume された

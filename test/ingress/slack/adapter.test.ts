@@ -4,7 +4,10 @@ import type {
   InboundMessage,
   ReactionEvent,
 } from "../../../src/ingress/chat-event.js";
-import { SlackIngressAdapter } from "../../../src/ingress/slack/adapter.js";
+import {
+  SEEN_MESSAGES_LIMIT,
+  SlackIngressAdapter,
+} from "../../../src/ingress/slack/adapter.js";
 
 const BOT_USER_ID = "UBOT123";
 
@@ -269,6 +272,35 @@ describe("SlackIngressAdapter duplicate delivery", () => {
 
     expect(first).not.toBeNull();
     expect(other).not.toBeNull();
+  });
+
+  it("drops the re-delivery of the newest message even when the seen set has just been cleared at its bound", () => {
+    // 記憶の上限に達した回の追加分が clear で消えると、その直後の再配送を
+    // 取りこぼす。上限を跨いだ直後のメッセージでも dedupe が効くことを見る
+    const adapter = new SlackIngressAdapter(BOT_USER_ID);
+    let last = "";
+    for (let i = 0; i <= SEEN_MESSAGES_LIMIT; i += 1) {
+      last = `1720001000.${String(i).padStart(6, "0")}`;
+      expect(
+        adapter.normalize({
+          type: "message",
+          text: "hello",
+          user: "U123",
+          channel: "C123",
+          ts: last,
+        }),
+      ).not.toBeNull();
+    }
+
+    expect(
+      adapter.normalize({
+        type: "app_mention",
+        text: "hello",
+        user: "U123",
+        channel: "C123",
+        ts: last,
+      }),
+    ).toBeNull();
   });
 
   it("does not dedupe reactions (they carry no message ts of their own)", () => {

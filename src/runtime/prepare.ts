@@ -253,6 +253,10 @@ export interface PreparedWorkdir {
    * マーカーのクリア (Control State への書き込み) は Dispatcher 側が行う
    * (state.md §1「Runtime は Control State を書かない」) */
   rotateConsumed: boolean;
+  /** この起動で transcript を世代交代したか (manual / idle / size のいずれか。
+   * session-model.md §6)。Transcript が新しく始まったことを示すので、呼び出し側は
+   * SessionRecord の startedAt をこの起動時刻に置き直す */
+  transcriptRotated: boolean;
 }
 
 /** Session 起動前半、workdir/shared の mkdir + restore、transcript 世代交代 (manual →
@@ -355,6 +359,7 @@ export async function prepareWorkdir(args: {
       if (info !== null && info.size > maxTranscriptKb * 1024) {
         const now = Date.now();
         await rotateTranscript(workdir, now);
+        rotated = true;
         logger.info(
           { sessionKey, maxTranscriptKb, sizeBytes: info.size },
           "size reset: transcript rotated",
@@ -413,6 +418,7 @@ export async function prepareWorkdir(args: {
     sessionPath,
     resumed,
     rotateConsumed,
+    transcriptRotated: rotated,
   };
 }
 

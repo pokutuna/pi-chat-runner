@@ -18,7 +18,7 @@ import type {
   SessionStore,
   ThreadStore,
 } from "../interfaces.js";
-import { parseInboundMessage } from "./serialize.js";
+import { fillSessionTimestamps, parseInboundMessage } from "./serialize.js";
 
 interface InboxRow {
   item_id: string;
@@ -91,14 +91,26 @@ class SqliteInboxStore implements InboxStore {
   }
 }
 
+/** 永続 doc の生の形。put は常に startedAt / lastActiveAt を書くが、以前のスキーマで
+ * 書かれた doc は代わりに status / updatedAt を持つ。読み出し側で補完するため、
+ * ここでは全て optional にしておく (state.md §3.2)。返す SessionRecord は必須
+ * フィールドを満たした形のままである。 */
 interface SessionRecordJson {
   channelId: string;
   threadTs: string;
   triggerMessageId: string;
-  startedAt: string;
-  lastActiveAt: string;
+  startedAt?: string;
+  lastActiveAt?: string;
   endedAt?: string;
   rotateRequestedAt?: string;
+  /** 以前のスキーマのフィールド。読み出し時のみ参照する */
+  status?: string;
+  /** 以前のスキーマのフィールド。startedAt / lastActiveAt の補完元 */
+  updatedAt?: string;
+}
+
+function toDate(value: string | undefined): Date | undefined {
+  return value === undefined ? undefined : new Date(value);
 }
 
 class SqliteSessionStore implements SessionStore {
@@ -110,12 +122,20 @@ class SqliteSessionStore implements SessionStore {
       .get(sessionKey) as SessionRow | undefined;
     if (row === undefined) return null;
     const parsed = JSON.parse(row.doc) as SessionRecordJson;
+    // startedAt / lastActiveAt を持たない doc は updatedAt (無ければ読み取り時刻) で
+    // 補完する。移行は行わない (state.md §3.2)
+    const { startedAt, lastActiveAt } = fillSessionTimestamps({
+      startedAt: toDate(parsed.startedAt),
+      lastActiveAt: toDate(parsed.lastActiveAt),
+      updatedAt: toDate(parsed.updatedAt),
+      now: new Date(),
+    });
     return {
       channelId: parsed.channelId,
       threadTs: parsed.threadTs,
       triggerMessageId: parsed.triggerMessageId,
-      startedAt: new Date(parsed.startedAt),
-      lastActiveAt: new Date(parsed.lastActiveAt),
+      startedAt,
+      lastActiveAt,
       ...(parsed.endedAt !== undefined && {
         endedAt: new Date(parsed.endedAt),
       }),
