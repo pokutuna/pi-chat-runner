@@ -3,7 +3,7 @@
  * 参照: pi-coding-agent docs/rpc.md
  */
 
-/** stdin に書く RPC コマンド (Step 2 で使う部分のみ) */
+/** stdin に書く RPC コマンド (Runner が使う部分のみ) */
 export type RpcCommand =
   | {
       type: "prompt";

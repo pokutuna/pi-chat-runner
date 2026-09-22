@@ -231,7 +231,7 @@ Session の終了時は記憶している messageId と閉鎖フラグの両方�
 | 送信の実体 | `BridgeOptions.poster` (`ChatPoster`、`src/bridge.ts` 内の Slack 実装) |
 | mrkdwn 変換 | `toMrkdwn` (`src/egress/mrkdwn.ts`) |
 | chunk 分割 | `chunkMessage` (`src/egress/chunker.ts`) |
-| `files` の境界チェック | `ActiveSession.#resolveReplyFiles` (`src/session/active-session.ts`) |
+| `files` の境界チェック | `resolveReplyFiles` (`src/runtime/reply-files.ts`) |
 | Turn 状態のリアクション | `TurnReactor` (`src/egress/turn-reactor.ts`), `SlackTurnReactor` (`src/egress/slack/turn-reactor.ts`) |
 | 進捗通知の状態とタイマー | `ProgressNotice` (`src/session/progress.ts`) |
 | 進捗通知の送信・閉鎖 | `EgressRouter.notifyProgress` / `clearProgress` / `reopenProgress` (`src/egress/router.ts`) |

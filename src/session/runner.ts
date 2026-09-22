@@ -1,14 +1,13 @@
-// SessionRunner — event を受けて session を主語に処理するオーケストレーション (Step 4)
+// SessionRunner — event を受けて session を主語に処理するオーケストレーション
 //
 // docs/design/architecture.md §6 (event は「きっかけ係」、session が「処理の担い手」)、
 // docs/design/message-dispatch.md §7 (起動と Turn 境界)、§5 (steering)、
 // docs/design/runtime.md §1 (kick シーケンス)、docs/design/state.md §6 (tmpfs + 境界 flush)、
 // §3 (Store 群)、§7 (flush → ack の順序)。
 //
-// Step 4 のスコープ: lease による多重起動の排他、drain/ack 分離 (drain は非破壊。
+// スコープ: lease による多重起動の排他、drain/ack 分離 (drain は非破壊。
 // プロンプト済み item の記憶と重複除外は runner のインメモリ責務)、agent_end 後の
-// linger による追いメッセージ拾い直し、WorkdirStore による境界退避 (未指定なら
-// Step 3 相当のローカル置きっぱなし)。turn timeout (Step 6) もここで実装する
+// linger による追いメッセージ拾い直し、WorkdirStore による境界退避、turn timeout
 // (runtime.md §5.1「ターンにタイムアウトを設け、超過したら pi を kill」)。
 
 import { hostname } from "node:os";
@@ -17,6 +16,12 @@ import { join } from "node:path";
 import type { ClassifierClient } from "../classifier/client.js";
 import type { ResolvedChannel } from "../config/config-source.js";
 import { type ConfigSource, DM_CHANNEL } from "../config/config-source.js";
+import {
+  ACK_NOTICE_TEXT,
+  DISABLE_NOTICE_TEXT,
+  ENABLE_NOTICE_TEXT,
+  REJECT_NOTICE_TEXT,
+} from "../egress/notices.js";
 import type { EgressRouter } from "../egress/router.js";
 import type { TurnReactor } from "../egress/turn-reactor.js";
 import {
@@ -29,6 +34,16 @@ import {
 import type { InboundMessage, ReactionEvent } from "../ingress/chat-event.js";
 import type { Logger } from "../logger.js";
 import { rootLogger } from "../logger.js";
+import type { RuntimeConfig } from "../runtime/config.js";
+import {
+  buildSpawnOptions,
+  loadMemoryIndex,
+  prepareWorkdir,
+  resolveBuiltinExtensionPaths,
+  resolveBuiltinMemorySkillPath,
+  warnPolicyMismatches,
+} from "../runtime/prepare.js";
+import type { MentionFormat } from "../runtime/prompt.js";
 import type { SharedStore, WorkdirStore } from "../state/agent/interfaces.js";
 import { inboxItemId } from "../state/control/inbox-item.js";
 import type { ControlState, InboxItem } from "../state/control/interfaces.js";
@@ -44,23 +59,7 @@ import {
   type SessionPolicy,
   sessionKeyOf,
 } from "./policy.js";
-import {
-  ACK_NOTICE_TEXT,
-  DISABLE_NOTICE_TEXT,
-  ENABLE_NOTICE_TEXT,
-  type MentionFormat,
-  REJECT_NOTICE_TEXT,
-} from "./prompt.js";
 import { registerReplyDestination } from "./reply-destination.js";
-import {
-  buildSpawnOptions,
-  loadMemoryIndex,
-  type PiPermissionConfig,
-  prepareWorkdir,
-  resolveBuiltinExtensionPaths,
-  resolveBuiltinMemorySkillPath,
-  warnPolicyMismatches,
-} from "./spawn.js";
 
 /** reaction の対象メッセージ本文を取得する port (message-dispatch.md §1「人間による
  * リアクション起動」)。bridge が Slack conversations.replies/history で実装する。
@@ -90,27 +89,10 @@ export interface SessionRunnerOptions {
    * 未指定なら shared 機能ごと無効 — staging の作成・skill 配線・system prompt
    * への言及をすべて行わない (createSharedStore が設定から解決する) */
   sharedStore?: SharedStore;
-  /** workdir のルート。既定 /tmp/pi-chat-runner/sessions */
-  workdirRoot?: string;
-  /** 明示的に差し替える pi バイナリ。テストや埋め込み用途向け */
-  piBinary?: string;
-  /** 解決済みの pi 本体 entrypoint JS。permission の有無に関わらず使用する */
-  piEntrypoint?: string;
-  /** allowlist (PATH/HOME) に追加で pi 子プロセスへ渡す env (runtime.md §5.3) */
-  extraEnv?: Record<string, string>;
-  /** pi 子プロセスの実行 uid/gid (runtime.md §5.1: UID 分離)。両方指定時のみ有効。
-   * 有効な場合のみ workdir の chown/chmod を行う (無効時は現状動作を維持) */
-  agentUid?: number;
-  agentGid?: number;
-  /** pi 子プロセスへ常に HOME として渡すディレクトリ (既定 "/home/agent")。
-   * UID 分離の有無に関わらず常にこれを HOME にする — コンテナ側で設定・skill を
-   * 固定パスに配置できるようにするため、また Node Permission Model の allow パス
-   * (`${home}/*`) と実際の HOME をズレなく一致させるため (runtime.md §5.2) */
-  agentHome?: string;
-  /** Node Permission Model 経由での起動を有効にする設定 (opt-in。未指定なら
-   * 現状動作 = pi をそのまま spawn する。pi-tools-and-sandbox.md 「リーズナブルな
-   * sandbox レイヤ案」、Cloud Run 実イメージでのみ有効化する想定) */
-  piPermission?: PiPermissionConfig;
+  /** Runtime レイヤの静的設定 (pi のパス・env allowlist・UID 分離・Permission Model・
+   * workdir のルート)。組み立ては composition root の担当 (runtime/resolve.ts の
+   * createRuntimeConfig)。runtime.md §1 */
+  runtime: RuntimeConfig;
   /** lease の TTL。既定 60_000ms。renew は ttl/3 間隔 */
   leaseTtlMs?: number;
   /** 長時間ターンの進捗通知の間隔 (ingress-egress.md §8)。初回発火までの猶予も同じ値を使う。
@@ -163,7 +145,6 @@ export class SessionRunner implements SessionHost {
   /** 組み込み memory skill の絶対パス。shared 有効時のみ解決する (無効時 undefined) */
   private readonly memorySkillPath: string | undefined;
   private readonly extensionPaths: string[];
-  private readonly workdirRoot: string;
   private readonly owner: string;
   private readonly classifierClient: ClassifierClient | undefined;
   /** セッション横断の依存・設定一式 (active-session.js の SessionContext)。
@@ -183,7 +164,6 @@ export class SessionRunner implements SessionHost {
     // (permission-gate は事故防止層なので無効化オプションを持たない)。利用者の
     // 追加 extension は $AGENT_HOME/.pi/agent/extensions/ 規約で拾う (kick() 参照)
     this.extensionPaths = resolveBuiltinExtensionPaths();
-    this.workdirRoot = options.workdirRoot ?? "/tmp/pi-chat-runner/sessions";
     this.owner = options.owner ?? `${hostname()}:${process.pid}`;
     this.classifierClient = options.classifierClient;
     this.ctx = {
@@ -198,13 +178,7 @@ export class SessionRunner implements SessionHost {
       leaseTtlMs: options.leaseTtlMs ?? 60_000,
       progressNoticeIntervalMs: options.progressNoticeIntervalMs ?? 5_000,
       mentionFormat: options.mentionFormat,
-      piBinary: options.piBinary,
-      piEntrypoint: options.piEntrypoint,
-      extraEnv: options.extraEnv,
-      agentUid: options.agentUid,
-      agentGid: options.agentGid,
-      agentHome: options.agentHome ?? "/home/agent",
-      piPermission: options.piPermission,
+      runtime: options.runtime,
     };
   }
 
@@ -928,7 +902,7 @@ export class SessionRunner implements SessionHost {
         ? (event.conversation.threadTs ?? event.id)
         : sessionKey.slice(channelId.length + 1);
     const workdir = join(
-      this.workdirRoot,
+      this.ctx.runtime.workdirRoot,
       channelId,
       policy.sessionMode === "channel" ? "channel" : threadTs,
     );
@@ -975,13 +949,13 @@ export class SessionRunner implements SessionHost {
         workdir,
         policy,
         channel,
-        sessions: this.ctx.controlState.sessions,
+        previousSession: await this.ctx.controlState.sessions.get(sessionKey),
         workdirStore: this.ctx.workdirStore,
         sharedStore: this.ctx.sharedStore,
         sharedStagingDir: (id) => this.sharedStagingDir(id),
-        agentUid: this.ctx.agentUid,
-        agentGid: this.ctx.agentGid,
-        agentHome: this.ctx.agentHome,
+        agentUid: this.ctx.runtime.agentUid,
+        agentGid: this.ctx.runtime.agentGid,
+        agentHome: this.ctx.runtime.agentHome,
         logger: this.ctx.logger,
       });
 
@@ -995,7 +969,7 @@ export class SessionRunner implements SessionHost {
           channel,
           builtinExtensionPaths: this.extensionPaths,
           memorySkillPath: this.memorySkillPath,
-          piPermission: this.ctx.piPermission,
+          piPermission: this.ctx.runtime.piPermission,
         });
 
       const model = channel?.agent.model;
@@ -1006,7 +980,7 @@ export class SessionRunner implements SessionHost {
       // 最後に HOME を agentHome へ上書きする (Runner 自身の HOME は継承しない。
       // buildPiEnv は extraEnv が PATH/HOME を上書きできる実装になっている)
       const extraEnv = {
-        ...this.ctx.extraEnv,
+        ...this.ctx.runtime.extraEnv,
         ...channel?.agent.env,
         HOME: agentHomeReal,
       };
@@ -1070,7 +1044,7 @@ export class SessionRunner implements SessionHost {
    * workdir の隣に置く — agent からは session.mode に関わらず cwd 相対 ../shared/
    * (`<channelId>/<threadTs>/` と `<channelId>/channel/` のどちらとも隣接する) */
   private sharedStagingDir(channelId: string): string {
-    return join(this.workdirRoot, channelId, "shared");
+    return join(this.ctx.runtime.workdirRoot, channelId, "shared");
   }
 
   private async loadChannelConfig(

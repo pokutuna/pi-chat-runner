@@ -1,5 +1,5 @@
 // ActiveSession — 1 セッションの生存期間 (spawn → ターン実行 → 終了) を自分で
-// 管理する主語 (Step 4)。SessionRunner はレーン解決とレジストリ
+// 管理する主語。SessionRunner はレーン解決とレジストリ
 // (Map<sessionKey, ActiveSession>) だけを持ち、1 セッションの遷移はここに閉じる。
 //
 // docs/design/architecture.md §6 (event は「きっかけ係」、session が「処理の担い手」)、
@@ -7,17 +7,13 @@
 // 順序: flush → ack)、§7.4 (turn timeout)、docs/design/runtime.md §1 (kick シーケンス)、
 // docs/design/state.md §7 (tmpfs + 境界 flush)。
 
-import { lstat, realpath } from "node:fs/promises";
-import { isAbsolute, relative, resolve } from "node:path";
-
 import type { ResolvedChannel } from "../config/config-source.js";
 import type { EgressRouter } from "../egress/router.js";
 import type { ReactionState, TurnReactor } from "../egress/turn-reactor.js";
 import type { InboundMessage } from "../ingress/chat-event.js";
 import type { Logger } from "../logger.js";
-import type { SharedStore, WorkdirStore } from "../state/agent/interfaces.js";
-import { inboxItemId } from "../state/control/inbox-item.js";
-import type { ControlState, Lease } from "../state/control/interfaces.js";
+import type { RuntimeConfig } from "../runtime/config.js";
+import type { PiPermissionOptions } from "../runtime/pi-args.js";
 import {
   extractReply,
   extractTurnErrors,
@@ -26,18 +22,25 @@ import {
   type TurnStatus,
   turnStatusFromAgentEnd,
   type UsageTotals,
-} from "./pi-events.js";
-import { renderEvent, renderItems, type SessionPolicy } from "./policy.js";
-import { ProgressNotice } from "./progress.js";
+} from "../runtime/pi-events.js";
+import { PiProcess } from "../runtime/pi-process.js";
 import {
   buildSystemPrompt,
   type MentionFormat,
   prependContext,
-} from "./prompt.js";
+} from "../runtime/prompt.js";
+import { resolveReplyFiles } from "../runtime/reply-files.js";
+import {
+  isAgentEnd,
+  isToolExecutionEnd,
+  isToolExecutionStart,
+} from "../runtime/rpc.js";
+import type { SharedStore, WorkdirStore } from "../state/agent/interfaces.js";
+import { inboxItemId } from "../state/control/inbox-item.js";
+import type { ControlState, Lease } from "../state/control/interfaces.js";
+import { renderEvent, renderItems, type SessionPolicy } from "./policy.js";
+import { ProgressNotice } from "./progress.js";
 import { registerReplyDestination } from "./reply-destination.js";
-import { isAgentEnd, isToolExecutionEnd, isToolExecutionStart } from "./rpc.js";
-import { PiProcess, type PiPermissionOptions } from "./runtime.js";
-import type { PiPermissionConfig } from "./spawn.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -71,19 +74,11 @@ export interface SessionContext {
   progressNoticeIntervalMs: number;
   /** ユーザーへの言及をレンダリングする関数 (返信本文に埋め込む記法) */
   mentionFormat: MentionFormat;
-  /** 明示的に差し替える pi バイナリ。テストや埋め込み用途向け */
-  piBinary: string | undefined;
-  /** 解決済みの pi 本体 entrypoint JS */
-  piEntrypoint: string | undefined;
-  /** Runner レベルのコード既定 env (gcpEnv / PI_EXPORT_ENTRYPOINT)。Channel ごとの
-   * Agent Config の env (config.md §1.3) と HOME=agentHomeReal は kick 時に
-   * この上へ重ねて合成する (runner.ts) */
-  extraEnv: Record<string, string> | undefined;
-  /** pi 子プロセスの実行 uid/gid (両方指定時のみ有効) */
-  agentUid: number | undefined;
-  agentGid: number | undefined;
-  agentHome: string;
-  piPermission: PiPermissionConfig | undefined;
+  /** Runtime レイヤの静的設定 (pi のパス・env allowlist・UID 分離・Permission
+   * Model・workdir のルート。runtime.md §1)。Channel ごとの Agent Config の env
+   * (config.md §1.3) と HOME=agentHomeReal は kick 時に runtime.extraEnv の上へ
+   * 重ねて合成する (runner.ts) */
+  runtime: RuntimeConfig;
 }
 
 /** ActiveSession の構築に必要な依存一式。同一性 (sessionKey/channelId/threadTs/
@@ -107,11 +102,11 @@ export interface ActiveSessionOptions {
   ctx: SessionContext;
 }
 
-/** start() に渡す、spawn 準備 (spawn.ts の関数群) の結果と per-kick な設定。
+/** start() に渡す、spawn 準備 (runtime/prepare.ts の関数群) の結果と per-kick な設定。
  * ActiveSession は spawn 準備を自分では持たない — runner の kick 相当が
  * prepareWorkdir / buildSpawnOptions / loadMemoryIndex を呼んだ結果を束ねて渡す。
- * mentionFormat/piBinary/piEntrypoint/agentUid/agentGid のような静的設定は
- * ctx (SessionContext) 側にあるためここには含まない */
+ * mentionFormat や RuntimeConfig のような静的設定は ctx (SessionContext) 側に
+ * あるためここには含まない */
 export interface StartArgs {
   triggerEvent: InboundMessage;
   channel: ResolvedChannel | null;
@@ -234,8 +229,8 @@ export class ActiveSession {
       model,
       extraEnv,
     } = args;
-    const { mentionFormat, piBinary, piEntrypoint, agentUid, agentGid } =
-      this.#ctx;
+    const { mentionFormat } = this.#ctx;
+    const { piBinary, piEntrypoint, agentUid, agentGid } = this.#ctx.runtime;
 
     const proc = new PiProcess({
       sessionPath,
@@ -295,7 +290,9 @@ export class ActiveSession {
           // files は必ず resolveReplyFiles の結果で上書きする。payload.files には
           // agent が渡した生の相対パスが残っているため、全件除外時 (files === undefined)
           // にそれをそのまま poster へ流すと境界チェックを素通りしてしまう
-          this.#resolveReplyFiles(sessionKey, workdirReal, payload.files)
+          resolveReplyFiles(workdirReal, payload.files, (path, reason) =>
+            this.#ctx.logger.warn({ sessionKey, path }, reason),
+          )
             .then((files) =>
               this.#ctx.router.deliver(
                 {
@@ -543,64 +540,6 @@ export class ActiveSession {
         "session steered",
       );
     }
-  }
-
-  /** reply の files (agent が渡した workdir 相対パス) を workdirReal 基準の絶対パスへ
-   * 解決し、workdir 外へ出るパス (`../` エスケープ、絶対パス指定) は除外して warn する
-   * (trust boundary: agent は semi-trusted)。加えて symlink 越しの workdir 外ファイル
-   * 参照 (例: `/proc/1/environ` への symlink を workdir 内に作る) を防ぐため、lstat で
-   * symlink/非通常ファイルを拒否し、realpath 済みの実体が workdir 配下にあることも
-   * 確認する。files 未指定、または全件除外後に空なら undefined を返し、text だけの
-   * 従来 payload として deliver させる */
-  async #resolveReplyFiles(
-    sessionKey: string,
-    workdirReal: string,
-    files: string[] | undefined,
-  ): Promise<string[] | undefined> {
-    if (files === undefined) return undefined;
-    const resolved: string[] = [];
-    for (const file of files) {
-      const abs = resolve(workdirReal, file);
-      const rel = relative(workdirReal, abs);
-      const inside = rel !== "" && !rel.startsWith("..") && !isAbsolute(rel);
-      if (!inside) {
-        this.#ctx.logger.warn(
-          { sessionKey, path: file },
-          "reply file path escapes workdir; dropped",
-        );
-        continue;
-      }
-      let fileStat: Awaited<ReturnType<typeof lstat>>;
-      try {
-        fileStat = await lstat(abs);
-      } catch {
-        this.#ctx.logger.warn(
-          { sessionKey, path: file },
-          "reply file does not exist; dropped",
-        );
-        continue;
-      }
-      if (!fileStat.isFile()) {
-        this.#ctx.logger.warn(
-          { sessionKey, path: file },
-          "reply file is a symlink or not a regular file; dropped",
-        );
-        continue;
-      }
-      const real = await realpath(abs);
-      const realRel = relative(workdirReal, real);
-      const realInside =
-        realRel !== "" && !realRel.startsWith("..") && !isAbsolute(realRel);
-      if (!realInside) {
-        this.#ctx.logger.warn(
-          { sessionKey, path: file },
-          "reply file resolves outside workdir; dropped",
-        );
-        continue;
-      }
-      resolved.push(abs);
-    }
-    return resolved.length > 0 ? resolved : undefined;
   }
 
   /**

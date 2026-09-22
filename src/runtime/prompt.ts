@@ -1,3 +1,6 @@
+// Agent への入力 (system prompt / context 前置き) の組み立て
+// (docs/design/runtime.md §6)。チャットへ返す通知文は Egress 側 (egress/notices.ts)。
+
 import type { ResolvedChannel } from "../config/config-source.js";
 
 /** app 共通プロンプトのプラットフォーム中立な固定部分。AgentConfig.systemPrompt は
@@ -23,23 +26,6 @@ function mentionInstruction(mentionFormat: MentionFormat): string {
     `${mentionFormat("USER_ID")} (not the plain name).`
   );
 }
-
-/** /new コマンドの拒否通知 (実行中セッションへは v1 の割り切りで交錯させない、
- * session-model.md §5.1)。abnormalShutdown の noticeText と同じ mrkdwn 絵文字スタイル */
-export const REJECT_NOTICE_TEXT =
-  ":warning: セッションが実行中のため、いまは /new できません。完了後にもう一度送ってください";
-
-/** /new コマンド (rest なし) の受理通知 */
-export const ACK_NOTICE_TEXT =
-  ":new: 次のメッセージから新しいセッションを開始します";
-
-/** /disable コマンドの受理通知 (session-model.md §5.2) */
-export const DISABLE_NOTICE_TEXT =
-  ":no_bell: このチャンネルでの起動を無効化しました。`/enable` (bot へのメンション付き) で再開できます";
-
-/** /enable コマンドの受理通知 (session-model.md §5.2) */
-export const ENABLE_NOTICE_TEXT =
-  ":bell: このチャンネルでの起動を有効化しました";
 
 /** shared 有効時に system prompt へ足す説明 (docs/design/runtime.md §6)。
  * 使い方の規約 (memory の書き方) は組み込み memory skill 側が担い、ここでは

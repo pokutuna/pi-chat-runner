@@ -2,7 +2,7 @@
 // - pi     → test/fixtures/fake-pi.mjs (stdin の JSONL を記録し、reply/agent_end を吐く)
 // - Slack  → FakePoster / FakeReactionClient
 // - config → インメモリの ConfigSource
-// - controlState → InMemoryControlState (Step 4: lease / drain-ack / linger の検証もここで行う)
+// - controlState → InMemoryControlState (lease / drain-ack / linger の検証もここで行う)
 import {
   mkdir,
   mkdtemp,
@@ -31,6 +31,8 @@ import type {
   InboundMessage,
   ReactionEvent,
 } from "../../src/ingress/chat-event.js";
+import type { PiPermissionConfig } from "../../src/runtime/config.js";
+import type { MentionFormat } from "../../src/runtime/prompt.js";
 import {
   computeKickDelayMs,
   isIdleExpired,
@@ -40,10 +42,8 @@ import {
   type SessionPolicy,
   sessionKeyOf,
 } from "../../src/session/policy.js";
-import type { MentionFormat } from "../../src/session/prompt.js";
 import type { FetchedMessage, FetchMessage } from "../../src/session/runner.js";
 import { SessionRunner } from "../../src/session/runner.js";
-import type { PiPermissionConfig } from "../../src/session/spawn.js";
 import {
   CopySharedStore,
   CopyWorkdirStore,
@@ -236,18 +236,26 @@ async function harness(
         return {};
       },
     }),
-    workdirRoot,
-    ...(options.piBinary !== undefined
-      ? { piBinary: options.piBinary }
-      : options.piEntrypoint === undefined
-        ? { piBinary: FAKE_PI }
+    runtime: {
+      workdirRoot,
+      ...(options.piBinary !== undefined
+        ? { piBinary: options.piBinary }
+        : options.piEntrypoint === undefined
+          ? { piBinary: FAKE_PI }
+          : {}),
+      ...(options.piEntrypoint !== undefined
+        ? { piEntrypoint: options.piEntrypoint }
         : {}),
-    ...(options.piEntrypoint !== undefined
-      ? { piEntrypoint: options.piEntrypoint }
-      : {}),
+      ...(options.extraEnv !== undefined ? { extraEnv: options.extraEnv } : {}),
+      ...(options.agentUid !== undefined ? { agentUid: options.agentUid } : {}),
+      ...(options.agentGid !== undefined ? { agentGid: options.agentGid } : {}),
+      agentHome,
+      ...(options.piPermission !== undefined
+        ? { piPermission: options.piPermission }
+        : {}),
+    },
     lingerMs: options.lingerMs ?? 30,
     logger,
-    ...(options.extraEnv !== undefined ? { extraEnv: options.extraEnv } : {}),
     workdirStore: options.workdirStore ?? new NoopWorkdirStore(),
     ...(options.sharedStore !== undefined
       ? { sharedStore: options.sharedStore }
@@ -256,12 +264,6 @@ async function harness(
       ? { leaseTtlMs: options.leaseTtlMs }
       : {}),
     ...(options.owner !== undefined ? { owner: options.owner } : {}),
-    ...(options.agentUid !== undefined ? { agentUid: options.agentUid } : {}),
-    ...(options.agentGid !== undefined ? { agentGid: options.agentGid } : {}),
-    agentHome,
-    ...(options.piPermission !== undefined
-      ? { piPermission: options.piPermission }
-      : {}),
     ...(options.turnTimeoutMs !== undefined
       ? { turnTimeoutMs: options.turnTimeoutMs }
       : {}),
@@ -2014,7 +2016,7 @@ describe("SessionRunner.handleReaction (reaction trigger for initial kick)", () 
   });
 });
 
-describe("SessionRunner (Step 4: lease / flush-ack / linger)", () => {
+describe("SessionRunner (lease / flush-ack / linger)", () => {
   it("flushes the workdir before acking inbox items (flush → ack order)", async () => {
     const calls: string[] = [];
     class RecordingStore implements WorkdirStore {

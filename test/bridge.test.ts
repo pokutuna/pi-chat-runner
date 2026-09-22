@@ -25,6 +25,10 @@ import { InMemoryControlState } from "../src/state/control/backends/memory.js";
  * 呼び出す 2 メソッドだけの最小 IF。テストではこれだけ満たすスタブを渡す。 */
 type MinimalWebClient = Pick<WebClient, "chat" | "reactions">;
 
+/** RuntimeConfig.workdirRoot は必須。これらのテストは workdir の中身を検証しない
+ * ため、これまでの既定値をそのまま使う。 */
+const DEFAULT_WORKDIR_ROOT = "/tmp/pi-chat-runner/sessions";
+
 const FAKE_PI = fileURLToPath(
   new URL("./fixtures/fake-pi.mjs", import.meta.url),
 );
@@ -149,8 +153,11 @@ describe("startBridge", () => {
       web: web.client,
       controlState: new InMemoryControlState(),
       configSource: new FileConfigSource(CONFIG_PATH),
-      piEntrypoint: FAKE_PI,
-      agentHome,
+      runtime: {
+        piEntrypoint: FAKE_PI,
+        agentHome,
+        workdirRoot: DEFAULT_WORKDIR_ROOT,
+      },
       logger,
     });
 
@@ -210,8 +217,11 @@ describe("startBridge", () => {
       web: web.client,
       controlState: new InMemoryControlState(),
       configSource: new FileConfigSource(CONFIG_PATH),
-      piBinary: FAKE_PI,
-      agentHome,
+      runtime: {
+        piBinary: FAKE_PI,
+        agentHome,
+        workdirRoot: DEFAULT_WORKDIR_ROOT,
+      },
       logger,
       poster: injectedPoster,
     });
@@ -253,8 +263,11 @@ describe("startBridge", () => {
       web: web.client,
       controlState: new InMemoryControlState(),
       configSource: new FileConfigSource(CONFIG_PATH),
-      piEntrypoint: FAKE_PI,
-      agentHome,
+      runtime: {
+        piEntrypoint: FAKE_PI,
+        agentHome,
+        workdirRoot: DEFAULT_WORKDIR_ROOT,
+      },
       logger,
     });
 
@@ -297,8 +310,11 @@ describe("startBridge", () => {
       web: web.client,
       controlState: new InMemoryControlState(),
       configSource: new FileConfigSource(CONFIG_PATH),
-      piEntrypoint: FAKE_PI,
-      agentHome,
+      runtime: {
+        piEntrypoint: FAKE_PI,
+        agentHome,
+        workdirRoot: DEFAULT_WORKDIR_ROOT,
+      },
       logger,
     });
 
@@ -339,8 +355,11 @@ describe("startBridge", () => {
       web: web.client,
       controlState: new InMemoryControlState(),
       configSource: new FileConfigSource(CONFIG_PATH),
-      piEntrypoint: FAKE_PI,
-      agentHome,
+      runtime: {
+        piEntrypoint: FAKE_PI,
+        agentHome,
+        workdirRoot: DEFAULT_WORKDIR_ROOT,
+      },
       logger,
     });
 

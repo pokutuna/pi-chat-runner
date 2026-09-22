@@ -390,5 +390,5 @@ staging は復元されず、Shared 経由で全 Channel に効く指示は書�
 | InboxItem.id の導出 | `inboxItemId` (`src/state/control/inbox-item.ts`) |
 | WorkdirStore / SharedStore | 同名 (`src/state/agent/interfaces.ts`)、`CopyWorkdirStore` / `CopySharedStore` (`src/state/agent/copy.ts`)、`NoopWorkdirStore` (`src/state/agent/noop.ts`) |
 | 棚の選択 | `createWorkdirStore` / `createSharedStore` (`src/state/agent/copy.ts`)、`src/server.ts` が env から組み立てる |
-| restore / flush の呼び出し | `prepareWorkdir` (`src/session/spawn.ts`)、`ActiveSession.#onAgentEnd` (`src/session/active-session.ts`) |
+| restore / flush の呼び出し | `prepareWorkdir` (`src/runtime/prepare.ts`)、`ActiveSession.#onAgentEnd` (`src/session/active-session.ts`) |
 | Workdir / staging のパス | `SessionRunner.workdirRoot` / `sharedStagingDir` (`src/session/runner.ts`) |

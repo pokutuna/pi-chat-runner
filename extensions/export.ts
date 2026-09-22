@@ -24,7 +24,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 
-// src/session/session-file.ts の SESSION_FILE と同値。extension はビルド成果物を
+// src/runtime/session-file.ts の SESSION_FILE と同値。extension はビルド成果物を
 // import できない (ソース直接ロードのため) ので、reply.ts と同様にここで自己完結させる。
 const SESSION_FILE = "session.jsonl";
 

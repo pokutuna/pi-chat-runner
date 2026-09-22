@@ -1,6 +1,6 @@
 import type { EgressRouter } from "../egress/router.js";
 import type { Logger } from "../logger.js";
-import { preview } from "./pi-events.js";
+import { preview } from "../runtime/pi-events.js";
 
 /** 進捗通知でツール名ごとに絵文字を出し分ける (ingress-egress.md §8)。
  * reply は呼び出し元 (tool_execution_start ハンドラ) で除外済みなのでここには

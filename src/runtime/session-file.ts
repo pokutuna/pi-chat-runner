@@ -1,7 +1,6 @@
 // セッションファイル名の single source of truth。
-// src/session/runner.ts (spawn 時のパス組み立て・rotate) と src/state/agent/copy.ts
-// (境界退避での対象ファイル判定) の両方から参照するため、循環依存を避けられる
-// 中立な場所として src/session/ 配下に置く。
+// src/runtime/prepare.ts (spawn 時のパス組み立て・rotate) と src/state/agent/copy.ts
+// (境界退避での対象ファイル判定) の両方から参照する。
 
 /** pi の --session に渡すセッションファイル名。1 sessionKey = 1 workdir = この固定名 1 ファイル。
  * pi 由来の名前ではなく本プロジェクトの命名 (pi の --session は任意パスを受け取る)。 */

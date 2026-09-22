@@ -21,6 +21,10 @@ import { FileConfigSource } from "../src/config/config-source.js";
 import { createLocalChat } from "../src/ingress/local/local-chat.js";
 import { InMemoryControlState } from "../src/state/control/backends/memory.js";
 
+/** RuntimeConfig.workdirRoot は必須。これらのテストは workdir の中身を検証しない
+ * ため、これまでの既定値をそのまま使う。 */
+const DEFAULT_WORKDIR_ROOT = "/tmp/pi-chat-runner/sessions";
+
 const FAKE_PI = fileURLToPath(
   new URL("./fixtures/fake-pi.mjs", import.meta.url),
 );
@@ -60,8 +64,11 @@ describe("startBridge with LocalChat (no Slack)", () => {
       eventSource: chat.ingress,
       controlState: new InMemoryControlState(),
       configSource: new FileConfigSource(CONFIG_PATH),
-      piEntrypoint: FAKE_PI,
-      agentHome,
+      runtime: {
+        piEntrypoint: FAKE_PI,
+        agentHome,
+        workdirRoot: DEFAULT_WORKDIR_ROOT,
+      },
       logger,
       poster: chat.poster,
       reactor: chat.reactor,
@@ -104,8 +111,11 @@ describe("startBridge with LocalChat (no Slack)", () => {
       eventSource: chat.ingress,
       controlState: new InMemoryControlState(),
       configSource: new FileConfigSource(REACTION_CONFIG_PATH),
-      piEntrypoint: FAKE_PI,
-      agentHome,
+      runtime: {
+        piEntrypoint: FAKE_PI,
+        agentHome,
+        workdirRoot: DEFAULT_WORKDIR_ROOT,
+      },
       logger,
       poster: chat.poster,
       reactor: chat.reactor,
@@ -150,8 +160,11 @@ describe("startBridge with LocalChat (no Slack)", () => {
         eventSource: chat.ingress,
         controlState: new InMemoryControlState(),
         configSource: new FileConfigSource(CONFIG_PATH),
-        piEntrypoint: FAKE_PI,
-        agentHome,
+        runtime: {
+          piEntrypoint: FAKE_PI,
+          agentHome,
+          workdirRoot: DEFAULT_WORKDIR_ROOT,
+        },
         logger,
         poster: chat.poster,
         reactor: chat.reactor,

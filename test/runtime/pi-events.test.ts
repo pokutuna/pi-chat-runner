@@ -6,8 +6,8 @@ import {
   extractUsageTotals,
   piEventLogFields,
   turnStatusFromAgentEnd,
-} from "../../src/session/pi-events.js";
-import type { ToolExecutionEndEvent } from "../../src/session/rpc.js";
+} from "../../src/runtime/pi-events.js";
+import type { ToolExecutionEndEvent } from "../../src/runtime/rpc.js";
 
 describe("extractReply", () => {
   const base: ToolExecutionEndEvent = {

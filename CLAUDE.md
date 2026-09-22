@@ -51,7 +51,7 @@ InboxStore         — durable, dedupe'd queue of accepted events (src/state/con
 SessionRunner      — acquires lease, drains inbox, kicks a turn (src/session/runner.ts)
     │  turn input
     ▼
-SessionRuntime     — spawns and drives the pi child process via RPC (src/session/runtime.ts)
+Runtime            — prepares the workdir and spawns/drives the pi child process via RPC (src/runtime/)
     │  reply(thread_key, text, files?)
     ▼
 Egress             — resolves thread_key to destination, formats to mrkdwn, chunks (src/egress/)

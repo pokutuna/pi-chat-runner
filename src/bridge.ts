@@ -32,9 +32,9 @@ import { SlackUserResolver } from "./ingress/slack/user-resolver.js";
 import { enrichEvent, type UserResolver } from "./ingress/user-resolver.js";
 import type { Logger } from "./logger.js";
 import { rootLogger } from "./logger.js";
+import type { RuntimeConfig } from "./runtime/config.js";
 import type { FetchMessage } from "./session/runner.js";
 import { SessionRunner } from "./session/runner.js";
-import type { PiPermissionConfig } from "./session/spawn.js";
 import { createSharedStore, createWorkdirStore } from "./state/agent/copy.js";
 import type { SharedStore, WorkdirStore } from "./state/agent/interfaces.js";
 import type { ControlState } from "./state/control/interfaces.js";
@@ -58,11 +58,9 @@ export interface BridgeOptions {
   /** classifier gate 用 LLM client の注入口 (主にテスト用)。省略時は
    * GOOGLE_CLOUD_PROJECT があれば GeminiClassifierClient を内部構築する。 */
   classifierClient?: ClassifierClient;
-  /** 明示的に差し替える pi バイナリ。テストや埋め込み用途向け */
-  piBinary?: string;
-  /** 解決済みの pi 本体 entrypoint JS。permission の有無に関わらず使用する */
-  piEntrypoint?: string;
-  extraEnv?: Record<string, string>;
+  /** Runtime レイヤの静的設定 (pi のパス・env allowlist・UID 分離・Permission Model・
+   * workdir のルート)。組み立ては server.ts が createRuntimeConfig で行う */
+  runtime: RuntimeConfig;
   archiveDir?: string;
   /** チャンネル共有ディレクトリの保存先ルート (docs/design/state.md §6)。未設定なら
    * shared 機能ごと無効。棚は `<sharedDir>/<channelId>/` */
@@ -70,10 +68,6 @@ export interface BridgeOptions {
   /** shared 棚のサイズがこれを超えたら warn ログを出す閾値 (bytes)。未設定なら
    * createSharedStore の既定値 (state.md §5.1: ガードレールでなく気づきのため) */
   sharedShelfWarnBytes?: number;
-  agentUid?: number;
-  agentGid?: number;
-  agentHome?: string;
-  piPermission?: PiPermissionConfig;
   logger?: Logger;
   /** 返信投稿の注入口。省略時は web (WebClient) の chat.postMessage から内部構築する。 */
   poster?: ChatPoster;
@@ -227,29 +221,11 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
     // 持たない)。bridge.ts は Slack 専用モジュールなので、Slack の mrkdwn
     // mention 記法をここで注入する
     mentionFormat: (userId) => `<@${userId}>`,
-    ...(options.piBinary !== undefined ? { piBinary: options.piBinary } : {}),
-    ...(options.piEntrypoint !== undefined
-      ? { piEntrypoint: options.piEntrypoint }
-      : {}),
-    ...(options.extraEnv !== undefined &&
-    Object.keys(options.extraEnv).length > 0
-      ? { extraEnv: options.extraEnv }
-      : {}),
-    // workdirStore/archiveDir 未設定なら境界退避なし (Step 3 相当の挙動)
+    runtime: options.runtime,
+    // workdirStore/archiveDir 未設定なら境界退避なし
     workdirStore,
     // sharedStore/sharedDir 未設定なら shared 無効
     ...(sharedStore !== undefined ? { sharedStore } : {}),
-    // agentUid/Gid 未設定なら UID 分離なし (現状動作)
-    ...(options.agentUid !== undefined ? { agentUid: options.agentUid } : {}),
-    ...(options.agentGid !== undefined ? { agentGid: options.agentGid } : {}),
-    // agentHome 未設定なら SessionRunner の既定 (/home/agent) を使う
-    ...(options.agentHome !== undefined
-      ? { agentHome: options.agentHome }
-      : {}),
-    // piPermission 未設定なら Node Permission Model なし (現状動作)
-    ...(options.piPermission !== undefined
-      ? { piPermission: options.piPermission }
-      : {}),
     // turnTimeoutMs 未設定なら SessionRunner の既定 (600_000ms) を使う
     ...(options.turnTimeoutMs !== undefined
       ? { turnTimeoutMs: options.turnTimeoutMs }

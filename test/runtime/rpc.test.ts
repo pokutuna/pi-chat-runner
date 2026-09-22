@@ -5,7 +5,7 @@ import {
   isToolExecutionEnd,
   JsonlDecoder,
   parsePiOutputLine,
-} from "../../src/session/rpc.js";
+} from "../../src/runtime/rpc.js";
 
 describe("JsonlDecoder", () => {
   it("splits complete lines on LF", () => {

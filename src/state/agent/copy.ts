@@ -8,7 +8,7 @@ import { cp, lstat, mkdir, readdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 
 import type { Logger } from "../../logger.js";
-import { SESSION_FILE } from "../../session/session-file.js";
+import { SESSION_FILE } from "../../runtime/session-file.js";
 import type { SharedStore, WorkdirStore } from "./interfaces.js";
 import { NoopWorkdirStore } from "./noop.js";
 

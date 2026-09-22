@@ -372,17 +372,18 @@ Channel や Agent ごとに変えたい項目は Agent Config で宣言し、Run
 
 | 設計上の名前 | 現在の実装 |
 |---|---|
-| Runtime (レイヤ) | `src/session/spawn.ts` + `runtime.ts` + `prompt.ts` + `rpc.ts` + `pi-events.ts` |
-| 起動準備 (§2) | `prepareWorkdir` / `buildSpawnOptions` / `rotateTranscript` / `chownRecursive` (`src/session/spawn.ts`) |
+| Runtime (レイヤ) | `src/runtime/` (`prepare.ts` / `pi-process.ts` / `pi-args.ts` / `prompt.ts` / `rpc.ts` / `pi-events.ts` / `reply-files.ts` / `config.ts` / `resolve.ts` / `session-file.ts`) |
+| 起動準備 (§2) | `prepareWorkdir` / `buildSpawnOptions` / `rotateTranscript` / `chownRecursive` (`src/runtime/prepare.ts`) |
 | 組み込み extension / memory skill の解決 | `resolveBuiltinExtensionPaths` / `resolveBuiltinMemorySkillPath` / `resolveChannelResourcePaths` (同上) |
 | memory 索引の読み込み | `loadMemoryIndex` (同上) |
-| 起動引数の組み立て | `buildPiArgs` / `buildSpawnCommand` (`src/session/runtime.ts`) |
-| Permission Model | `buildPiPermissionOptions` / `ancestorDirs` / `PI_TRUST_PROBE_FILENAMES` (同上)、`PiPermissionConfig` (`src/session/spawn.ts`)、`buildPiPermissionConfig` / `resolvePiPaths` / `outermostNodeModules` (`src/server.ts`) |
-| env allowlist | `buildPiEnv` (`src/session/runtime.ts`)、`collectGcpEnv` (`src/server.ts`) |
-| 子プロセスのラッパ | `PiProcess` (`src/session/runtime.ts`) |
-| システムプロンプト | `buildSystemPrompt` / `prependContext` (`src/session/prompt.ts`) |
-| RPC プロトコル | `src/session/rpc.ts` (`RpcCommand` / `PiEvent` / `JsonlDecoder`) |
-| イベントの読み取り | `extractReply` / `turnStatusFromAgentEnd` / `extractUsageTotals` (`src/session/pi-events.ts`) |
-| reply の files の境界チェック | `ActiveSession.#resolveReplyFiles` (`src/session/active-session.ts`) |
+| Runtime の静的設定 | `RuntimeConfig` / `PiPermissionConfig` (`src/runtime/config.ts`)、組み立ては `createRuntimeConfig` (`src/runtime/resolve.ts`) を `src/server.ts` が呼ぶ |
+| 起動引数の組み立て | `buildPiArgs` / `buildSpawnCommand` (`src/runtime/pi-args.ts`) |
+| Permission Model | `buildPiPermissionOptions` / `ancestorDirs` / `PI_TRUST_PROBE_FILENAMES` (`src/runtime/pi-args.ts`)、`PiPermissionConfig` (`src/runtime/config.ts`)、`buildPiPermissionConfig` / `resolvePiPaths` / `outermostNodeModules` (`src/runtime/resolve.ts`) |
+| env allowlist | `buildPiEnv` (`src/runtime/pi-args.ts`)、`collectGcpEnv` (`src/runtime/resolve.ts`) |
+| 子プロセスのラッパ | `PiProcess` (`src/runtime/pi-process.ts`) |
+| システムプロンプト | `buildSystemPrompt` / `prependContext` (`src/runtime/prompt.ts`) |
+| RPC プロトコル | `src/runtime/rpc.ts` (`RpcCommand` / `PiEvent` / `JsonlDecoder`) |
+| イベントの読み取り | `extractReply` / `turnStatusFromAgentEnd` / `extractUsageTotals` (`src/runtime/pi-events.ts`) |
+| reply の files の境界チェック | `resolveReplyFiles` (`src/runtime/reply-files.ts`)。呼び出しは `ActiveSession` (`src/session/active-session.ts`) |
 | 組み込み extension | `extensions/reply.ts` / `permission-gate.ts` / `export.ts` |
 | 組み込み memory skill | `builtin-skills/memory/SKILL.md` |

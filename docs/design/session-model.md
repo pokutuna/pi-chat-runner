@@ -211,14 +211,14 @@ Turn に複数のメッセージが合流していれば全件に付く。Sessio
 | 送信先の解決と登録 | `registerReplyDestination` (`src/session/reply-destination.ts`) |
 | fallback Thread Key の登録 | `ActiveSession.start` (`src/session/active-session.ts`) |
 | プロンプトへの描画 | `renderEvent` / `renderItems` (`src/session/policy.ts`) |
-| System Prompt の組み立て | `buildSystemPrompt` (`src/session/prompt.ts`) |
+| System Prompt の組み立て | `buildSystemPrompt` (`src/runtime/prompt.ts`) |
 | コマンドの解析 | `parseCommand` (`src/session/commands.ts`) |
 | `/new` の処理 | `SessionRunner.handleNewCommand` (`src/session/runner.ts`) |
 | `/enable` `/disable` の処理 | `SessionRunner.handleToggleCommand` (`src/session/runner.ts`) |
-| Session の終了条件の判定 | `prepareWorkdir` / `isIdleExpired` (`src/session/spawn.ts`, `src/session/policy.ts`) |
-| Transcript の切り替え | `rotateTranscript` (`src/session/spawn.ts`) |
-| mode 不整合の警告 | `warnPolicyMismatches` (`src/session/spawn.ts`) |
-| Turn の成否判定 | `turnStatusFromAgentEnd` (`src/session/pi-events.ts`) |
+| Session の終了条件の判定 | `prepareWorkdir` / `isIdleExpired` (`src/runtime/prepare.ts`, `src/session/policy.ts`) |
+| Transcript の切り替え | `rotateTranscript` (`src/runtime/prepare.ts`) |
+| mode 不整合の警告 | `warnPolicyMismatches` (`src/runtime/prepare.ts`) |
+| Turn の成否判定 | `turnStatusFromAgentEnd` (`src/runtime/pi-events.ts`) |
 | リアクション | `ActiveSession.#beginTurnMessage` / `#reactMessages` (`src/session/active-session.ts`) |
 | Session 実行状況 (SessionRecord) | `SessionRecord` (`src/state/control/interfaces.ts`) |
 | Channel 有効状態 | `ChannelStateStore` (`src/state/control/interfaces.ts`) |

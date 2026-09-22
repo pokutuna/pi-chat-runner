@@ -1,7 +1,9 @@
-// kick 前半 (spawn 準備) の抽出先 — 「入力 → PiProcess を作るための準備」であり
-// SessionRecord の可変状態にはほぼ依存しない (spawn の引数・env の掃除・
-// workdir と flush は runtime.md の関心事)。
-// PiProcess の生成・イベントハンドラ登録・SessionRecord への書き込みは kick に残す。
+// Agent の起動準備 (docs/design/runtime.md §2 起動準備の順序、§4 Extension と Skill、
+// §5.1 UID 分離、§5.2 Node Permission Model)。
+//
+// 「入力 → PiProcess を作るための準備」だけを担い、PiProcess の生成・イベント
+// ハンドラ登録は Session 側に残る。Control State は読むだけで書かない
+// (state.md §1) — /new マーカーのクリアは呼び出し側 (Dispatcher) の責務。
 
 import { existsSync } from "node:fs";
 import {
@@ -20,38 +22,14 @@ import { fileURLToPath } from "node:url";
 
 import type { ResolvedChannel } from "../config/config-source.js";
 import type { Logger } from "../logger.js";
+import { isIdleExpired, type SessionPolicy } from "../session/policy.js";
 import type { SharedStore, WorkdirStore } from "../state/agent/interfaces.js";
-import type { SessionStore } from "../state/control/interfaces.js";
-import { isIdleExpired, type SessionPolicy } from "./policy.js";
+import type { PiPermissionConfig } from "./config.js";
 import {
   buildPiPermissionOptions,
   type PiPermissionOptions,
-} from "./runtime.js";
+} from "./pi-args.js";
 import { rotatedSessionFile, SESSION_FILE } from "./session-file.js";
-
-/** Node Permission Model 有効化の静的パラメタ (runtime.md §5.2)。
- * workdir / home はセッションごとに決まるため kick 時に buildPiPermissionOptions
- * へ都度渡す — ここに載るのはイメージ内で固定のパスだけ */
-export interface PiPermissionConfig {
-  /** pi 本体のエントリポイント JS の絶対パス (import.meta.resolve で自動検出する。
-   * server.ts 参照) */
-  entrypoint: string;
-  /** pi 本体・依存が入る npm パッケージの node_modules ルート (import.meta.resolve で
-   * 自動検出する。server.ts 参照) */
-  nodeModulesDir: string;
-  /** 追加で write を許可したいパス (例 "/tmp/*")。既定なし */
-  extraWrite?: string[];
-  /** 追加で read を許可したいパス (例 GOOGLE_APPLICATION_CREDENTIALS のファイル
-   * パス)。HOME を agentHome に固定するとローカルのユーザー ADC は HOME 経由で
-   * 見えなくなるため、明示指定されたファイルだけ個別に許可する用途。既定なし。
-   * extension (reply / permission-gate) の読み込みに必要な read 許可は kick 時に
-   * extensionPaths の dirname から自動導出してここへ足すため、呼び出し側が
-   * 明示する必要はない (appDir 包括許可の廃止に伴う対応) */
-  extraRead?: string[];
-  /** native addon (.node) を含む extension を使う場合の `--allow-addons` 付与。
-   * agent.runtime.allowAddons 由来 (config.md §1.3)。既定 false */
-  allowAddons?: boolean;
-}
 
 /** 組み込み extension のファイル名 (リポジトリ/パッケージ直下の extensions/)。
  * reply は唯一の返信経路、permission-gate は事故防止層 (runtime.md §4.1) で、どの
@@ -248,6 +226,15 @@ export function warnPolicyMismatches(
   }
 }
 
+/** prepareWorkdir が Control State から見るもの (state.md §3.2 の Session 実行状況の
+ * うち、起動準備が読む 2 フィールドだけ)。Runtime は Store を持たず、呼び出し側が
+ * 読んだ値を受け取る */
+export interface PreviousSession {
+  lastActiveAt: Date;
+  /** 明示的な新規 Session 要求 (/new) の時刻 */
+  rotateRequestedAt?: Date;
+}
+
 /** prepareWorkdir が返す、kick 後続処理 (extension/skill 解決・PiProcess 生成) に
  * 必要な値。record への書き込みはここでは行わず、呼び出し側 (kick) が
  * resumed の記録・ログ出力等に使う */
@@ -282,8 +269,10 @@ export async function prepareWorkdir(args: {
   workdir: string;
   policy: SessionPolicy;
   channel: ResolvedChannel | null;
-  /** rotateRequestedAt / lastActiveAt の読み出しのみに使う (書き込みはしない) */
-  sessions: SessionStore;
+  /** 前回の Session 実行状況 (Control State から呼び出し側が読んで渡す)。
+   * rotateRequestedAt (/new マーカー) と lastActiveAt (idle 判定) だけを見る。
+   * Runtime は Control State を読み書きしない (state.md §1) */
+  previousSession: PreviousSession | null;
   workdirStore: WorkdirStore;
   sharedStore: SharedStore | undefined;
   sharedStagingDir: (channelId: string) => string;
@@ -298,7 +287,7 @@ export async function prepareWorkdir(args: {
     workdir,
     policy,
     channel,
-    sessions,
+    previousSession,
     workdirStore,
     sharedStore,
     sharedStagingDir,
@@ -324,10 +313,9 @@ export async function prepareWorkdir(args: {
   }
   // 世代交代 (runtime.md §2.1): manual (/new マーカー) → idle 超過 →
   // transcript サイズ超過の優先順位で、いずれか 1 回だけ transcript を
-  // 世代交代する。previous は idle 判定にも使うため、ここで常時 1 回だけ fetch
-  // して使い回す。rotate は chown より前 (rotate されたファイルの所有権も
-  // chown で揃うため)
-  const previous = await sessions.get(sessionKey);
+  // 世代交代する。previous は idle 判定にも使う。rotate は chown より前
+  // (rotate されたファイルの所有権も chown で揃うため)
+  const previous = previousSession;
   let rotated = false;
   // manual は session.mode に依存しない (thread モードでも効く) — idle/size が
   // channel モード限定なのとは異なる、明示的なユーザー意図のため (runtime.md §2.1)
