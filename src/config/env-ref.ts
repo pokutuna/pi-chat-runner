@@ -13,7 +13,7 @@
 // `${...}` は参照とみなさずリテラルのまま素通しする。
 //
 // 型変換はしない。解決結果は常に string を返す。数値/boolean への coerce は呼び出し側の
-// zod (z.coerce.number() 等) に委ねる (agent-config.ts / channel-doc.ts と同じ「コード側で
+// zod (z.coerce.number() 等) に委ねる (agent-config.ts / channel-config.ts と同じ「コード側で
 // 既定値やパースを二重管理しない」方針)。
 
 const ENV_REF_PATTERN = /\$\{env\.([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}/g;

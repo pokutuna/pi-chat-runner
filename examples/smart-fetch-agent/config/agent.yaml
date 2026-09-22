@@ -1,25 +1,20 @@
-connector:
-  slack:
-    mode: ${env.SLACK_MODE:-socket}
-    botToken: ${env.SLACK_BOT_TOKEN}
-    botUserId: ${env.SLACK_BOT_USER_ID}
-    socket:
-      appToken: ${env.SLACK_APP_TOKEN}
-    events:
-      signingSecret: ${env.SLACK_SIGNING_SECRET:-}
-      port: ${env.PORT:-8080}
+system:
+  chat:
+    slack:
+      mode: ${env.SLACK_MODE:-socket}
+      botToken: ${env.SLACK_BOT_TOKEN}
+      botUserId: ${env.SLACK_BOT_USER_ID}
+      socket:
+        appToken: ${env.SLACK_APP_TOKEN}
+      events:
+        signingSecret: ${env.SLACK_SIGNING_SECRET:-}
+        port: ${env.PORT:-8080}
 
-store:
-  backend: ${env.STORE_BACKEND:-memory}
-  sqlite:
-    path: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db}
-
-agent:
-  turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000}
-
-  env:
-    GOOGLE_CLOUD_PROJECT: ${env.GOOGLE_CLOUD_PROJECT}
-    GOOGLE_APPLICATION_CREDENTIALS: ${env.GOOGLE_APPLICATION_CREDENTIALS:-}
+  state:
+    control:
+      backend: ${env.STORE_BACKEND:-memory}
+      sqlite:
+        path: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db}
 
   runtime:
     permissionMode: ${env.PI_PERMISSION_MODE:-true}
@@ -31,13 +26,20 @@ agent:
     # (unlike examples/config/agent.yaml, which defaults it to false).
     allowAddons: ${env.PI_ALLOW_ADDONS:-true}
 
+  turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000}
+
+agent:
+  model: google-vertex/gemini-3.5-flash
+  systemPrompt: ./prompts/smart-fetch.md
+  env:
+    GOOGLE_CLOUD_PROJECT: ${env.GOOGLE_CLOUD_PROJECT:-}
+    GOOGLE_APPLICATION_CREDENTIALS: ${env.GOOGLE_APPLICATION_CREDENTIALS:-}
+
 channels:
   - channel: "default"
     # Fallback for any channel below with no matching entry. No extensions
     # here — pi-smart-fetch is enabled only for the channel below, not for
     # every channel the bot is in (see README.md for why).
-    model: google-vertex/gemini-3.5-flash
-    systemPrompt: ./prompts/smart-fetch.md
     trigger:
       when:
         - kind: mention
@@ -45,10 +47,9 @@ channels:
   - channel: "C0000000001" # REPLACE: your channel ID
     # pi-smart-fetch enabled for this channel only, via a per-channel
     # extensions path (not $AGENT_HOME/.pi/agent/extensions/ auto-discovery).
-    model: google-vertex/gemini-3.5-flash
-    systemPrompt: ./prompts/smart-fetch.md
     trigger:
       when:
         - kind: mention
-    extensions:
-      - /app/node_modules/pi-smart-fetch/dist/index.js
+    agent:
+      extensions:
+        - /app/node_modules/pi-smart-fetch/dist/index.js

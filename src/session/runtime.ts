@@ -69,14 +69,14 @@ export interface PiProcessOptions {
   model?: string;
   /** `--append-system-prompt` */
   appendSystemPrompt?: string;
-  /** 追加の `--skill` パス群 (ChannelDoc.skills、絶対パス)。pi の --skill は
+  /** 追加の `--skill` パス群 (AgentConfig.skills、絶対パス)。pi の --skill は
    * 複数回受け付け、$AGENT_HOME/.pi/agent/skills/ の自動発見に対して additive */
   skillPaths?: string[];
-  /** `--tools` allowlist (channel ごとの ChannelDoc.tools)。extension ツール
+  /** `--tools` allowlist (channel ごとの AgentConfig.tools)。extension ツール
    * (reply 含む) にも適用されるため、buildPiArgs が reply を自動補完する。
    * 未指定または空配列ならフラグを渡さない (全ツール有効の現状動作) */
   tools?: string[];
-  /** `--exclude-tools` denylist (ChannelDoc.excludeTools)。reply は
+  /** `--exclude-tools` denylist (AgentConfig.excludeTools)。reply は
    * buildPiArgs が黙って除外する (返信経路を落とさないため) */
   excludeTools?: string[];
   /** 子プロセスの cwd (workdir) */
@@ -126,7 +126,7 @@ export function buildPiArgs(
   // (reply + permission-gate を常時両方注入するため)
   for (const extensionPath of options.extensionPaths)
     args.push("--extension", extensionPath);
-  // model は `provider/model-id[:thinking]` の canonical 形式 (channel-doc.ts で検証済み)。
+  // model は `provider/model-id[:thinking]` の canonical 形式 (channel-config.ts で検証済み)。
   // provider 推論・thinking パースは pi の resolveCliModel に委譲する (--provider は
   // 渡さない)。ADC 系 provider だけは認証可否判定の都合で prefix を見る (下記)
   if (options.model) args.push("--model", options.model);

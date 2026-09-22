@@ -1,412 +1,124 @@
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { describe, expect, it } from "vitest";
 
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
-
-import {
-  AgentConfigSchema,
-  loadAgentConfig,
-  resolveAgentConfig,
-} from "../../src/config/agent-config.js";
+import { AgentConfigSchema } from "../../src/config/agent-config.js";
 
 describe("AgentConfigSchema", () => {
-  it("accepts a fully populated config", () => {
-    const result = AgentConfigSchema.safeParse({
-      agent: {
-        turnTimeoutMs: 600000,
-        env: { GH_TOKEN: "${env.GH_TOKEN}" },
-        runtime: {
-          uid: 1001,
-          gid: 1001,
-          permissionMode: true,
-          home: "/home/agent",
-        },
-      },
-    });
-    expect(result.success).toBe(true);
-  });
-
   it("accepts an empty object (all fields omitted)", () => {
     expect(AgentConfigSchema.safeParse({}).success).toBe(true);
   });
 
-  it("rejects unknown top-level keys", () => {
+  it("accepts a fully populated config", () => {
+    const result = AgentConfigSchema.safeParse({
+      systemPrompt: "./prompts/ask-ai.md",
+      context: ["./prompts/note.md", "inline text"],
+      model: "google-vertex/gemini-3.5-flash",
+      tools: ["read", "grep"],
+      excludeTools: ["write", "edit"],
+      skills: ["/app/skills/gc-logging", "./skills/local"],
+      extensions: ["/app/extensions/bq-runner.ts", "../ext/local.ts"],
+      memory: false,
+      env: { GH_TOKEN: "${env.GH_TOKEN}", TEAM: "salmon" },
+    });
+    expect(result.success).toBe(true);
+  });
+
+  it("rejects unknown keys (strict)", () => {
     expect(AgentConfigSchema.safeParse({ unknown: true }).success).toBe(false);
   });
 
-  it("rejects a negative turnTimeoutMs", () => {
-    expect(
-      AgentConfigSchema.safeParse({ agent: { turnTimeoutMs: -1 } }).success,
-    ).toBe(false);
+  // System Config 側のフィールドが agent ブロックへ紛れ込むのを弾く
+  // (旧スキーマの agent.runtime / agent.turnTimeoutMs は system へ移った)。
+  it.each([
+    "runtime",
+    "turnTimeoutMs",
+    "progressNoticeIntervalMs",
+    "provider",
+    "envPassthrough",
+  ])("rejects the removed/moved %s field", (key) => {
+    expect(AgentConfigSchema.safeParse({ [key]: 1 }).success).toBe(false);
   });
 
-  it("rejects a provider field under agent (removed in favor of channel model shorthand)", () => {
-    expect(
-      AgentConfigSchema.safeParse({ agent: { provider: "google-vertex" } })
-        .success,
-    ).toBe(false);
+  describe("model", () => {
+    it("accepts a canonical provider/model-id", () => {
+      expect(
+        AgentConfigSchema.safeParse({ model: "google-vertex/gemini-3-pro" })
+          .success,
+      ).toBe(true);
+    });
+
+    it("accepts a model with a thinking-level suffix", () => {
+      expect(
+        AgentConfigSchema.safeParse({
+          model: "google-vertex/gemini-3.1-pro:high",
+        }).success,
+      ).toBe(true);
+    });
+
+    it("rejects a bare model id without a provider prefix", () => {
+      expect(
+        AgentConfigSchema.safeParse({ model: "gemini-3.5-flash" }).success,
+      ).toBe(false);
+    });
   });
 
-  it("rejects a non-integer turnTimeoutMs", () => {
-    expect(
-      AgentConfigSchema.safeParse({ agent: { turnTimeoutMs: 1.5 } }).success,
-    ).toBe(false);
-  });
-
-  it("accepts a zero progressNoticeIntervalMs (disables the feature)", () => {
-    expect(
-      AgentConfigSchema.safeParse({ agent: { progressNoticeIntervalMs: 0 } })
-        .success,
-    ).toBe(true);
-  });
-
-  it("rejects a negative progressNoticeIntervalMs", () => {
-    expect(
-      AgentConfigSchema.safeParse({ agent: { progressNoticeIntervalMs: -1 } })
-        .success,
-    ).toBe(false);
-  });
-
-  it("rejects a model field under agent (removed)", () => {
-    expect(
-      AgentConfigSchema.safeParse({ agent: { model: "gemini-x" } }).success,
-    ).toBe(false);
-  });
-
-  it("rejects envPassthrough under agent (removed in favor of agent.env)", () => {
-    expect(
-      AgentConfigSchema.safeParse({ agent: { envPassthrough: ["GH_TOKEN"] } })
-        .success,
-    ).toBe(false);
-  });
-
-  it("rejects unknown keys under agent", () => {
-    expect(
-      AgentConfigSchema.safeParse({ agent: { unknown: true } }).success,
-    ).toBe(false);
-  });
-
-  it("rejects unknown keys under agent.runtime", () => {
-    expect(
-      AgentConfigSchema.safeParse({ agent: { runtime: { unknown: true } } })
-        .success,
-    ).toBe(false);
-  });
-
-  it("rejects non-string values in agent.env", () => {
-    expect(
-      AgentConfigSchema.safeParse({ agent: { env: { FOO: 1 } } }).success,
-    ).toBe(false);
-  });
-
-  it("coerces string uid/gid/permissionMode under agent.runtime", () => {
-    const data = AgentConfigSchema.parse({
-      agent: {
-        runtime: { uid: "1001", gid: "1001", permissionMode: "true" },
+  describe("skills / extensions paths", () => {
+    it.each(["skills", "extensions"])(
+      "accepts absolute and ./ ../ relative paths under %s",
+      (key) => {
+        expect(
+          AgentConfigSchema.safeParse({
+            [key]: ["/app/x", "./x", "../x"],
+          }).success,
+        ).toBe(true);
       },
-    });
-    expect(data.agent?.runtime?.uid).toBe(1001);
-    expect(data.agent?.runtime?.gid).toBe(1001);
-    expect(data.agent?.runtime?.permissionMode).toBe(true);
-  });
-
-  // ${env.X} 参照は文字列で来るため、"false"/"0"/"" を false と解釈できないと
-  // sandbox を OFF にできない。z.coerce.boolean() だとこれらが truthy に化ける
-  // (PermissionModeSchema がその罠を回避している)。
-  it.each([
-    ["false", false],
-    ["0", false],
-    ["", false],
-    ["FALSE", false],
-    ["true", true],
-    ["1", true],
-  ])("interprets permissionMode string %j as %s", (input, expected) => {
-    const data = AgentConfigSchema.parse({
-      agent: { runtime: { permissionMode: input } },
-    });
-    expect(data.agent?.runtime?.permissionMode).toBe(expected);
-  });
-
-  it.each([
-    ["false", false],
-    ["0", false],
-    ["", false],
-    ["true", true],
-    ["1", true],
-  ])("interprets allowAddons string %j as %s", (input, expected) => {
-    const data = AgentConfigSchema.parse({
-      agent: { runtime: { allowAddons: input } },
-    });
-    expect(data.agent?.runtime?.allowAddons).toBe(expected);
-  });
-});
-
-describe("loadAgentConfig", () => {
-  let dir: string;
-
-  beforeEach(async () => {
-    dir = await mkdtemp(join(tmpdir(), "agent-config-test-"));
-  });
-
-  afterEach(async () => {
-    await rm(dir, { recursive: true, force: true });
-  });
-
-  it("returns {} when agent.yaml does not exist", async () => {
-    expect(await loadAgentConfig(join(dir, "agent.yaml"))).toEqual({});
-  });
-
-  it("returns {} when agent.yaml contains only comments", async () => {
-    await writeFile(join(dir, "agent.yaml"), "# just a comment\n");
-    expect(await loadAgentConfig(join(dir, "agent.yaml"))).toEqual({});
-  });
-
-  it("parses a valid agent.yaml", async () => {
-    await writeFile(
-      join(dir, "agent.yaml"),
-      "agent:\n  turnTimeoutMs: 600000\n",
     );
-    expect(await loadAgentConfig(join(dir, "agent.yaml"))).toEqual({
-      agent: { turnTimeoutMs: 600000 },
-    });
-  });
 
-  it("throws with the file path for malformed YAML", async () => {
-    await writeFile(join(dir, "agent.yaml"), "agent:\n  - broken: [\n");
-    await expect(loadAgentConfig(join(dir, "agent.yaml"))).rejects.toThrow(
-      /agent\.yaml/,
+    it.each(["skills", "extensions"])(
+      "rejects a bare relative path under %s",
+      (key) => {
+        expect(
+          AgentConfigSchema.safeParse({ [key]: ["foo/bar"] }).success,
+        ).toBe(false);
+      },
     );
   });
 
-  it("throws with the file path and zod issue for schema violations", async () => {
-    await writeFile(join(dir, "agent.yaml"), "agent:\n  unknownKey: 1\n");
-    await expect(loadAgentConfig(join(dir, "agent.yaml"))).rejects.toThrow(
-      /agent\.yaml/,
-    );
-  });
-
-  it("resolves ${env.X} references in agent.env before schema validation", async () => {
-    await writeFile(
-      join(dir, "agent.yaml"),
-      'agent:\n  env:\n    GH_TOKEN: "${env.TEST_GH_TOKEN}"\n',
-    );
-    const original = process.env.TEST_GH_TOKEN;
-    process.env.TEST_GH_TOKEN = "resolved-secret";
-    try {
-      const config = await loadAgentConfig(join(dir, "agent.yaml"));
-      expect(config.agent?.env).toEqual({ GH_TOKEN: "resolved-secret" });
-    } finally {
-      if (original === undefined) delete process.env.TEST_GH_TOKEN;
-      else process.env.TEST_GH_TOKEN = original;
-    }
-  });
-
-  it("throws when a required ${env.X} reference is unset", async () => {
-    await writeFile(
-      join(dir, "agent.yaml"),
-      'agent:\n  env:\n    GH_TOKEN: "${env.TEST_UNSET_TOKEN_XYZ}"\n',
-    );
-    delete process.env.TEST_UNSET_TOKEN_XYZ;
-    await expect(loadAgentConfig(join(dir, "agent.yaml"))).rejects.toThrow(
-      /agent\.yaml/,
-    );
-  });
-});
-
-describe("resolveAgentConfig", () => {
-  it("leaves turnTimeoutMs undefined when neither env nor file set them", () => {
-    const resolved = resolveAgentConfig({}, {});
-    expect(resolved.turnTimeoutMs).toBeUndefined();
-  });
-
-  it("defaults env to {} when agent.env is omitted", () => {
-    const resolved = resolveAgentConfig({}, {});
-    expect(resolved.env).toEqual({});
-  });
-
-  it("uses agent.env as-is (additive model, no process.env merge)", () => {
-    const resolved = resolveAgentConfig(
-      { agent: { env: { GH_TOKEN: "gh-secret" } } },
-      { GH_TOKEN: "should-not-be-used", UNRELATED: "x" },
-    );
-    expect(resolved.env).toEqual({ GH_TOKEN: "gh-secret" });
-  });
-
-  it("parses TURN_TIMEOUT_MS from env and prefers it over file", () => {
-    const resolved = resolveAgentConfig(
-      { agent: { turnTimeoutMs: 1000 } },
-      { TURN_TIMEOUT_MS: "5000" },
-    );
-    expect(resolved.turnTimeoutMs).toBe(5000);
-  });
-
-  it("throws for an invalid TURN_TIMEOUT_MS", () => {
-    expect(() => resolveAgentConfig({}, { TURN_TIMEOUT_MS: "-1" })).toThrow(
-      /TURN_TIMEOUT_MS/,
-    );
-    expect(() =>
-      resolveAgentConfig({}, { TURN_TIMEOUT_MS: "not-a-number" }),
-    ).toThrow(/TURN_TIMEOUT_MS/);
-  });
-
-  it("leaves progressNoticeIntervalMs undefined when neither env nor file set it", () => {
-    const resolved = resolveAgentConfig({}, {});
-    expect(resolved.progressNoticeIntervalMs).toBeUndefined();
-  });
-
-  it("parses PROGRESS_NOTICE_INTERVAL_MS from env and prefers it over file", () => {
-    const resolved = resolveAgentConfig(
-      { agent: { progressNoticeIntervalMs: 1000 } },
-      { PROGRESS_NOTICE_INTERVAL_MS: "5000" },
-    );
-    expect(resolved.progressNoticeIntervalMs).toBe(5000);
-  });
-
-  it("allows PROGRESS_NOTICE_INTERVAL_MS=0 to disable the feature via env", () => {
-    const resolved = resolveAgentConfig(
-      { agent: { progressNoticeIntervalMs: 5000 } },
-      { PROGRESS_NOTICE_INTERVAL_MS: "0" },
-    );
-    expect(resolved.progressNoticeIntervalMs).toBe(0);
-  });
-
-  it("throws for an invalid PROGRESS_NOTICE_INTERVAL_MS", () => {
-    expect(() =>
-      resolveAgentConfig({}, { PROGRESS_NOTICE_INTERVAL_MS: "-1" }),
-    ).toThrow(/PROGRESS_NOTICE_INTERVAL_MS/);
-    expect(() =>
-      resolveAgentConfig({}, { PROGRESS_NOTICE_INTERVAL_MS: "not-a-number" }),
-    ).toThrow(/PROGRESS_NOTICE_INTERVAL_MS/);
-  });
-
-  describe("runtime.permissionMode", () => {
-    it("defaults to true when neither env nor file set it", () => {
-      expect(resolveAgentConfig({}, {}).runtime.permissionMode).toBe(true);
+  describe("memory", () => {
+    it.each([true, false])("accepts memory: %s", (memory) => {
+      const result = AgentConfigSchema.safeParse({ memory });
+      expect(result.success).toBe(true);
+      expect(result.data?.memory).toBe(memory);
     });
 
-    it("can be disabled via agent.yaml agent.runtime.permissionMode: false", () => {
-      const resolved = resolveAgentConfig(
-        { agent: { runtime: { permissionMode: false } } },
-        {},
+    it("rejects a non-boolean memory", () => {
+      expect(AgentConfigSchema.safeParse({ memory: "false" }).success).toBe(
+        false,
       );
-      expect(resolved.runtime.permissionMode).toBe(false);
-    });
-
-    it("disables via env PI_PERMISSION_MODE=0", () => {
-      const resolved = resolveAgentConfig({}, { PI_PERMISSION_MODE: "0" });
-      expect(resolved.runtime.permissionMode).toBe(false);
-    });
-
-    it("env PI_PERMISSION_MODE overrides file value", () => {
-      const resolved = resolveAgentConfig(
-        { agent: { runtime: { permissionMode: false } } },
-        { PI_PERMISSION_MODE: "1" },
-      );
-      expect(resolved.runtime.permissionMode).toBe(true);
-    });
-
-    it("any non-'0' env value enables permission mode", () => {
-      const resolved = resolveAgentConfig({}, { PI_PERMISSION_MODE: "yes" });
-      expect(resolved.runtime.permissionMode).toBe(true);
     });
   });
 
-  describe("runtime.allowAddons", () => {
-    it("defaults to false when neither env nor file set it", () => {
-      expect(resolveAgentConfig({}, {}).runtime.allowAddons).toBe(false);
+  describe("env", () => {
+    it("accepts a string map", () => {
+      const result = AgentConfigSchema.safeParse({
+        env: { GH_TOKEN: "secret" },
+      });
+      expect(result.success).toBe(true);
+      expect(result.data?.env).toEqual({ GH_TOKEN: "secret" });
     });
 
-    it("can be enabled via agent.yaml agent.runtime.allowAddons: true", () => {
-      const resolved = resolveAgentConfig(
-        { agent: { runtime: { allowAddons: true } } },
-        {},
-      );
-      expect(resolved.runtime.allowAddons).toBe(true);
-    });
-
-    it("enables via env PI_ALLOW_ADDONS=1", () => {
-      const resolved = resolveAgentConfig({}, { PI_ALLOW_ADDONS: "1" });
-      expect(resolved.runtime.allowAddons).toBe(true);
-    });
-
-    it("env PI_ALLOW_ADDONS overrides file value", () => {
-      const resolved = resolveAgentConfig(
-        { agent: { runtime: { allowAddons: true } } },
-        { PI_ALLOW_ADDONS: "0" },
-      );
-      expect(resolved.runtime.allowAddons).toBe(false);
-    });
-
-    it("any non-'0' env value enables allowAddons", () => {
-      const resolved = resolveAgentConfig({}, { PI_ALLOW_ADDONS: "yes" });
-      expect(resolved.runtime.allowAddons).toBe(true);
-    });
-  });
-
-  describe("runtime.home", () => {
-    it("defaults to /home/agent", () => {
-      expect(resolveAgentConfig({}, {}).runtime.home).toBe("/home/agent");
-    });
-
-    it("falls back to file value when env is unset", () => {
-      const resolved = resolveAgentConfig(
-        { agent: { runtime: { home: "/custom/home" } } },
-        {},
-      );
-      expect(resolved.runtime.home).toBe("/custom/home");
-    });
-
-    it("prefers env PI_AGENT_HOME over file", () => {
-      const resolved = resolveAgentConfig(
-        { agent: { runtime: { home: "/custom/home" } } },
-        { PI_AGENT_HOME: "/env/home" },
-      );
-      expect(resolved.runtime.home).toBe("/env/home");
-    });
-  });
-
-  describe("runtime.uid/gid", () => {
-    it("are undefined when neither env nor file set them", () => {
-      const resolved = resolveAgentConfig({}, {});
-      expect(resolved.runtime.uid).toBeUndefined();
-      expect(resolved.runtime.gid).toBeUndefined();
-    });
-
-    it("falls back to file values", () => {
-      const resolved = resolveAgentConfig(
-        { agent: { runtime: { uid: 1001, gid: 1001 } } },
-        {},
-      );
-      expect(resolved.runtime.uid).toBe(1001);
-      expect(resolved.runtime.gid).toBe(1001);
-    });
-
-    it("prefers env PI_AGENT_UID/GID over file", () => {
-      const resolved = resolveAgentConfig(
-        { agent: { runtime: { uid: 1001, gid: 1001 } } },
-        { PI_AGENT_UID: "2000", PI_AGENT_GID: "2000" },
-      );
-      expect(resolved.runtime.uid).toBe(2000);
-      expect(resolved.runtime.gid).toBe(2000);
-    });
-
-    it("throws when only PI_AGENT_UID is set", () => {
-      expect(() => resolveAgentConfig({}, { PI_AGENT_UID: "1001" })).toThrow(
-        /PI_AGENT_UID and PI_AGENT_GID/,
+    it("rejects non-string values", () => {
+      expect(AgentConfigSchema.safeParse({ env: { FOO: 1 } }).success).toBe(
+        false,
       );
     });
 
-    it("throws when only PI_AGENT_GID is set", () => {
-      expect(() => resolveAgentConfig({}, { PI_AGENT_GID: "1001" })).toThrow(
-        /PI_AGENT_UID and PI_AGENT_GID/,
-      );
-    });
-
-    it("throws when PI_AGENT_UID/GID are not integers", () => {
-      expect(() =>
-        resolveAgentConfig({}, { PI_AGENT_UID: "abc", PI_AGENT_GID: "abc" }),
-      ).toThrow(/must be integers/);
+    // ${env.X} の解決はローダー (config-source.ts) の仕事で、schema は素通しする。
+    it("accepts an unresolved ${env.X} reference as a plain string", () => {
+      const result = AgentConfigSchema.safeParse({
+        env: { GH_TOKEN: "${env.GH_TOKEN}" },
+      });
+      expect(result.success).toBe(true);
+      expect(result.data?.env?.GH_TOKEN).toBe("${env.GH_TOKEN}");
     });
   });
 });

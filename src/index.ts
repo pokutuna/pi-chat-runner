@@ -4,18 +4,11 @@
 // server.ts (CLI/bin) はこのファイルを経由せず直接内部モジュールを import する。
 
 export { type BridgeOptions, startBridge } from "./bridge.js";
-export {
-  type AgentConfig,
-  AgentConfigSchema,
-  loadAgentConfig,
-  type ResolvedAgentConfig,
-  type ResolvedAgentRuntime,
-  resolveAgentConfig,
-} from "./config/agent-config.js";
+export { type AgentConfig, AgentConfigSchema } from "./config/agent-config.js";
 // 自前 ConfigSource を書く利用者向け: 戻り値の型・検証スキーマ・予約名
 export {
-  type ChannelDoc,
-  ChannelDocSchema,
+  type ChannelConfig,
+  ChannelConfigSchema,
   type ChannelEntry,
   ChannelEntrySchema,
   type ChannelsFile,
@@ -23,17 +16,31 @@ export {
   type GateConfig,
   type Trigger,
   type WhenNode,
-} from "./config/channel-doc.js";
+} from "./config/channel-config.js";
 export {
+  type AgentProvenance,
+  type ChannelPart,
   type ConfigSource,
   DEFAULT_CHANNEL,
   DM_CHANNEL,
   type FieldSource,
   FileConfigSource,
-  mergeChannelDoc,
+  loadChannelConfigFile,
+  mergeAgentConfig,
+  mergeChannelPart,
   type Provenance,
+  type ResolvedChannel,
   resolveChannelConfig,
 } from "./config/config-source.js";
+export {
+  loadSystemConfig,
+  type ResolvedRuntimeConfig,
+  type ResolvedSystemConfig,
+  resolveSystemConfig,
+  type SlackChatConfig,
+  type SystemConfig,
+  SystemConfigSchema,
+} from "./config/system-config.js";
 export { toMrkdwn } from "./egress/mrkdwn.js";
 export {
   type ReactionClient,

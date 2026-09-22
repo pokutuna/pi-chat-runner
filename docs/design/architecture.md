@@ -186,5 +186,5 @@ Agent の確定出力が `reply` tool の 1 経路しかなく、地の文を送
 | Egress | `src/egress/` (`EgressRouter`, `chunker.ts`, `mrkdwn.ts`, `turn-reactor.ts`) |
 | Control State | `ControlState` (`src/state/control/interfaces.ts`) と `src/state/control/backends/` |
 | Agent State | `WorkdirStore` / `SharedStore` (`src/state/agent/`) |
-| System Config の読み込み | `src/config/{connector-config,store-config,agent-config}.ts` |
-| Channel Config | `ChannelDoc` (`src/config/channel-doc.ts`) |
+| System Config の読み込み | `src/config/system-config.ts` |
+| Channel Config / Agent Config | `ChannelConfig` (`src/config/channel-config.ts`) / `AgentConfig` (`src/config/agent-config.ts`)、マージ結果は `ResolvedChannel` (`src/config/config-source.ts`) |

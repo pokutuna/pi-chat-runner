@@ -9,7 +9,7 @@ trigger/session/tooling shape:
 |----------|---------------------------------------|----------------------|
 | `local`  | mention                               | the plain `@bot` assistant (REPL default channel) |
 | `notes`  | passthrough (every post)              | `session.mode: channel` (one ongoing session), flat replies |
-| `alerts` | mention (human) / keyword (bot) / reaction | gate composition + `allowBots`, debounce + channel affinity, `memory: false`, read-only `tools` |
+| `alerts` | mention (human) / keyword (bot) / reaction | gate composition + `allowBots`, debounce + channel affinity, `agent.memory: false`, read-only `agent.tools` |
 | `links`  | URL keyword or mention                | per-channel extension (`pi-smart-fetch`) |
 | `dm`     | passthrough                           | DM opt-in (`!dm on`) |
 
@@ -36,7 +36,7 @@ GOOGLE_APPLICATION_CREDENTIALS=<absolute path to application_default_credentials
 PI_AGENT_HOME=<writable dir, e.g. /private/tmp/pi-chat-runner/home>
 ```
 
-To use another provider instead, change `default.model` in `agent.yaml` (pi's
+To use another provider instead, change `agent.model` in `agent.yaml` (pi's
 canonical `provider/model-id[:thinking-level]` form) and forward its API key
 via `agent.env` — see the commented block in `agent.yaml` and the
 [Configuration](../../README.md#configuration) section of the main README.
@@ -142,7 +142,7 @@ opted in. Channel config is re-read every message, so no restart is needed.
 ### 6. Memory across sessions
 
 With `SHARED_DIR` set, the memory skill is wired into every channel except
-`alerts` (`memory: false`):
+`alerts` (`agent.memory: false`):
 
 ```
 #local you> @bot remember this: my favorite deploy window is Friday 4pm

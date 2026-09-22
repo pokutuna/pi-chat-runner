@@ -12,52 +12,69 @@
 # See examples/config/agent.yaml for a smaller, more realistic starting point,
 # and docs/design/config.md for the full semantics behind each field.
 
-connector:
-  slack:
-    mode: ${env.SLACK_MODE:-socket}
-    appToken: ${env.SLACK_APP_TOKEN:-}
-    signingSecret: ${env.SLACK_SIGNING_SECRET:-}
-    port: ${env.PORT:-8080}
-    botToken: ${env.SLACK_BOT_TOKEN}
-    botUserId: ${env.SLACK_BOT_USER_ID}
+# --- system: the runner process, read once at boot (config.md §1.1) ---
+system:
+  chat:
+    slack:
+      mode: ${env.SLACK_MODE:-socket}
+      botToken: ${env.SLACK_BOT_TOKEN:-xoxb-placeholder}
+      botUserId: ${env.SLACK_BOT_USER_ID:-U0SALMONBOT}
+      socket:
+        appToken: ${env.SLACK_APP_TOKEN:-}
+      events:
+        signingSecret: ${env.SLACK_SIGNING_SECRET:-}
+        port: ${env.PORT:-8080}
 
-store:
-  backend: ${env.STORE_BACKEND:-sqlite}
-  sqlite:
-    path: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db}
-  firestore:
-    projectId: ${env.FIRESTORE_PROJECT_ID:-}
-    database: ${env.FIRESTORE_DATABASE:-(default)}
-    rootDoc: ${env.FIRESTORE_ROOT_DOC:-pi-chat-runner/default}
+  state:
+    control:
+      backend: ${env.STORE_BACKEND:-sqlite}
+      sqlite:
+        path: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db}
+      firestore:
+        projectId: ${env.FIRESTORE_PROJECT_ID:-}
+        database: ${env.FIRESTORE_DATABASE:-(default)}
+        rootDoc: ${env.FIRESTORE_ROOT_DOC:-pi-chat-runner/default}
+    agent:
+      workdirDir: ${env.WORKDIR_ARCHIVE_DIR:-/var/pi-chat-runner/workdirs}
+      sharedDir: ${env.SHARED_DIR:-/var/pi-chat-runner/shared}
+      sharedWarnBytes: ${env.SHARED_WARN_BYTES:-52428800}
 
-pi:
-  provider: ${env.PI_PROVIDER:-google-vertex}
-  turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000}
-  # 0 disables progress notices outright (unlike turnTimeoutMs, 0 is a valid,
-  # meaningful value here, not "unset").
-  progressNoticeIntervalMs: ${env.PROGRESS_NOTICE_INTERVAL_MS:-20000}
-
-agent:
-  env:
-    # Additive allowlist — only names listed here reach the pi child process
-    # (on top of the code's built-in GOOGLE_CLOUD_* defaults). This is not a
-    # passthrough of the runner's own process.env.
-    GH_TOKEN: ${env.GH_TOKEN:-}
-    SLACK_TEAM_NAME: salmon
   runtime:
     # UID/GID separation: both or neither.
     uid: ${env.PI_AGENT_UID:-1001}
     gid: ${env.PI_AGENT_GID:-1001}
-    permissionMode: ${env.PI_PERMISSION_MODE:-true}
     home: ${env.PI_AGENT_HOME:-/home/agent}
+    permissionMode: ${env.PI_PERMISSION_MODE:-true}
+    allowAddons: ${env.PI_ALLOW_ADDONS:-false}
 
+  turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000}
+  # 0 disables progress notices outright (unlike turnTimeoutMs, 0 is a valid,
+  # meaningful value here, not "unset").
+  progressNoticeIntervalMs: ${env.PROGRESS_NOTICE_INTERVAL_MS:-20000}
+  leaseTtlMs: ${env.LEASE_TTL_MS:-60000}
+  lingerMs: ${env.LINGER_MS:-3000}
+
+# --- agent: the default Agent Config, shared by every channel (config.md §1.3) ---
+# Every field here can be overridden per channel under channels[].agent, one
+# whole field at a time (no deep merge).
+agent:
+  model: google-vertex/gemini-3.5-flash
+  systemPrompt: ./prompts/ask-ai.md
+  memory: true
+  env:
+    # Additive allowlist — only names listed here reach the pi child process
+    # (on top of the code's built-in GOOGLE_CLOUD_* defaults). This is not a
+    # passthrough of the runner's own process.env. The only place in the
+    # agent/channels blocks where ${env.X} is resolved (config.md §2.1).
+    GH_TOKEN: ${env.GH_TOKEN:-}
+    SLACK_TEAM_NAME: salmon
+
+# --- channels: per-channel behavior, re-read on every message (config.md §1.2) ---
 channels:
   # --- default: quiet fallback for any channel the bot ends up in without an
   # explicit entry below. Mention-only on purpose — passthrough/classifier
   # here would silently start judging every message in every future channel.
   - channel: "default"
-    model: gemini-3.5-flash
-    systemPrompt: ./prompts/ask-ai.md
     trigger:
       when:
         - kind: mention
@@ -65,12 +82,13 @@ channels:
   # --- dm: 1:1 scratchpad. channel-mode session (one continuous thread per
   # user, not per-message), rotated after a day of silence or once the
   # transcript gets large, so a session doesn't grow unbounded across weeks.
+  # The Channel part does not inherit "default", but the agent block above
+  # still applies as the agent base.
   - channel: "dm"
-    model: gemini-3.5-flash
-    systemPrompt: ./prompts/ask-ai.md
     trigger:
       when:
         - kind: passthrough
+      whileRunning: passthrough
     session:
       mode: channel
       idleResetMinutes: 1440 # 24h idle -> new generation
@@ -86,34 +104,19 @@ channels:
   # fact. debounce absorbs a burst of 3-4 rapid-fire alert lines into one
   # session kick instead of one per line.
   - channel: "C0INCIDENTS0"
-    model: gemini-3.5-flash
-    systemPrompt: ./prompts/incidents.md
-    context:
-      - ./prompts/oncall-runbook-index.md
-    tools: [read, grep, bash]
-    excludeTools: [write, edit]
-    skills:
-      - /app/skills/gc-logging
-      - /app/skills/pagerduty
-    extensions:
-      - /app/extensions/bq-runner.ts
-    session:
-      mode: thread
-      affinity:
-        scope: channel
-        windowSec: 600
-        debounceSec: 20
-    reply:
-      mode: thread
     trigger:
       # cooldownSec: 120  # implementation on hold — the strict schema rejects it (config.md §4.5)
+      allowBots: true
+      # evaluate: re-run the gate even while a session is already running, so
+      # unrelated chatter in a busy incident channel isn't fed to the agent.
+      whileRunning: evaluate
       when:
         - kind: mention
         - kind: reaction
           emoji: [eyes, robot_face]
         - and:
             # restrict keyword auto-trigger to on-call members; matches the
-            # normalized display name resolved by the EventSource (config.md §4.2).
+            # normalized display name resolved by the Ingress (config.md §4.2).
             # rename-proof alternative: id: [U012AB34CD, U056EF78GH]
             - kind: sender
               name: [alice, bob]
@@ -122,12 +125,33 @@ channels:
             - kind: classifier
               criteria: "Describes an active production incident or outage — not a question about past incidents, not idle chatter mentioning the word error."
               model: gemini-3.1-flash-lite
+    session:
+      mode: thread
+      affinity:
+        scope: channel
+        windowSec: 600
+        debounceSec: 20
+    reply:
+      mode: thread
+    agent:
+      model: google-vertex/gemini-3-pro
+      systemPrompt: ./prompts/incidents.md
+      context:
+        - ./prompts/oncall-runbook-index.md
+      tools: [read, grep, bash]
+      excludeTools: [write, edit]
+      skills:
+        - /app/skills/gc-logging
+        - /app/skills/pagerduty
+      extensions:
+        - /app/extensions/bq-runner.ts
+      env:
+        GH_TOKEN: ${env.GH_TOKEN:-}
+        PAGERDUTY_TOKEN: ${env.PAGERDUTY_TOKEN:-}
 
-  # --- #team-random (public): low-stakes, mention-only Q&A. No skills/tools
-  # restrictions — full default toolset.
+  # --- #team-random (public): low-stakes, mention-only Q&A. No agent
+  # overrides at all — it runs entirely on the agent block above.
   - channel: "C0TEAMRANDOM0"
-    model: gemini-3.5-flash
-    systemPrompt: ./prompts/ask-ai.md
     trigger:
       when:
         - kind: mention
@@ -135,14 +159,16 @@ channels:
   # --- #team-lab (private): the team's own sandbox. Passthrough — every
   # message is judged as a turn, no mention needed. Deliberately isolated to
   # a channel the team opted into, since passthrough elsewhere would be
-  # unwelcome noise.
+  # unwelcome noise. memory: false opts this channel out of the shared memory
+  # skill, so experiments here don't pollute the team's memory index.
   - channel: "C0TEAMLAB000"
-    model: gemini-3.5-flash
-    systemPrompt: |
-      You're in #team-lab, an opt-in sandbox. Assume every message is
-      directed at you; keep replies short unless asked to elaborate.
-    extensions:
-      - /app/extensions/bq-runner.ts
     trigger:
       when:
         - kind: passthrough
+    agent:
+      systemPrompt: |
+        You're in #team-lab, an opt-in sandbox. Assume every message is
+        directed at you; keep replies short unless asked to elaborate.
+      extensions:
+        - /app/extensions/bq-runner.ts
+      memory: false

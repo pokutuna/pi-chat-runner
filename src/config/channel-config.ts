@@ -1,30 +1,20 @@
-// ChannelDoc スキーマ — docs/design/config.md §1.2, §1.3, §3.5, §4
+// Channel Config スキーマ — docs/design/config.md §1.2, §3.1, §4
 //
-// zod を単一ソースとする (strict 検証と ChannelDoc 型を単一ソース化する狙い)。
+// zod を単一ソースとする (strict 検証と ChannelConfig 型を単一ソース化する狙い)。
 // 手書きの interface は並置せず、型は z.infer で導出する。
 // ただし trigger.when は再帰ブール木のため、循環を切るための型注釈のみ手書きする (§4)。
+//
+// Channel Config は Channel 単位のメッセージ処理 (trigger / session / reply) と、
+// その Channel 固有の Agent Config (agent, agent-config.ts) を持つ。Agent 部分と
+// Channel 部分はマージの段数が違う (config.md §3.2) ため、config-source.ts が
+// 別々にマージする。
 //
 // YAML の gate は kind: で指定する (config.md §4.1)。設定ファイルの channels ブロックは
 // { channels: [...] } の配列を持ち、default エントリを必須で置く (config.md §3.1)。
 
-import { isAbsolute } from "node:path";
-
 import { z } from "zod";
 
-/** skills / extensions に書けるパス。絶対パス、または設定ファイルの場所からの
- * 相対 (./ か ../ 始まり) のみ (config.md §3.5)。裸の相対パス ("foo/bar") は
- * 基準ディレクトリが曖昧になるため schema で弾く。相対パスの絶対化は
- * ConfigSource (config-source.ts resolveFileReferences) が行う。 */
-const PathRefSchema = z
-  .string()
-  .refine(
-    (value) =>
-      isAbsolute(value) || value.startsWith("./") || value.startsWith("../"),
-    {
-      message:
-        'path must be absolute or start with "./" (relative to the config file)',
-    },
-  );
+import { AgentConfigSchema } from "./agent-config.js";
 
 /** Gate の種別ごとに要るパラメータだけを refinement で強制する (config.md §4.5)。
  * keyword は pattern 必須、classifier は criteria 必須、reaction は emoji 必須
@@ -43,7 +33,7 @@ const GateSchema = z
     pattern: z.string().optional(),
     criteria: z.string().optional(),
     /** この classifier ノードの判定モデル (省略時はコード既定)。
-     * ChannelDocSchema.model (pi 本体用) とは別物 (config.md §4.1)。 */
+     * AgentConfig.model (pi 本体用) とは別物 (config.md §4.1)。 */
     model: z.string().optional(),
     /** reaction gate が trigger する emoji 名の一覧 (Slack の正規化名。例 "eyes")。 */
     emoji: z.array(z.string()).optional(),
@@ -124,47 +114,21 @@ const TriggerSchema = z
     /** bot 投稿 (自分自身を除く) を gate 評価に届ける opt-in。既定 false = bot
      * 投稿では起動しない (config.md §4.3)。 */
     allowBots: z.boolean().optional(),
+    /** 実行中 Session に届いたメッセージの扱い (config.md §4.4)。
+     * "passthrough" (既定) は Gate を省略して steering へ渡す、"evaluate" は
+     * 実行中でも毎回 when を評価する。 */
+    whileRunning: z.enum(["passthrough", "evaluate"]).optional(),
   })
   .strict();
 
-/** 実行時 ChannelDoc (channel 解決後)。config.md §1.2, §1.3 のフィールド定義に対応。 */
-export const ChannelDocSchema = z
+export type Trigger = z.infer<typeof TriggerSchema>;
+
+/** Channel 単位のメッセージ処理設定 (config.md §1.2) + その Channel 固有の
+ * Agent Config。`agent` 以外の 3 フィールド (trigger / session / reply) が
+ * 「Channel 部分」で、config-source.ts のマージでは agent と別々に扱う。 */
+export const ChannelConfigSchema = z
   .object({
-    systemPrompt: z.string().optional(),
-    context: z.array(z.string()).optional(),
     trigger: TriggerSchema.optional(),
-    /** pi の --model にそのまま渡す。`provider/model-id[:thinking-level]` の
-     * canonical 形式を必須とする (pi の shorthand)。provider prefix が無い bare id は
-     * pi 側の fuzzy match で解決先 provider が非決定になり、ADC marker の判定
-     * (runtime.ts buildPiArgs) もできないため fail-loud で弾く。
-     * model-id 側の解釈 (thinking suffix・fuzzy match) は pi に委譲する。 */
-    model: z
-      .string()
-      .refine((v) => v.includes("/"), {
-        message:
-          'model must be in canonical "provider/model-id" form (e.g. "google-vertex/gemini-3.5-flash")',
-      })
-      .optional(),
-    /** pi の --tools に渡す allowlist。--tools は extension ツール (reply 含む) にも
-     * 適用されるため、bridge が reply を自動補完する (runtime.ts buildPiArgs) */
-    tools: z.array(z.string()).optional(),
-    /** pi の --exclude-tools に渡す denylist */
-    excludeTools: z.array(z.string()).optional(),
-    /** チャンネル別に追加ロードする skill。pi の --skill にそのまま渡す
-     * (SKILL.md を直接含む単体 skill dir でも、複数 skill を束ねた親 dir でも
-     * よい — pi が再帰発見する)。$AGENT_HOME/.pi/agent/skills/ の自動発見分
-     * (全チャンネル共通) への追加 (additive) であり、共通分を外す手段ではない
-     * (config.md §1.3) */
-    skills: z.array(PathRefSchema).optional(),
-    /** チャンネル別に追加ロードする extension (.ts/.js のファイルパス。pi の
-     * --extension はディレクトリを受けない)。常時注入の組み込み
-     * (reply/permission-gate/export) と $AGENT_HOME/.pi/agent/extensions/ の
-     * 自動列挙分への追加 (additive) (config.md §1.3) */
-    extensions: z.array(PathRefSchema).optional(),
-    /** 組み込み memory skill の配線 (docs/design/runtime.md §4.4)。shared 有効
-     * (env SHARED_DIR 設定時) の既定は true で、false でチャンネル単位に外せる
-     * (opt-out)。shared 無効時はこの値に関わらず配線されない */
-    memory: z.boolean().optional(),
     /** セッション (文脈) の単位。session-model.md §2 */
     session: z
       .object({
@@ -194,17 +158,18 @@ export const ChannelDocSchema = z
       })
       .strict()
       .optional(),
+    /** この Channel 固有の Agent Config (config.md §1.3)。トップレベル `agent`
+     * ブロックを土台に、フィールド単位で上書きする (config.md §3.2)。 */
+    agent: AgentConfigSchema.optional(),
   })
   .strict();
 
-export type ChannelDoc = z.infer<typeof ChannelDocSchema>;
+export type ChannelConfig = z.infer<typeof ChannelConfigSchema>;
 
-export type Trigger = z.infer<typeof TriggerSchema>;
-
-/** channels ブロックの 1 エントリ。ChannelDoc に「どのチャンネル向けか」を示す
+/** channels ブロックの 1 エントリ。ChannelConfig に「どのチャンネル向けか」を示す
  * `channel` フィールドを加えたもの (config.md §3.1)。channel は "#name" /
  * チャンネル ID、または予約名 "default" / "dm"。 */
-export const ChannelEntrySchema = ChannelDocSchema.extend({
+export const ChannelEntrySchema = ChannelConfigSchema.extend({
   channel: z.string(),
 }).strict();
 

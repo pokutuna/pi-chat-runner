@@ -10,7 +10,7 @@
 import { lstat, realpath } from "node:fs/promises";
 import { isAbsolute, relative, resolve } from "node:path";
 
-import type { ChannelDoc } from "../config/channel-doc.js";
+import type { ResolvedChannel } from "../config/config-source.js";
 import type { EgressRouter } from "../egress/router.js";
 import type { ReactionState, TurnReactor } from "../egress/turn-reactor.js";
 import type { InboundMessage } from "../ingress/chat-event.js";
@@ -75,8 +75,9 @@ export interface SessionContext {
   piBinary: string | undefined;
   /** 解決済みの pi 本体 entrypoint JS */
   piEntrypoint: string | undefined;
-  /** allowlist (PATH/HOME) に追加で pi 子プロセスへ渡す env (kick 時に HOME を
-   * agentHomeReal で上書きしたものを都度合成するための素材) */
+  /** Runner レベルのコード既定 env (gcpEnv / PI_EXPORT_ENTRYPOINT)。Channel ごとの
+   * Agent Config の env (config.md §1.3) と HOME=agentHomeReal は kick 時に
+   * この上へ重ねて合成する (runner.ts) */
   extraEnv: Record<string, string> | undefined;
   /** pi 子プロセスの実行 uid/gid (両方指定時のみ有効) */
   agentUid: number | undefined;
@@ -113,7 +114,7 @@ export interface ActiveSessionOptions {
  * ctx (SessionContext) 側にあるためここには含まない */
 export interface StartArgs {
   triggerEvent: InboundMessage;
-  doc: ChannelDoc | null;
+  channel: ResolvedChannel | null;
   /** PiProcess construction 用 */
   sessionPath: string;
   extensionPaths: string[];
@@ -221,7 +222,7 @@ export class ActiveSession {
     const { channelId, threadTs, workdir, policy } = this;
     const {
       triggerEvent,
-      doc,
+      channel,
       sessionPath,
       extensionPaths,
       workdirReal,
@@ -242,7 +243,7 @@ export class ActiveSession {
       cwd: workdirReal,
       appendSystemPrompt: buildSystemPrompt(
         sessionKey,
-        doc,
+        channel,
         mentionFormat,
         sharedDirReal !== undefined,
         memoryIndex,
@@ -250,9 +251,11 @@ export class ActiveSession {
       ...(piBinary !== undefined ? { piBinary } : {}),
       ...(piEntrypoint !== undefined ? { piEntrypoint } : {}),
       ...(model !== undefined ? { model } : {}),
-      ...(doc?.tools !== undefined ? { tools: doc.tools } : {}),
-      ...(doc?.excludeTools !== undefined
-        ? { excludeTools: doc.excludeTools }
+      ...(channel?.agent.tools !== undefined
+        ? { tools: channel.agent.tools }
+        : {}),
+      ...(channel?.agent.excludeTools !== undefined
+        ? { excludeTools: channel.agent.excludeTools }
         : {}),
       ...(skillPaths.length > 0 ? { skillPaths } : {}),
       ...(extraEnv !== undefined ? { extraEnv } : {}),
@@ -453,7 +456,7 @@ export class ActiveSession {
 
     // enqueue 済みの入力 (spawn 準備中に積まれた分を含む) を束ねて初回 prompt にする。
     // トリガーイベント自身も enqueue 済みなので通常 drain 経由で届く。
-    // ChannelDoc.context は初回のみ先頭に注入する (config.md §1.3)
+    // AgentConfig.context は初回のみ先頭に注入する (config.md §1.3)
     const items = (await this.#ctx.controlState.inbox.drain(sessionKey)).filter(
       (i) => !this.#promptedIds.has(i.id),
     );
@@ -479,7 +482,7 @@ export class ActiveSession {
     this.#resetTurnTimeout();
     // このターンの進捗投稿先を先頭発言の宛先にする (progress.ts の reset 参照)
     this.#progress.reset(leadKey);
-    proc.prompt(prependContext(body, doc));
+    proc.prompt(prependContext(body, channel));
 
     // Session の実行状況 (state.md §3.2)。startedAt は sessionKey に紐づく Session の
     // 開始時刻なので、resume では既存のものを引き継ぐ。endedAt を書かない = 稼働中

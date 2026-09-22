@@ -21,11 +21,16 @@ no Slack App or tokens needed.
 ### Write an agent.yaml
 
 ```yaml
-# agent.yaml
-store:
-  backend: memory
+# agent.yaml — exactly three top-level blocks: system, agent, channels
+system:
+  state:
+    control:
+      backend: memory
 
 agent:
+  model: anthropic/claude-sonnet-5   # pi's provider/model-id shorthand
+  systemPrompt: >
+    You are a helpful assistant running inside a chat. Keep replies short.
   env:
     # the pi child process gets an allowlisted env — name the vars to forward.
     # ${env.*} reads the runner process's environment (the -e flags below)
@@ -33,9 +38,6 @@ agent:
 
 channels:
   - channel: "default"
-    model: anthropic/claude-sonnet-5   # pi's provider/model-id shorthand
-    systemPrompt: >
-      You are a helpful assistant running inside a chat. Keep replies short.
     trigger:
       when:
         - kind: mention
@@ -284,22 +286,27 @@ Session export needs no command — just ask (`@bot export this session`): the a
 
 One YAML file, pointed at by `CONFIG_PATH` (default `examples/config/agent.yaml`; the filename is up to you):
 
-- **`connector` / `store` / `agent` sections** — bridge-wide, read once at boot: Slack connector (mode/tokens), store backend, agent turn timeout and runtime (UID separation, env passthrough to the pi child process). These sections support `${env.X}` / `${env.X:-default}` references to pull values from the process environment (secrets included).
-- **`channels` section** — per-channel behavior, re-read on every message (no restart needed): trigger gates, `systemPrompt`, `model` (pi's `provider/model-id[:thinking-level]` shorthand; the provider prefix is required), `tools`/`excludeTools`, session mode, and per-channel `skills`/`extensions` (paths to image-baked skills/extensions, loaded in addition to the common ones under `$AGENT_HOME/.pi/agent/`). An array listing all channels, with a required `default` entry as the fallback. `systemPrompt`/`context` values starting with `./` are read as files relative to the config file's directory; relative `skills`/`extensions` paths resolve from there too.
+Exactly three top-level blocks — anything else is an error:
+
+- **`system`** — the runner process itself, read once at boot: chat connector (`system.chat.slack`, mode/tokens), state backends (`system.state.control` / `system.state.agent`), the pi child process's execution environment (`system.runtime`: UID separation, HOME, Permission Model), and timing defaults (`turnTimeoutMs`, `progressNoticeIntervalMs`, `leaseTtlMs`, `lingerMs`). This is the only block where `${env.X}` / `${env.X:-default}` references are resolved (secrets included).
+- **`agent`** — the default Agent Config shared by every channel: `systemPrompt`, `context`, `model` (pi's `provider/model-id[:thinking-level]` shorthand; the provider prefix is required), `tools`/`excludeTools`, `skills`/`extensions` (paths to image-baked assets, loaded in addition to the common ones under `$AGENT_HOME/.pi/agent/`), `memory`, and `env`.
+- **`channels`** — per-channel behavior, re-read on every message (no restart needed): trigger gates, session mode, reply mode, plus a per-channel `agent:` block overriding any Agent Config field. An array listing all channels, with a required `default` entry as the fallback.
+
+`agent` and `channels` are re-read on every message. `systemPrompt`/`context` values starting with `./` are read as files relative to the config file's directory; relative `skills`/`extensions` paths resolve from there too. The Channel part (`trigger`/`session`/`reply`) merges in two stages (`channels[default]` → `channels[id]`); the Agent part merges in three (`agent` → `channels[default].agent` → `channels[id].agent`). Every merge replaces a whole field — there is no deep merge. `${env.X}` is *not* resolved in `agent`/`channels`, with one exception: `agent.env` / `channels[].agent.env` values, which are the env handed to the pi child process.
 
 A `channels` section excerpt:
 
 ```yaml
 channels:
   - channel: "default"       # fallback for channels with no matching entry
-    model: google-vertex/gemini-3.5-flash
-    systemPrompt: ./prompts/ask-ai.md
     trigger:
       when:
         - kind: mention
 
   - channel: "C0000000001"
-    systemPrompt: ./prompts/ask-ai.md
+    agent:                   # per-channel Agent Config override (field-by-field)
+      model: google-vertex/gemini-3-pro
+      systemPrompt: ./prompts/ask-ai.md
     trigger:
       # when is a boolean tree of gates: a bare array is OR, {and}/{or} compose explicitly.
       when:
@@ -325,7 +332,7 @@ channels:
         - and: [{ kind: sender, is: bot }, { kind: keyword, pattern: "ALERT|CRITICAL" }]
 ```
 
-DB defaults to in-memory (`store.backend: memory` in `agent.yaml`); set it to `sqlite` (default path `/tmp/pi-chat-runner/state.db`) or `firestore` for persistence. Workdir archival defaults to no-op unless the `WORKDIR_ARCHIVE_DIR` env var is set. See [docs/design/state.md](docs/design/state.md).
+DB defaults to in-memory (`system.state.control.backend: memory` in `agent.yaml`); set it to `sqlite` (default path `/tmp/pi-chat-runner/state.db`) or `firestore` for persistence. Workdir archival defaults to no-op unless the `WORKDIR_ARCHIVE_DIR` env var is set. See [docs/design/state.md](docs/design/state.md).
 
 See [`examples/config/agent.yaml`](examples/config/agent.yaml) for an annotated template. Full schema and semantics: [docs/design/config.md](docs/design/config.md).
 
@@ -333,7 +340,7 @@ To see what a channel's merged (default/dm + channel entry) config actually reso
 
 ### Model and credentials
 
-The LLM is chosen in the `channels` section — `default.model`, overridable per channel — in pi's canonical `provider/model-id[:thinking-level]` form (`google-vertex/gemini-3.5-flash`, `anthropic/claude-opus-4-8:high`); the value is handed to pi's `--model` as-is, so the provider list and model shorthands are [pi](https://github.com/earendil-works/pi)'s. A classifier gate judges with its own `model` field on the gate node, independent of the channel's model.
+The LLM is chosen by `agent.model`, overridable per channel via `channels[].agent.model` — in pi's canonical `provider/model-id[:thinking-level]` form (`google-vertex/gemini-3.5-flash`, `anthropic/claude-opus-4-8:high`); the value is handed to pi's `--model` as-is, so the provider list and model shorthands are [pi](https://github.com/earendil-works/pi)'s. A classifier gate judges with its own `model` field on the gate node, independent of the channel's model.
 
 Credentials are env vars read by pi itself, but the pi child process gets an allowlisted environment, not the runner's: the built-in defaults (`GOOGLE_CLOUD_PROJECT` / `GOOGLE_CLOUD_LOCATION` / `GOOGLE_APPLICATION_CREDENTIALS`, so `google-vertex` works via ADC with nothing extra) plus whatever `agent.env` names explicitly. For any other provider, forward its API key:
 
@@ -354,7 +361,7 @@ pnpm run dev          # real Slack, Events API
 
 ### Without Slack: `dev:local`
 
-`dev:local` runs the whole pipeline — gate → inbox → session (real pi) → egress — against a terminal UI ([ink](https://github.com/vadimdemedes/ink)) split top/bottom into a log pane (structured pino logs; pi-agent events are tagged `[pi]`, runner components `[session]` etc.) and a chat pane (conversation + input), keeping the two readable instead of interleaving on one stdout. Each pane tails its latest output; arrow keys / PageUp-Down scroll the focused pane (Tab cycles focus, the focused pane is marked `*`), C-p / C-n recall input history, and the mouse wheel scrolls the pane under the cursor. No Slack App or tokens required; put only the model credentials (e.g. `GOOGLE_CLOUD_PROJECT`) in `.env.local`. Config is read from `CONFIG_PATH` as usual: the `connector` section is ignored, and `channels`/`store`/`agent` apply as-is, so passing a real channel ID (`node dist/server.mjs local C0123456789`) exercises that channel's production config. The default channel ID is `local` — the example `agent.yaml` ships a matching entry.
+`dev:local` runs the whole pipeline — gate → inbox → session (real pi) → egress — against a terminal UI ([ink](https://github.com/vadimdemedes/ink)) split top/bottom into a log pane (structured pino logs; pi-agent events are tagged `[pi]`, runner components `[session]` etc.) and a chat pane (conversation + input), keeping the two readable instead of interleaving on one stdout. Each pane tails its latest output; arrow keys / PageUp-Down scroll the focused pane (Tab cycles focus, the focused pane is marked `*`), C-p / C-n recall input history, and the mouse wheel scrolls the pane under the cursor. No Slack App or tokens required; put only the model credentials (e.g. `GOOGLE_CLOUD_PROJECT`) in `.env.local`. Config is read from `CONFIG_PATH` as usual: the `system.chat` section is ignored, and `channels` / the rest of `system` / `agent` apply as-is, so passing a real channel ID (`node dist/server.mjs local C0123456789`) exercises that channel's production config. The default channel ID is `local` — the example `agent.yaml` ships a matching entry.
 
 Chat pane interaction (log pane omitted for brevity):
 
@@ -374,7 +381,7 @@ For a guided tour, [`examples/local-demo/`](examples/local-demo/) ships a ready-
 
 ### Against real Slack
 
-Create a Slack App from the `examples/slack-app-manifest.*.yaml` templates and put its credentials in the env file your dev script reads — the variable names are the `${env.*}` references in `examples/config/agent.yaml`. Whether the connector uses Socket Mode or the Events API is Slack-connector config (`connector.slack.mode`), invisible to the rest of the pipeline. What only real Slack can verify — actual mrkdwn rendering, file uploads, rate limits — needs this layer.
+Create a Slack App from the `examples/slack-app-manifest.*.yaml` templates and put its credentials in the env file your dev script reads — the variable names are the `${env.*}` references in `examples/config/agent.yaml`. Whether the connector uses Socket Mode or the Events API is Slack chat config (`system.chat.slack.mode`), invisible to the rest of the pipeline. What only real Slack can verify — actual mrkdwn rendering, file uploads, rate limits — needs this layer.
 
 ### Checks
 

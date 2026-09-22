@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ChannelsFileSchema } from "../../src/config/channel-doc.js";
+import { ChannelsFileSchema } from "../../src/config/channel-config.js";
 import { formatEffectiveConfig, formatWhen } from "../../src/config/dump.js";
 
 describe("formatEffectiveConfig", () => {
@@ -9,29 +9,109 @@ describe("formatEffectiveConfig", () => {
       channels: [
         {
           channel: "default",
-          model: "google/gemini-default",
           trigger: { when: [{ kind: "mention" }] },
+          agent: { model: "google/gemini-default" },
         },
-        { channel: "C1", systemPrompt: "p", model: "google/gemini-x" },
+        {
+          channel: "C1",
+          agent: { systemPrompt: "p", model: "google/gemini-x" },
+        },
       ],
     });
 
     const out = formatEffectiveConfig(file, "C1", { json: false });
 
     expect(out).toContain("channel: C1");
-    expect(out).toMatch(/model:\s+google\/gemini-x\s+← channel/);
-    expect(out).toMatch(/systemPrompt:.*← channel/);
+    // Channel 部分と Agent 部分は別セクションに分かれる (config.md §5)
+    expect(out).toContain("[channel]");
+    expect(out).toContain("[agent]");
+    expect(out).toMatch(/model:\s+google\/gemini-x\s+← channel agent/);
+    expect(out).toMatch(/systemPrompt:.*← channel agent/);
     expect(out).toContain("OR[ mention ]");
     expect(out).toMatch(/trigger\.when:.*← default/);
   });
 
-  it("formats the default doc alone (id has no matching entry) with all fields '← default'", () => {
+  it("labels top-level agent block fields '← default agent'", () => {
+    const file = ChannelsFileSchema.parse({
+      channels: [
+        { channel: "default", trigger: { when: [{ kind: "mention" }] } },
+      ],
+    });
+
+    const out = formatEffectiveConfig(file, "C1", {
+      json: false,
+      defaultAgent: { model: "google/gemini-top" },
+    });
+    expect(out).toMatch(/model:\s+google\/gemini-top\s+← default agent/);
+  });
+
+  it("dumps memory: false set on the default entry's agent as '← channel agent'", () => {
     const file = ChannelsFileSchema.parse({
       channels: [
         {
           channel: "default",
-          model: "google/gemini-default",
           trigger: { when: [{ kind: "mention" }] },
+          agent: { memory: false },
+        },
+      ],
+    });
+
+    const out = formatEffectiveConfig(file, "C_NOT_FOUND", {
+      json: false,
+      defaultAgent: { memory: true },
+    });
+    expect(out).toMatch(/memory:\s+false\s+← channel agent/);
+  });
+
+  it("dumps memory from the top-level agent block as '← default agent'", () => {
+    const file = ChannelsFileSchema.parse({
+      channels: [
+        { channel: "default", trigger: { when: [{ kind: "mention" }] } },
+      ],
+    });
+
+    const out = formatEffectiveConfig(file, "C_NOT_FOUND", {
+      json: false,
+      defaultAgent: { memory: false },
+    });
+    expect(out).toMatch(/memory:\s+false\s+← default agent/);
+  });
+
+  it("shows memory's code default (true) when nothing sets it", () => {
+    const file = ChannelsFileSchema.parse({
+      channels: [
+        { channel: "default", trigger: { when: [{ kind: "mention" }] } },
+      ],
+    });
+
+    const out = formatEffectiveConfig(file, "C_NOT_FOUND", { json: false });
+    expect(out).toMatch(/memory:\s+true\s+← code default/);
+  });
+
+  // dump は agent.env の ${env.X} を解決しない — 書かれたままの参照文字列を出す
+  // (config.md §2.1, §5)。この経路が secret を漏らさない保証そのもの。
+  it("prints agent.env values as the unresolved reference string", () => {
+    const file = ChannelsFileSchema.parse({
+      channels: [
+        {
+          channel: "default",
+          trigger: { when: [{ kind: "mention" }] },
+          agent: { env: { PAGERDUTY_TOKEN: "${env.PAGERDUTY_TOKEN}" } },
+        },
+      ],
+    });
+
+    const out = formatEffectiveConfig(file, "C_NOT_FOUND", { json: false });
+    expect(out).toContain("{PAGERDUTY_TOKEN=${env.PAGERDUTY_TOKEN}}");
+  });
+
+  it("formats the default entry alone (id has no matching entry) with all fields '← default'", () => {
+    const file = ChannelsFileSchema.parse({
+      channels: [
+        {
+          channel: "default",
+          trigger: { when: [{ kind: "mention" }] },
+          agent: { model: "google/gemini-default" },
         },
       ],
     });
@@ -39,18 +119,25 @@ describe("formatEffectiveConfig", () => {
     const out = formatEffectiveConfig(file, "C_NOT_FOUND", { json: false });
 
     expect(out).toContain("channel: C_NOT_FOUND");
-    expect(out).toMatch(/model:\s+google\/gemini-default\s+← default/);
+    expect(out).toMatch(/model:\s+google\/gemini-default\s+← channel agent/);
     expect(out).toMatch(/trigger\.when:.*OR\[ mention \].*← default/);
+  });
+
+  it("shows '(pi default)' for an unset model", () => {
+    const file = ChannelsFileSchema.parse({
+      channels: [
+        { channel: "default", trigger: { when: [{ kind: "mention" }] } },
+      ],
+    });
+    const out = formatEffectiveConfig(file, "C_NOT_FOUND", { json: false });
+    expect(out).toMatch(/model:\s+\(pi default\)\s+← code default/);
   });
 
   it("formats a DM with a dm entry: dm-authored fields show '← dm' (no inheritance from default)", () => {
     const file = ChannelsFileSchema.parse({
       channels: [
-        {
-          channel: "default",
-          trigger: { when: [{ kind: "mention" }] },
-        },
-        { channel: "dm", systemPrompt: "dm p" },
+        { channel: "default", trigger: { when: [{ kind: "mention" }] } },
+        { channel: "dm", reply: { mode: "flat" } },
       ],
     });
 
@@ -58,18 +145,17 @@ describe("formatEffectiveConfig", () => {
 
     expect(out).toContain("channel: dm (dm)");
     // dm エントリ由来のフィールドは provenance "dm" になる (default/channel ではない)
-    expect(out).toMatch(/systemPrompt:.*← dm/);
-    expect(out).not.toMatch(/systemPrompt:.*← default/);
-    expect(out).not.toMatch(/systemPrompt:.*← channel/);
+    expect(out).toMatch(/reply\.mode:\s+flat\s+← dm/);
+    // default の trigger は継承しない
+    expect(out).toMatch(/trigger\.when:\s+disabled\s+← code default/);
 
-    // DM 既定は session.mode=channel / reply.mode=flat (doc に無く、default も継承しない)
+    // DM 既定は session.mode=channel (エントリに無く、default も継承しない)
     expect(out).toMatch(/session\.mode:\s+channel\s+← code default/);
-    expect(out).toMatch(/reply\.mode:\s+flat\s+← code default/);
   });
 
   it("formats DM code default (no dm entry) as disabled in pretty mode", () => {
     const file = ChannelsFileSchema.parse({
-      channels: [{ channel: "default", systemPrompt: "default prompt" }],
+      channels: [{ channel: "default" }],
     });
 
     const out = formatEffectiveConfig(file, "dm", { json: false });
@@ -80,7 +166,7 @@ describe("formatEffectiveConfig", () => {
 
   it("formats DM code default (no dm entry) in json mode", () => {
     const file = ChannelsFileSchema.parse({
-      channels: [{ channel: "default", systemPrompt: "default prompt" }],
+      channels: [{ channel: "default" }],
     });
 
     const out = formatEffectiveConfig(file, "dm", { json: true });
@@ -92,26 +178,98 @@ describe("formatEffectiveConfig", () => {
     expect(payload.note).toMatch(/disabled for dm/);
   });
 
-  it("formats a normal channel in json mode with fields and when tree", () => {
+  it("formats a normal channel in json mode with channel/agent fields and the when tree", () => {
     const file = ChannelsFileSchema.parse({
       channels: [
         {
           channel: "default",
-          model: "google/gemini-default",
           trigger: { when: [{ kind: "mention" }] },
+          agent: { model: "google/gemini-default" },
         },
-        { channel: "C1", model: "google/gemini-x" },
+        { channel: "C1", agent: { model: "google/gemini-x" } },
       ],
     });
 
-    const out = formatEffectiveConfig(file, "C1", { json: true });
+    const out = formatEffectiveConfig(file, "C1", {
+      json: true,
+      defaultAgent: { memory: false },
+    });
     const payload = JSON.parse(out);
 
     expect(payload.channel).toBe("C1");
     expect(payload.isDm).toBe(false);
-    expect(payload.fields.model.value).toBe("google/gemini-x");
-    expect(payload.fields.model.source).toBe("channel");
+    expect(payload.agentFields.model.value).toBe("google/gemini-x");
+    expect(payload.agentFields.model.source).toBe("channel agent");
+    expect(payload.agentFields.memory.value).toBe(false);
+    expect(payload.agentFields.memory.source).toBe("default agent");
+    expect(payload.channelFields["reply.mode"].source).toBe("code default");
     expect(payload.when).toEqual([{ kind: "mention" }]);
+  });
+
+  it("prints agent.env unresolved in json mode too", () => {
+    const file = ChannelsFileSchema.parse({
+      channels: [
+        {
+          channel: "default",
+          agent: { env: { GH_TOKEN: "${env.GH_TOKEN}" } },
+        },
+      ],
+    });
+
+    const payload = JSON.parse(
+      formatEffectiveConfig(file, "C_NOT_FOUND", { json: true }),
+    );
+    expect(payload.agentFields.env.value).toEqual({
+      GH_TOKEN: "${env.GH_TOKEN}",
+    });
+  });
+});
+
+describe("formatEffectiveConfig: trigger.whileRunning", () => {
+  it("shows the code default (passthrough) when unset", () => {
+    const file = ChannelsFileSchema.parse({
+      channels: [
+        { channel: "default", trigger: { when: [{ kind: "mention" }] } },
+      ],
+    });
+    const out = formatEffectiveConfig(file, "C_NOT_FOUND", { json: false });
+    expect(out).toMatch(
+      /trigger\.whileRunning:\s+passthrough\s+← code default/,
+    );
+  });
+
+  it("shows an explicit whileRunning with its provenance", () => {
+    const file = ChannelsFileSchema.parse({
+      channels: [
+        { channel: "default", trigger: { when: [{ kind: "mention" }] } },
+        {
+          channel: "C1",
+          trigger: { when: [{ kind: "mention" }], whileRunning: "evaluate" },
+        },
+      ],
+    });
+    const out = formatEffectiveConfig(file, "C1", { json: false });
+    expect(out).toMatch(/trigger\.whileRunning:\s+evaluate\s+← channel/);
+  });
+
+  it("includes trigger.whileRunning in json output", () => {
+    const file = ChannelsFileSchema.parse({
+      channels: [
+        {
+          channel: "default",
+          trigger: { when: [{ kind: "mention" }], whileRunning: "evaluate" },
+        },
+      ],
+    });
+    const payload = JSON.parse(
+      formatEffectiveConfig(file, "C_NOT_FOUND", { json: true }),
+    );
+    expect(payload.channelFields["trigger.whileRunning"].value).toBe(
+      "evaluate",
+    );
+    expect(payload.channelFields["trigger.whileRunning"].source).toBe(
+      "default",
+    );
   });
 });
 
@@ -140,6 +298,23 @@ describe("formatWhen", () => {
   it("formats a sender leaf with its is value", () => {
     const out = formatWhen([{ kind: "sender", is: "bot" }]);
     expect(out).toBe("OR[ sender(is=bot) ]");
+  });
+
+  // is を書かず name / id だけで絞る形も有効 (config.md §4.2)。
+  // 未指定の is を "is=undefined" と出さないこと。
+  it("formats a sender leaf that filters by name only", () => {
+    const out = formatWhen([{ kind: "sender", name: ["alice", "bob"] }]);
+    expect(out).toBe("OR[ sender(name=[alice, bob]) ]");
+  });
+
+  it("formats a sender leaf that filters by id only", () => {
+    const out = formatWhen([{ kind: "sender", id: ["U01"] }]);
+    expect(out).toBe("OR[ sender(id=[U01]) ]");
+  });
+
+  it("formats a sender leaf combining is and name", () => {
+    const out = formatWhen([{ kind: "sender", is: "human", name: ["alice"] }]);
+    expect(out).toBe("OR[ sender(is=human, name=[alice]) ]");
   });
 });
 
@@ -188,7 +363,9 @@ describe("formatEffectiveConfig: trigger.allowBots", () => {
 
     const out = formatEffectiveConfig(file, "C_NOT_FOUND", { json: true });
     const payload = JSON.parse(out);
-    expect(payload.fields["trigger.allowBots"].value).toBe(null);
-    expect(payload.fields["trigger.allowBots"].source).toBe("code default");
+    expect(payload.channelFields["trigger.allowBots"].value).toBe(null);
+    expect(payload.channelFields["trigger.allowBots"].source).toBe(
+      "code default",
+    );
   });
 });

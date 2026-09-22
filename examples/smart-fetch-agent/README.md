@@ -17,7 +17,7 @@ and applies it to **every** channel (see
 and `gc-logging-agent`'s `extensions/init-gcloud.ts` for that pattern).
 
 This example deliberately does the opposite: `pi-smart-fetch` is listed in
-`config/agent.yaml`'s `channels[].extensions` for one specific channel
+`config/agent.yaml`'s `channels[].agent.extensions` for one specific channel
 (`C0000000001`), and the `default` channel has no `extensions:` entry at all.
 The extension's file lives at `/app/node_modules/pi-smart-fetch/dist/index.js`
 — outside `$AGENT_HOME/.pi/agent/extensions/` — precisely so it is *not*
@@ -56,13 +56,13 @@ base `Dockerfile`) before running `pi install`, so the package lands owned by
 `agent:agent` under `$AGENT_HOME/.pi/agent/npm/node_modules/` with no `chown`
 step needed, and gets registered in `$AGENT_HOME/.pi/agent/settings.json`'s
 `packages` list — the same mechanism `pi install` uses outside this runner.
-Because this path *is* pi's auto-discovery path, no `channels[].extensions`
+Because this path *is* pi's auto-discovery path, no `channels[].agent.extensions`
 entry is needed at all; every channel picks it up automatically. This trades
 away the per-channel scoping (and its cost containment) this example
 otherwise demonstrates — use it only when every channel the bot serves should
 have the capability (and its `allowAddons` cost — see below).
 
-## Why `agent.runtime.allowAddons` is needed
+## Why `system.runtime.allowAddons` is needed
 
 `pi-smart-fetch` depends on a native addon (`wreq-js`, a Rust N-API binary).
 Node's Permission Model (`--permission`, on by default for the pi child
@@ -70,7 +70,7 @@ process — see `docs/design/runtime.md` §5.2) rejects loading native addons
 (`.node` files) unless `--allow-addons` is passed. `pi-smart-fetch` would
 otherwise fail to load under this runner.
 
-`agent.runtime.allowAddons` (default `false` across the repo) is the opt-in
+`system.runtime.allowAddons` (default `false` across the repo) is the opt-in
 for this: setting it `true` adds `--allow-addons` to the pi child process's
 flags (env override: `PI_ALLOW_ADDONS`). This example sets its default to
 `true` in `config/agent.yaml`, since enabling `pi-smart-fetch` is the whole

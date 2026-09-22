@@ -20,8 +20,11 @@ import pino from "pino";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ClassifierClient } from "../../src/classifier/client.js";
-import type { ChannelDoc } from "../../src/config/channel-doc.js";
-import type { ConfigSource } from "../../src/config/config-source.js";
+import type { ChannelConfig } from "../../src/config/channel-config.js";
+import type {
+  ConfigSource,
+  ResolvedChannel,
+} from "../../src/config/config-source.js";
 import { type ChatPoster, EgressRouter } from "../../src/egress/router.js";
 import { SlackTurnReactor } from "../../src/egress/slack/turn-reactor.js";
 import type {
@@ -87,10 +90,16 @@ class FakePoster implements ChatPoster {
   }
 }
 
+/** テストは YAML と同じ ChannelConfig 形 (agent フィールドが agent: の下) で
+ * 書き、ここで ResolvedChannel (agent 必須) へ均す — 実ローダーの 3 段マージを
+ * 通さないぶん、agent は書かれたものをそのまま採用する。 */
 class FakeConfigSource implements ConfigSource {
-  constructor(private readonly docs: Record<string, ChannelDoc>) {}
-  async channel(id: string): Promise<ChannelDoc | null> {
-    return this.docs[id] ?? null;
+  constructor(private readonly configs: Record<string, ChannelConfig>) {}
+  async channel(id: string): Promise<ResolvedChannel | null> {
+    const config = this.configs[id];
+    if (config === undefined) return null;
+    const { agent = {}, ...part } = config;
+    return { ...part, agent };
   }
 }
 
@@ -197,7 +206,7 @@ interface HarnessOptions {
 }
 
 async function harness(
-  docs: Record<string, ChannelDoc> = {},
+  docs: Record<string, ChannelConfig> = {},
   options: HarnessOptions = {},
 ): Promise<Harness> {
   const workdirRoot =
@@ -416,7 +425,7 @@ describe("SessionRunner (fake-pi integration)", () => {
     await writeFile(extensionFile, "export default () => {};\n");
 
     const h = await harness({
-      C01: { skills: [skillDir], extensions: [extensionFile] },
+      C01: { agent: { skills: [skillDir], extensions: [extensionFile] } },
     });
     const trigger = message({ mentionsBot: true, text: "hello" });
     await h.runner.handle(trigger);
@@ -436,7 +445,7 @@ describe("SessionRunner (fake-pi integration)", () => {
 
   it("a nonexistent channel skills path fails the kick loudly", async () => {
     const h = await harness({
-      C01: { skills: ["/does/not/exist/skill"] },
+      C01: { agent: { skills: ["/does/not/exist/skill"] } },
     });
     const trigger = message({ mentionsBot: true, text: "hello" });
     await h.runner.handle(trigger);
@@ -508,7 +517,7 @@ describe("SessionRunner (fake-pi integration)", () => {
       join(tmpdir(), "pi-chat-runner-test-shared-"),
     );
     const h = await harness(
-      { C01: { memory: false } },
+      { C01: { agent: { memory: false } } },
       { sharedStore: new CopySharedStore(sharedRoot) },
     );
     const trigger = message({ mentionsBot: true, text: "hello" });
@@ -701,7 +710,7 @@ describe("SessionRunner (fake-pi integration)", () => {
     expect(h.reactions).toEqual([]);
   });
 
-  it("keyword gate from ChannelDoc triggers without a mention", async () => {
+  it("keyword gate from the channel config triggers without a mention", async () => {
     const h = await harness({
       C01: {
         trigger: {
@@ -717,7 +726,7 @@ describe("SessionRunner (fake-pi integration)", () => {
     await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
   });
 
-  it("DM without a 'dm' ChannelDoc never spawns a session (default = disabled)", async () => {
+  it("DM without a 'dm' channel entry never spawns a session (default = disabled)", async () => {
     const h = await harness();
     const trigger = message({
       conversation: { channelId: "D01", isDm: true },
@@ -730,7 +739,7 @@ describe("SessionRunner (fake-pi integration)", () => {
     expect(h.poster.calls).toEqual([]);
   });
 
-  it("reserved 'dm' ChannelDoc overrides the DM default (passthrough trigger)", async () => {
+  it("reserved 'dm' channel entry overrides the DM default (passthrough trigger)", async () => {
     const h = await harness({
       dm: {
         trigger: { when: [{ kind: "passthrough" }] },
@@ -753,9 +762,9 @@ describe("SessionRunner (fake-pi integration)", () => {
     await waitFor(() => h.runner.activeSessionCount === 0, "session removed");
   });
 
-  it("injects ChannelDoc.context into the first prompt only", async () => {
+  it("injects agent.context into the first prompt only", async () => {
     const h = await harness({
-      C01: { context: ["CONTEXT-NOTE"] },
+      C01: { agent: { context: ["CONTEXT-NOTE"] } },
     });
     const trigger = message({ mentionsBot: true, text: "with context" });
 
@@ -2976,7 +2985,7 @@ describe("session.affinity (セッション合流)", () => {
     // alias が失われた状態) でも threads.resolve で合流先 sessionKey を引ける
     // (state.md §3.3)
     const controlState = new InMemoryControlState();
-    const docs: Record<string, ChannelDoc> = {
+    const docs: Record<string, ChannelConfig> = {
       C01: { session: { affinity: { scope: "channel" } } },
     };
     const h1 = await harness(docs, { controlState });
@@ -3242,7 +3251,7 @@ describe("resolveSessionPolicy", () => {
   it("doc の指定が isDm の既定より優先される (DM でも doc 指定が勝つ)", () => {
     expect(
       resolveSessionPolicy(
-        { session: { mode: "thread" }, reply: { mode: "thread" } },
+        { session: { mode: "thread" }, reply: { mode: "thread" }, agent: {} },
         true,
       ),
     ).toEqual({ sessionMode: "thread", replyMode: "thread" });
@@ -3250,7 +3259,7 @@ describe("resolveSessionPolicy", () => {
 
   it("doc の一部指定のみ上書きし、残りは isDm の既定に従う", () => {
     expect(
-      resolveSessionPolicy({ session: { mode: "channel" } }, false),
+      resolveSessionPolicy({ session: { mode: "channel" }, agent: {} }, false),
     ).toEqual({
       sessionMode: "channel",
       replyMode: "thread",

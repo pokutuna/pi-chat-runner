@@ -1,21 +1,24 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  ChannelDocSchema,
+  ChannelConfigSchema,
   ChannelEntrySchema,
   ChannelsFileSchema,
-} from "../../src/config/channel-doc.js";
+} from "../../src/config/channel-config.js";
 
-describe("ChannelDocSchema", () => {
-  it("accepts a minimal empty doc", () => {
-    const result = ChannelDocSchema.safeParse({});
+describe("ChannelConfigSchema", () => {
+  it("accepts a minimal empty config", () => {
+    const result = ChannelConfigSchema.safeParse({});
     expect(result.success).toBe(true);
   });
 
-  it("accepts a full doc with mention/keyword/classifier/passthrough gates", () => {
-    const result = ChannelDocSchema.safeParse({
-      systemPrompt: "be nice",
-      context: ["note1", "note2"],
+  it("accepts a full config with mention/keyword/classifier/passthrough gates", () => {
+    const result = ChannelConfigSchema.safeParse({
+      agent: {
+        systemPrompt: "be nice",
+        context: ["note1", "note2"],
+        model: "google-vertex/gemini-3-pro",
+      },
       trigger: {
         when: [
           { kind: "mention" },
@@ -25,25 +28,35 @@ describe("ChannelDocSchema", () => {
         ],
       },
       session: { affinity: { debounceSec: 30 } },
-      model: "google-vertex/gemini-3-pro",
     });
     expect(result.success).toBe(true);
   });
 
-  it("accepts a model with a thinking-level suffix", () => {
-    const result = ChannelDocSchema.safeParse({
-      model: "google-vertex/gemini-3.1-pro:high",
-    });
-    expect(result.success).toBe(true);
+  // Agent Config は agent ブロックの下にだけ書ける (config.md §1.2, §1.3)。
+  it.each([
+    "systemPrompt",
+    "context",
+    "model",
+    "tools",
+    "excludeTools",
+    "skills",
+    "extensions",
+    "memory",
+    "env",
+  ])("rejects a top-level %s (it belongs under agent)", (key) => {
+    const result = ChannelConfigSchema.safeParse({ [key]: "x" });
+    expect(result.success).toBe(false);
   });
 
-  it("rejects a bare model id without a provider prefix", () => {
-    const result = ChannelDocSchema.safeParse({ model: "gemini-3.5-flash" });
+  it("rejects unknown keys under agent (strict)", () => {
+    const result = ChannelConfigSchema.safeParse({
+      agent: { unknownField: true },
+    });
     expect(result.success).toBe(false);
   });
 
   it("rejects cooldownSec inside trigger (implementation deferred)", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ kind: "mention" }],
         cooldownSec: 60,
@@ -53,7 +66,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("accepts trigger.allowBots as a boolean", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ kind: "mention" }],
         allowBots: true,
@@ -63,7 +76,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("rejects a non-boolean trigger.allowBots", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ kind: "mention" }],
         allowBots: "yes",
@@ -73,7 +86,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("rejects trigger.debounceSec (moved to session.affinity.debounceSec)", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ kind: "mention" }],
         debounceSec: 30,
@@ -83,7 +96,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("accepts session.affinity with scope/windowSec/debounceSec", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       session: {
         mode: "thread",
         affinity: {
@@ -97,29 +110,29 @@ describe("ChannelDocSchema", () => {
   });
 
   it("rejects an unknown session.affinity.scope value", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       session: { affinity: { scope: "global" } },
     });
     expect(result.success).toBe(false);
   });
 
   it("rejects unknown keys inside session.affinity (strict)", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       session: { affinity: { unknownField: true } },
     });
     expect(result.success).toBe(false);
   });
 
   it("rejects unknown top-level keys (strict)", () => {
-    const result = ChannelDocSchema.safeParse({
-      systemPrompt: "hi",
+    const result = ChannelConfigSchema.safeParse({
+      agent: { systemPrompt: "hi" },
       piSettings: { foo: "bar" },
     });
     expect(result.success).toBe(false);
   });
 
   it("rejects unknown keys inside trigger (strict)", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ kind: "mention" }],
         unknownField: true,
@@ -129,7 +142,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("rejects unknown keys inside a gate (strict)", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ kind: "mention", extra: "nope" }],
       },
@@ -139,7 +152,7 @@ describe("ChannelDocSchema", () => {
 
   it("rejects keyword gate without pattern", () => {
     expect(() =>
-      ChannelDocSchema.parse({
+      ChannelConfigSchema.parse({
         trigger: {
           when: [{ kind: "keyword" }],
         },
@@ -149,7 +162,7 @@ describe("ChannelDocSchema", () => {
 
   it("rejects classifier gate without criteria", () => {
     expect(() =>
-      ChannelDocSchema.parse({
+      ChannelConfigSchema.parse({
         trigger: {
           when: [{ kind: "classifier" }],
         },
@@ -158,7 +171,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("accepts a classifier gate with a per-gate model override", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [
           { kind: "classifier", criteria: "infra alert", model: "gemini-x" },
@@ -173,7 +186,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("accepts a reaction gate with a non-empty emoji list", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ kind: "reaction", emoji: ["eyes"] }],
       },
@@ -183,7 +196,7 @@ describe("ChannelDocSchema", () => {
 
   it("rejects reaction gate without emoji", () => {
     expect(() =>
-      ChannelDocSchema.parse({
+      ChannelConfigSchema.parse({
         trigger: {
           when: [{ kind: "reaction" }],
         },
@@ -192,7 +205,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("rejects reaction gate with an empty emoji list", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ kind: "reaction", emoji: [] }],
       },
@@ -201,7 +214,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("accepts a sender gate with is=bot", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ kind: "sender", is: "bot" }],
       },
@@ -210,7 +223,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("accepts a sender gate with is=human", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ kind: "sender", is: "human" }],
       },
@@ -219,7 +232,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("accepts a sender gate with name only", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ kind: "sender", name: ["alice", "bob"] }],
       },
@@ -228,7 +241,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("accepts a sender gate with id only", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ kind: "sender", id: ["U0123456", "U0234567"] }],
       },
@@ -237,7 +250,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("accepts a sender gate with both is and name", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ kind: "sender", is: "human", name: ["alice"] }],
       },
@@ -246,7 +259,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("rejects sender gate with an empty id and no is/name", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ kind: "sender", id: [] }],
       },
@@ -256,7 +269,7 @@ describe("ChannelDocSchema", () => {
 
   it("rejects sender gate with none of is, id, name", () => {
     expect(() =>
-      ChannelDocSchema.parse({
+      ChannelConfigSchema.parse({
         trigger: {
           when: [{ kind: "sender" }],
         },
@@ -265,7 +278,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("rejects sender gate with an empty name and no is", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ kind: "sender", name: [] }],
       },
@@ -274,7 +287,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("rejects sender gate with an invalid is value", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ kind: "sender", is: "robot" }],
       },
@@ -283,7 +296,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("accepts mention/passthrough gates without extra params", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ kind: "mention" }, { kind: "passthrough" }],
       },
@@ -292,7 +305,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("rejects cooldown kind", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ kind: "cooldown" }],
       },
@@ -301,7 +314,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("accepts an 'and' node combining gates", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [
           { and: [{ kind: "mention" }, { kind: "keyword", pattern: "x" }] },
@@ -312,7 +325,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("accepts an 'or' node combining gates", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [
           { or: [{ kind: "mention" }, { kind: "keyword", pattern: "x" }] },
@@ -323,7 +336,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("rejects an 'and' node with unknown keys (strict)", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       trigger: {
         when: [{ and: [], unknownKey: 1 }],
       },
@@ -332,7 +345,7 @@ describe("ChannelDocSchema", () => {
   });
 
   it("accepts session/reply fields", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       session: { mode: "channel", idleResetMinutes: 30, maxTranscriptKb: 512 },
       reply: { mode: "flat" },
     });
@@ -340,22 +353,50 @@ describe("ChannelDocSchema", () => {
   });
 
   it("rejects invalid session.mode value", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       session: { mode: "invalid" },
     });
     expect(result.success).toBe(false);
   });
 
   it("rejects invalid reply.mode value", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       reply: { mode: "invalid" },
     });
     expect(result.success).toBe(false);
   });
 
   it("rejects unknown keys inside session (strict)", () => {
-    const result = ChannelDocSchema.safeParse({
+    const result = ChannelConfigSchema.safeParse({
       session: { mode: "thread", unknownField: true },
+    });
+    expect(result.success).toBe(false);
+  });
+
+  // trigger.whileRunning: 実行中セッションがあるレーンで gate を再評価するか
+  // (config.md §4.4)。Phase 3 時点では解析・マージ・dump のみ。
+  it.each(["passthrough", "evaluate"])(
+    "accepts trigger.whileRunning: %s",
+    (whileRunning) => {
+      const result = ChannelConfigSchema.safeParse({
+        trigger: { when: [{ kind: "mention" }], whileRunning },
+      });
+      expect(result.success).toBe(true);
+      expect(result.data?.trigger?.whileRunning).toBe(whileRunning);
+    },
+  );
+
+  it("leaves trigger.whileRunning undefined when omitted", () => {
+    const result = ChannelConfigSchema.safeParse({
+      trigger: { when: [{ kind: "mention" }] },
+    });
+    expect(result.success).toBe(true);
+    expect(result.data?.trigger?.whileRunning).toBeUndefined();
+  });
+
+  it("rejects an unknown trigger.whileRunning value", () => {
+    const result = ChannelConfigSchema.safeParse({
+      trigger: { when: [{ kind: "mention" }], whileRunning: "queue" },
     });
     expect(result.success).toBe(false);
   });
@@ -367,10 +408,10 @@ describe("ChannelEntrySchema", () => {
     expect(result.success).toBe(false);
   });
 
-  it("accepts a doc with channel plus ChannelDoc fields", () => {
+  it("accepts an entry with channel plus ChannelConfig fields", () => {
     const result = ChannelEntrySchema.safeParse({
       channel: "#ask-ai",
-      systemPrompt: "./prompts/ask-ai.md",
+      agent: { systemPrompt: "./prompts/ask-ai.md" },
     });
     expect(result.success).toBe(true);
   });

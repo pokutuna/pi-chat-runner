@@ -1,11 +1,11 @@
 // エントリポイント (Cloud Run デプロイ / Events API)
 //
 // Ingress (Socket Mode / Events API) で受けたイベントをハードフィルタ (Layer 0)
-// だけ通し、SessionRunner に渡す。入口の選択は connector.slack.mode (agent.yaml /
+// だけ通し、SessionRunner に渡す。入口の選択は system.chat.slack.mode (設定ファイル /
 // SLACK_MODE env) で行い、後段 (gate 評価・inbox・lease・pi の kick/steer。すべて
 // SessionRunner の中, src/session/runner.ts) には入口の別を漏らさない
-// (architecture.md §5)。State backend の実装選択 (store.backend, agent.yaml) も同様にここで行う
-// (state.md §4 / docs/design/architecture.md §3, §6)。
+// (architecture.md §5)。State backend の実装選択 (system.state.control.backend) も
+// 同様にここで行う (state.md §4 / docs/design/architecture.md §3, §6)。
 
 import { mkdirSync } from "node:fs";
 import { dirname, join, sep } from "node:path";
@@ -19,20 +19,17 @@ import pino from "pino";
 import type { BridgeOptions } from "./bridge.js";
 import { startBridge } from "./bridge.js";
 import {
-  loadAgentConfig,
-  type ResolvedAgentRuntime,
-  resolveAgentConfig,
-} from "./config/agent-config.js";
-import { FileConfigSource, loadChannelsFile } from "./config/config-source.js";
-import {
-  loadConnectorConfig,
-  type SlackConnectorConfig,
-} from "./config/connector-config.js";
+  FileConfigSource,
+  loadChannelConfigFile,
+} from "./config/config-source.js";
 import { formatEffectiveConfig } from "./config/dump.js";
 import {
-  loadStoreConfig,
-  type ResolvedStoreConfig,
-} from "./config/store-config.js";
+  loadSystemConfig,
+  type ResolvedRuntimeConfig,
+  type ResolvedSystemConfig,
+  resolveSystemConfig,
+  type SlackChatConfig,
+} from "./config/system-config.js";
 import type { Ingress } from "./ingress/ingress.js";
 import { createLocalChat } from "./ingress/local/local-chat.js";
 import { startRepl } from "./ingress/local/repl.js";
@@ -68,20 +65,22 @@ function collectGcpEnv(): Record<string, string> {
   return env;
 }
 
-/** store.backend (agent.yaml, 既定 memory) で Control State のバックエンドを選ぶ
+/** system.state.control.backend (既定 memory) で Control State のバックエンドを選ぶ
  * (state.md §4)。SessionRunner 以下には実装の別を漏らさない。 */
-function buildControlState(store: ResolvedStoreConfig): ControlState {
-  switch (store.backend) {
+function buildControlState(
+  control: ResolvedSystemConfig["state"]["control"],
+): ControlState {
+  switch (control.backend) {
     case "memory":
       return new InMemoryControlState();
     case "sqlite": {
-      mkdirSync(dirname(store.sqlite.path), { recursive: true });
-      return new SqliteControlState(store.sqlite.path);
+      mkdirSync(dirname(control.sqlite.path), { recursive: true });
+      return new SqliteControlState(control.sqlite.path);
     }
     case "firestore": {
       // projectId 未指定 ("") なら SDK が GOOGLE_CLOUD_PROJECT / ADC から解決する。
       // エミュレータは FIRESTORE_EMULATOR_HOST を SDK が自動で読む (state.md §4.2)
-      const { projectId, database, rootDoc } = store.firestore;
+      const { projectId, database, rootDoc } = control.firestore;
       return new FirestoreControlState(
         new Firestore({
           ...(projectId !== "" && { projectId }),
@@ -92,7 +91,7 @@ function buildControlState(store: ResolvedStoreConfig): ControlState {
     }
     default:
       throw new Error(
-        `Unknown store.backend "${store.backend}" (expected memory|sqlite|firestore)`,
+        `Unknown system.state.control.backend "${control.backend}" (expected memory|sqlite|firestore)`,
       );
   }
 }
@@ -145,14 +144,14 @@ function outermostNodeModules(path: string): string {
   return path.slice(0, idx + marker.length - 1);
 }
 
-/** agent.yaml の agent.runtime.permissionMode (既定 true, agent-config.ts) で Node
+/** system.runtime.permissionMode (既定 true, system-config.ts) で Node
  * Permission Model 起動を切り替える (runtime.md §5.2, pi-tools-and-sandbox.md
  * 「リーズナブルな sandbox レイヤ案」)。コード既定は ON — 何も書かなければ隔離が効く。
  * false のときだけ無効化する (ローカル開発・テストの fake pi (test/fixtures/fake-pi.mjs)
  * はこの機構を使わなくても動く)。entrypoint/nodeModulesDir は resolvePiPaths の
  * 自動検出値を使う。 */
 function buildPiPermissionConfig(
-  runtime: ResolvedAgentRuntime,
+  runtime: ResolvedRuntimeConfig,
   piPaths: { entrypoint: string; nodeModulesDir: string },
 ): PiPermissionConfig | undefined {
   if (!runtime.permissionMode) return undefined;
@@ -167,52 +166,81 @@ function buildPiPermissionConfig(
   };
 }
 
-function missingConnectorConfig(configPath: string): never {
-  console.error("Missing or incomplete connector.slack config");
-  console.error("");
-  console.error(`${configPath} needs a connector.slack block to start:`);
-  console.error("");
-  console.error("connector:");
-  console.error("  slack:");
+/** system.chat.slack ブロックの使い方 (新スキーマのブロック名) を stderr に出す。
+ * `--help` と、必須項目が欠けたままの起動 (missingChatConfig) で共有する。 */
+function printUsage(configPath: string): void {
   console.error(
-    "    mode: ${env.SLACK_MODE:-socket}         # socket | events (default socket; architecture.md §3)",
-  );
-  console.error(
-    "    botToken: ${env.SLACK_BOT_TOKEN}        # required (xoxb-...)",
-  );
-  console.error(
-    "    botUserId: ${env.SLACK_BOT_USER_ID}     # required (U...)",
-  );
-  console.error("    socket:");
-  console.error(
-    "      appToken: ${env.SLACK_APP_TOKEN}      # required in socket mode (xapp-...)",
-  );
-  console.error("    events:");
-  console.error(
-    "      signingSecret: ${env.SLACK_SIGNING_SECRET}  # required in events mode",
-  );
-  console.error(
-    "      port: ${env.PORT:-8080}               # listen port in events mode",
+    "Usage: node dist/server.js [dump <channel> [--json] | local [channelId] | --help]",
   );
   console.error("");
-  console.error("Optional (can also be set in agent.yaml; see config.md §2):");
+  console.error(`${configPath} needs a system.chat.slack block to start:`);
+  console.error("");
+  console.error("system:");
+  console.error("  chat:");
+  console.error("    slack:");
   console.error(
-    "  PI_AGENT_UID/GID    uid/gid pi runs as (UID separation, runtime.md §5.1; both must be set. Also settable via agent.runtime.uid/gid in agent.yaml)",
+    "      mode: ${env.SLACK_MODE:-socket}       # socket | events (default socket; architecture.md §3)",
   );
   console.error(
-    "  PI_AGENT_HOME       directory always passed as HOME to the pi child process (default /home/agent. Also settable via agent.runtime.home in agent.yaml)",
+    "      botToken: ${env.SLACK_BOT_TOKEN}      # required (xoxb-...)",
   );
   console.error(
-    "  PI_PERMISSION_MODE  set to 0 to disable the Node Permission Model (default ON. Also settable via agent.runtime.permissionMode: false in agent.yaml)",
+    "      botUserId: ${env.SLACK_BOT_USER_ID}   # required (U...)",
+  );
+  console.error("      socket:");
+  console.error(
+    "        appToken: ${env.SLACK_APP_TOKEN}    # required in socket mode (xapp-...)",
+  );
+  console.error("      events:");
+  console.error(
+    "        signingSecret: ${env.SLACK_SIGNING_SECRET}  # required in events mode",
   );
   console.error(
-    "  TURN_TIMEOUT_MS     per-turn limit in ms (default 600000 = 10 min; pi is killed and the session ends if exceeded)",
+    "        port: ${env.PORT:-8080}             # listen port in events mode",
+  );
+  console.error("  state:");
+  console.error(
+    "    control: { backend: memory|sqlite|firestore, sqlite: {path}, firestore: {...} }",
   );
   console.error(
-    "  PROGRESS_NOTICE_INTERVAL_MS  interval in ms between progress notices on long turns (default 30000; 0 disables)",
+    "    agent:   { workdirDir, sharedDir, sharedWarnBytes }  # empty = feature off",
+  );
+  console.error("  runtime: { uid, gid, home, permissionMode, allowAddons }");
+  console.error(
+    "  turnTimeoutMs, progressNoticeIntervalMs, leaseTtlMs, lingerMs",
+  );
+  console.error("agent:      # default Agent Config for every channel");
+  console.error(
+    "  systemPrompt, context, model, tools, excludeTools, skills, extensions, memory, env",
   );
   console.error(
-    "  TURN_TIMEOUT_MS/PROGRESS_NOTICE_INTERVAL_MS above can also be set in the config file's (CONFIG_PATH) agent block (env takes precedence). Extra env passed to pi is listed explicitly in agent.env",
+    "channels:   # per-channel: trigger / session / reply + agent overrides",
+  );
+  console.error("");
+  console.error(
+    "Env overrides for the system block (env > YAML > code default; config.md §2.3):",
+  );
+  console.error(
+    "  PI_AGENT_UID/GID    uid/gid pi runs as (UID separation, runtime.md §5.1; both must be set. Also system.runtime.uid/gid)",
+  );
+  console.error(
+    "  PI_AGENT_HOME       directory always passed as HOME to the pi child process (default /home/agent. Also system.runtime.home)",
+  );
+  console.error(
+    "  PI_PERMISSION_MODE  set to 0 to disable the Node Permission Model (default ON. Also system.runtime.permissionMode: false)",
+  );
+  console.error(
+    "  PI_ALLOW_ADDONS     set to 1 to allow native addons under the Permission Model (default off. Also system.runtime.allowAddons)",
+  );
+  console.error(
+    "  TURN_TIMEOUT_MS     per-turn limit in ms (default 600000 = 10 min; pi is killed and the session ends if exceeded. Also system.turnTimeoutMs)",
+  );
+  console.error(
+    "  PROGRESS_NOTICE_INTERVAL_MS  interval in ms between progress notices on long turns (default 30000; 0 disables. Also system.progressNoticeIntervalMs)",
+  );
+  console.error("");
+  console.error(
+    "Read straight from the process env (never via YAML): CONFIG_PATH, LOG_LEVEL, GOOGLE_*, METADATA_SERVER_DETECTION",
   );
   console.error("");
   console.error("Example (.env file recommended):");
@@ -220,25 +248,31 @@ function missingConnectorConfig(configPath: string): never {
   console.error(
     "  pnpm run dev          # loaded via --env-file-if-exists=.env",
   );
+}
+
+function missingChatConfig(configPath: string): never {
+  console.error("Missing or incomplete system.chat.slack config");
+  console.error("");
+  printUsage(configPath);
   process.exit(1);
 }
 
-/** connector.slack.mode (既定 socket) で入口を切り替える (architecture.md §3)。両モードとも
+/** system.chat.slack.mode (既定 socket) で入口を切り替える (architecture.md §3)。両モードとも
  * dedupe・起動判定・inbox 積みの後段は共通で、「受け取り方 / ACK の意味」だけが違う。
- * モード別必須項目 (appToken / signingSecret) もここで振り分ける。connector.slack 自体が
+ * モード別必須項目 (appToken / signingSecret) もここで振り分ける。system.chat.slack 自体が
  * 無い、またはモード別必須項目が欠けている場合は fail-loud で使い方を表示して exit する。 */
-function buildConnector(
-  slack: SlackConnectorConfig | undefined,
+function buildChat(
+  slack: SlackChatConfig | undefined,
   configPath: string,
 ): { ingress: Ingress; botToken: string } {
   if (slack === undefined) {
-    missingConnectorConfig(configPath);
+    missingChatConfig(configPath);
   }
   const { mode, botToken, botUserId } = slack;
   switch (mode) {
     case "socket": {
       if (slack.socket.appToken === undefined || slack.socket.appToken === "") {
-        missingConnectorConfig(configPath);
+        missingChatConfig(configPath);
       }
       const ingress = new SocketIngress({
         appToken: slack.socket.appToken,
@@ -253,7 +287,7 @@ function buildConnector(
         slack.events.signingSecret === undefined ||
         slack.events.signingSecret === ""
       ) {
-        missingConnectorConfig(configPath);
+        missingChatConfig(configPath);
       }
       const ingress = new HttpIngress({
         signingSecret: slack.events.signingSecret,
@@ -265,7 +299,7 @@ function buildConnector(
     }
     default:
       throw new Error(
-        `Unknown connector.slack.mode "${mode}" (expected socket|events)`,
+        `Unknown system.chat.slack.mode "${mode}" (expected socket|events)`,
       );
   }
 }
@@ -273,21 +307,28 @@ function buildConnector(
 /** `dump <channel> [--json]` (config.md §5): bot を起動せず、あるチャンネルの
  * merge 済み実効設定を provenance 付きで表示して exit(0) する。resolveChannelConfig
  * (ランタイムと共有) をそのまま呼ぶ formatEffectiveConfig に委譲するだけで、
- * dump 専用の設定解決ロジックは持たない。channels ブロックしか読まないため
- * connector 等の secrets は解決されない (config.md §5)。例外時は stderr に出して
+ * dump 専用の設定解決ロジックは持たない。agent / channels ブロックしか読まないため
+ * system の secrets は解決されない (config.md §5)。例外時は stderr に出して
  * exit(1)。 */
 async function runDump(argv: string[]): Promise<void> {
   const channelId = argv[3];
   if (channelId === undefined) {
-    console.error("Usage: node dist/server.mjs dump <channel> [--json]");
+    console.error("Usage: node dist/server.js dump <channel> [--json]");
     process.exit(1);
   }
   const json = argv.includes("--json");
   const configPath = process.env.CONFIG_PATH ?? DEFAULT_CONFIG_PATH;
 
   try {
-    const file = await loadChannelsFile(configPath);
-    console.log(formatEffectiveConfig(file, channelId, { json }));
+    // resolveEnv: false — dump は agent.env の ${env.X} を解決せず、書かれたままの
+    // 参照文字列を表示する (config.md §2.1 末尾, §5)。secret を解決した値を
+    // stdout に出さないための経路。
+    const { file, defaultAgent } = await loadChannelConfigFile(
+      configPath,
+      process.env,
+      { resolveEnv: false },
+    );
+    console.log(formatEffectiveConfig(file, channelId, { json, defaultAgent }));
     process.exit(0);
   } catch (err) {
     console.error(err instanceof Error ? err.message : err);
@@ -302,85 +343,80 @@ const DEFAULT_CONFIG_PATH = "examples/config/agent.yaml";
 /** `local` サブコマンドの既定チャンネル ID (docs/design/local-dev.md §2)。 */
 const DEFAULT_LOCAL_CHANNEL_ID = "local";
 
-/** main() / runLocal() 共通の組み立て (store.backend, agent ブロック, pi パス解決,
- * extraEnv, WORKDIR_ARCHIVE_DIR/SHARED_DIR, piPermission 等)。connector ブロックの
- * 読み込みと web (WebClient) の構築だけは呼び出し元ごとに異なるため、ここには含めない
- * (local mode は connector を読まない。docs/design/local-dev.md §2)。
+/** main() / runLocal() 共通の組み立て (Control State backend, pi パス解決, extraEnv の
+ * コード既定, Agent State のディレクトリ, piPermission 等)。すべて system ブロック
+ * (config.md §1.1) から取る。system.chat の消費 (Ingress の選択) と web (WebClient) の
+ * 構築だけは呼び出し元ごとに異なるため、ここには含めない (local mode は chat を
+ * 読まない。docs/design/local-dev.md §2)。
  *
  * 返す options は startBridge に渡す BridgeOptions のうち eventSource/web/configSource
  * を除いた共通部分 (呼び出し元がそれぞれの入口を追加してから startBridge に渡す)。 */
-async function buildCommonBridgeOptions(configPath: string): Promise<{
+function buildCommonBridgeOptions(system: ResolvedSystemConfig): {
   controlState: ControlState;
-  storeConfig: ResolvedStoreConfig;
   options: Omit<
     BridgeOptions,
     "eventSource" | "web" | "configSource" | "controlState"
   >;
-}> {
-  const [storeConfig, agentConfigFile] = await Promise.all([
-    loadStoreConfig(configPath),
-    loadAgentConfig(configPath),
-  ]);
-
-  // agent ブロック (config.md §1.3) + env を解決する。優先順位は env > 設定ファイル > コード既定
-  const agentConfig = resolveAgentConfig(agentConfigFile, process.env);
-  const { turnTimeoutMs, progressNoticeIntervalMs, runtime } = agentConfig;
+} {
+  const { runtime, state } = system;
 
   const gcpEnv = collectGcpEnv();
   const piPaths = resolvePiPaths();
-  // 足し算モデル (config.md §2.3): pi に渡る env は「コード既定 (gcpEnv) + agent.env に
-  // 明示列挙したものだけ」。agent.env はレイヤ③ (ユーザー明示) としてレイヤ②
-  // (gcpEnv, コード既定) を上書きできる — pi の実行に必須な GOOGLE_CLOUD_PROJECT 等を
-  // 利用者が意図して差し替えるケースを許すため、後勝ちで agent.env を上に重ねる。
-  // PI_EXPORT_ENTRYPOINT は export extension (孫プロセスとして `pi --export` を
-  // 起動する) がホストの pi エントリポイントを知るために必要
+  // 足し算モデル (config.md §1.3): pi に渡る env は「コード既定 (gcpEnv) + Agent Config
+  // の env に明示列挙したものだけ」。Agent Config の env は Channel ごとに解決される
+  // ため、ここで重ねるのはコード既定だけ — Channel 分は SessionRunner が kick 時に
+  // この上へ重ねる (runner.ts)。PI_EXPORT_ENTRYPOINT は export extension (孫プロセス
+  // として `pi --export` を起動する) がホストの pi エントリポイントを知るために必要
   const extraEnv = {
     ...gcpEnv,
-    ...agentConfig.env,
     PI_EXPORT_ENTRYPOINT: piPaths.entrypoint,
   };
-  const controlState = buildControlState(storeConfig);
-  const archiveDir = process.env.WORKDIR_ARCHIVE_DIR;
-  const sharedDir = process.env.SHARED_DIR;
-  // 未設定/非数値なら createSharedStore の既定閾値を使う (state.md §5.1)
-  const sharedShelfWarnBytes = Number(process.env.SHARED_SHELF_WARN_BYTES);
+  const controlState = buildControlState(state.control);
+  const { workdirDir, sharedDir, sharedWarnBytes } = state.agent;
   const piPermission = buildPiPermissionConfig(runtime, piPaths);
 
   return {
     controlState,
-    storeConfig,
     options: {
       piEntrypoint: piPaths.entrypoint,
       ...(Object.keys(extraEnv).length > 0 ? { extraEnv } : {}),
-      // WORKDIR_ARCHIVE_DIR 未設定なら境界退避なし (Step 3 相当の挙動)
-      ...(archiveDir !== undefined && archiveDir !== "" ? { archiveDir } : {}),
-      // SHARED_DIR 未設定ならチャンネル共有ディレクトリなし (docs/design/state.md §8)
-      ...(sharedDir !== undefined && sharedDir !== "" ? { sharedDir } : {}),
-      ...(Number.isFinite(sharedShelfWarnBytes) && sharedShelfWarnBytes > 0
-        ? { sharedShelfWarnBytes }
+      // system.state.agent.workdirDir 未設定なら境界退避なし
+      ...(workdirDir !== undefined ? { archiveDir: workdirDir } : {}),
+      // system.state.agent.sharedDir 未設定ならチャンネル共有ディレクトリなし
+      // (docs/design/state.md §8)
+      ...(sharedDir !== undefined ? { sharedDir } : {}),
+      // 未設定なら createSharedStore の既定閾値を使う (state.md §5.1)
+      ...(sharedWarnBytes !== undefined
+        ? { sharedShelfWarnBytes: sharedWarnBytes }
         : {}),
-      // agent.runtime.uid/gid (env PI_AGENT_UID/GID) 未設定なら UID 分離なし (現状動作)
+      // system.runtime.uid/gid (env PI_AGENT_UID/GID) 未設定なら UID 分離なし
       ...(runtime.uid !== undefined ? { agentUid: runtime.uid } : {}),
       ...(runtime.gid !== undefined ? { agentGid: runtime.gid } : {}),
-      // home は resolveAgentConfig が既定 "/home/agent" を埋めて返すので常に渡す
+      // home は resolveSystemConfig が既定 "/home/agent" を埋めて返すので常に渡す
       agentHome: runtime.home,
-      // permissionMode: false (env PI_PERMISSION_MODE=0 または agent.yaml) なら
+      // permissionMode: false (env PI_PERMISSION_MODE=0 または YAML) なら
       // Node Permission Model なし。コード既定は ON
       ...(piPermission !== undefined ? { piPermission } : {}),
-      // TURN_TIMEOUT_MS 未設定なら SessionRunner の既定 (600_000ms) を使う
-      ...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
-      // PROGRESS_NOTICE_INTERVAL_MS 未設定なら SessionRunner の既定 (30_000ms) を使う
-      ...(progressNoticeIntervalMs !== undefined
-        ? { progressNoticeIntervalMs }
+      // system.turnTimeoutMs 未設定なら SessionRunner の既定 (600_000ms) を使う
+      ...(system.turnTimeoutMs !== undefined
+        ? { turnTimeoutMs: system.turnTimeoutMs }
         : {}),
+      // system.progressNoticeIntervalMs 未設定なら SessionRunner の既定を使う
+      ...(system.progressNoticeIntervalMs !== undefined
+        ? { progressNoticeIntervalMs: system.progressNoticeIntervalMs }
+        : {}),
+      ...(system.leaseTtlMs !== undefined
+        ? { leaseTtlMs: system.leaseTtlMs }
+        : {}),
+      ...(system.lingerMs !== undefined ? { lingerMs: system.lingerMs } : {}),
       logger,
     },
   };
 }
 
 /** `local [channelId]` (docs/design/local-dev.md §2): Slack を介さず stdin/stdout で
- * 全パイプラインを動かす開発用コネクタ。connector ブロックは読まない — store/agent
- * ブロックと CONFIG_PATH の扱いは main() と共通 (buildCommonBridgeOptions)。
+ * 全パイプラインを動かす開発用コネクタ。system.chat は読まない — system の残りと
+ * CONFIG_PATH の扱いは main() と共通 (buildCommonBridgeOptions)。
  * startBridge に web を渡さず、poster/reactions/userResolver/fetchMessage を
  * LocalChat から注入する (bridge.ts の 2 点の変更で web なし起動が可能になった)。
  * startBridge (eventSource.start が resolve 次第すぐ返る) の後に REPL を起動し、
@@ -397,8 +433,11 @@ async function runLocal(argv: string[]): Promise<void> {
   const channelId = argv[3] ?? DEFAULT_LOCAL_CHANNEL_ID;
   const configPath = process.env.CONFIG_PATH ?? DEFAULT_CONFIG_PATH;
 
-  const { controlState, storeConfig, options } =
-    await buildCommonBridgeOptions(configPath);
+  const system = resolveSystemConfig(
+    await loadSystemConfig(configPath),
+    process.env,
+  );
+  const { controlState, options } = buildCommonBridgeOptions(system);
 
   const chat = createLocalChat({ defaultChannelId: channelId });
 
@@ -410,7 +449,7 @@ async function runLocal(argv: string[]): Promise<void> {
 
   localLogger.child({ component: "server" }).info(
     {
-      storeBackend: storeConfig.backend,
+      storeBackend: system.state.control.backend,
       configPath,
       channelId,
     },
@@ -433,12 +472,18 @@ async function runLocal(argv: string[]): Promise<void> {
     initialChannelId: channelId,
     logStream,
     listChannels: async () =>
-      (await loadChannelsFile(configPath)).channels.map((c) => c.channel),
+      (await loadChannelConfigFile(configPath)).file.channels.map(
+        (c) => c.channel,
+      ),
   });
   process.exit(0);
 }
 
 async function main() {
+  if (process.argv[2] === "--help" || process.argv[2] === "-h") {
+    printUsage(process.env.CONFIG_PATH ?? DEFAULT_CONFIG_PATH);
+    process.exit(0);
+  }
   if (process.argv[2] === "dump") {
     await runDump(process.argv);
     return;
@@ -450,27 +495,24 @@ async function main() {
 
   const configPath = process.env.CONFIG_PATH ?? DEFAULT_CONFIG_PATH;
 
-  // connector.slack (設定ファイル内, ${env.X} 参照解決済み) と、store/agent ブロック
-  // 共通の組み立て (buildCommonBridgeOptions) を並行に読む (起動時の cold start 短縮)。
-  // SLACK_MODE 等の env 直読みはやめ、connector-config.ts 経由に一本化する
-  const [connectorConfig, { controlState, storeConfig, options }] =
-    await Promise.all([
-      loadConnectorConfig(configPath),
-      buildCommonBridgeOptions(configPath),
-    ]);
-  const { ingress, botToken } = buildConnector(
-    connectorConfig.slack,
-    configPath,
+  // system ブロック (設定ファイル内, ${env.X} 参照解決済み) を 1 回だけ読み、
+  // 実装選択 (Ingress / Control State / Runtime) をすべてそこから導く。
+  // SLACK_MODE 等の env 直読みはやめ、system-config.ts 経由に一本化する
+  const system = resolveSystemConfig(
+    await loadSystemConfig(configPath),
+    process.env,
   );
+  const { controlState, options } = buildCommonBridgeOptions(system);
+  const { ingress, botToken } = buildChat(system.chat.slack, configPath);
 
   const web = new WebClient(botToken);
 
   logger.info(
     {
-      storeBackend: storeConfig.backend,
-      workdirArchiveDir: process.env.WORKDIR_ARCHIVE_DIR,
+      storeBackend: system.state.control.backend,
+      workdirArchiveDir: system.state.agent.workdirDir,
       configPath,
-      slackMode: connectorConfig.slack?.mode,
+      slackMode: system.chat.slack?.mode,
     },
     "state store configured",
   );

@@ -1,22 +1,22 @@
-import type { ChannelDoc } from "../config/channel-doc.js";
+import type { ResolvedChannel } from "../config/config-source.js";
 import type { InboundMessage } from "../ingress/chat-event.js";
 import type { InboxItem } from "../state/control/interfaces.js";
 
-/** session.mode / reply.mode の実効値 (doc 未設定時の既定込み。session-model.md §2) */
+/** session.mode / reply.mode の実効値 (channel 未設定時の既定込み。session-model.md §2) */
 export interface SessionPolicy {
   sessionMode: "thread" | "channel";
   replyMode: "thread" | "flat";
 }
 
-/** ChannelDoc.session / ChannelDoc.reply からポリシーを導出する。DM は既定
+/** ChannelConfig.session / ChannelConfig.reply からポリシーを導出する。DM は既定
  * session: channel, reply: flat (session-model.md §2 「DM は予約名 dm の既定」) */
 export function resolveSessionPolicy(
-  doc: ChannelDoc | null,
+  channel: ResolvedChannel | null,
   isDm: boolean,
 ): SessionPolicy {
   return {
-    sessionMode: doc?.session?.mode ?? (isDm ? "channel" : "thread"),
-    replyMode: doc?.reply?.mode ?? (isDm ? "flat" : "thread"),
+    sessionMode: channel?.session?.mode ?? (isDm ? "channel" : "thread"),
+    replyMode: channel?.reply?.mode ?? (isDm ? "flat" : "thread"),
   };
 }
 

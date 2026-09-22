@@ -1,57 +1,66 @@
 # agent.yaml — the single config file (the filename is up to you; point CONFIG_PATH at it).
-# connector/store/agent are read once at boot; channels is re-read on every
-# message, so channel behavior changes take effect without a restart.
-# Layout follows entry -> exit: connector (chat I/O) -> store (persistence)
-# -> agent (agent process) -> channels (per-channel behavior).
+# Exactly three top-level blocks: system, agent, channels. Anything else is an error.
 #
-# In the boot-time sections, values may reference env vars: ${env.X} (fails if
-# unset) or ${env.X:-default}. Don't inline secrets — reference them via ${env.X}
-# instead (see service.yaml). The channels section does not resolve env refs.
-# "SET:" comments mark env vars you must export; the rest have defaults.
+#   system   — the runner process itself (chat I/O, state backends, the agent's
+#              execution environment, timing defaults). Read once at boot.
+#   agent    — the default Agent Config shared by every channel.
+#   channels — per-channel behavior, plus per-channel Agent Config overrides.
+#
+# agent and channels are re-read on every message, so their changes take effect
+# without a restart.
+#
+# ${env.X} (fails if unset) / ${env.X:-default} references are resolved in the
+# system block only — that's what keeps agent/channels secret-free and lets
+# `dump` print effective config without resolving secrets. The one exception is
+# agent.env / channels[].agent.env values, which ARE resolved (they're the env
+# handed to the pi child process). Don't inline secrets — reference them via
+# ${env.X} (see service.yaml). "SET:" comments mark env vars you must export;
+# the rest have defaults.
 
-# --- connector: chat I/O (ingress + egress) ---
-connector:
-  slack:
-    # socket: local/dev (WebSocket). events: production (HTTP push).
-    mode: ${env.SLACK_MODE:-socket}
+# --- system: the runner process (read once at boot) ---
+system:
+  chat:
+    slack:
+      # socket: local/dev (WebSocket). events: production (HTTP push).
+      mode: ${env.SLACK_MODE:-socket}
 
-    # botUserId is the bot's own user ID (auth.test's user_id), used to
-    # detect mentions and filter self-echo.
-    botToken: ${env.SLACK_BOT_TOKEN} # SET: always required
-    botUserId: ${env.SLACK_BOT_USER_ID} # SET: always required
+      # botUserId is the bot's own user ID (auth.test's user_id), used to
+      # detect mentions and filter self-echo.
+      botToken: ${env.SLACK_BOT_TOKEN} # SET: always required
+      botUserId: ${env.SLACK_BOT_USER_ID} # SET: always required
 
-    socket:
-      # appToken is an App-Level Token with the connections:write scope.
-      appToken: ${env.SLACK_APP_TOKEN:-} # SET: required for mode: socket
+      socket:
+        # appToken is an App-Level Token with the connections:write scope.
+        appToken: ${env.SLACK_APP_TOKEN:-} # SET: required for mode: socket
 
-    events:
-      signingSecret: ${env.SLACK_SIGNING_SECRET:-} # SET: required for mode: events
-      port: ${env.PORT:-8080} # listen port, mode: events only
+      events:
+        signingSecret: ${env.SLACK_SIGNING_SECRET:-} # SET: required for mode: events
+        port: ${env.PORT:-8080} # listen port, mode: events only
 
-# --- store: persistence backend ---
-store:
-  backend: ${env.STORE_BACKEND:-memory} # memory | sqlite | firestore
-  sqlite:
-    path: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db} # backend: sqlite only
-  firestore: # backend: firestore only
-    projectId: ${env.FIRESTORE_PROJECT_ID:-} # empty = auto-detect (GOOGLE_CLOUD_PROJECT / ADC)
-    database: ${env.FIRESTORE_DATABASE:-(default)} # named database
-    rootDoc: ${env.FIRESTORE_ROOT_DOC:-pi-chat-runner/default} # parent doc; all collections nest under it
-
-# --- agent: pi's behavior, env, and execution environment ---
-agent:
-  turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000} # pi is killed if a turn runs past this
-
-  # Extra env vars passed to the pi child process, added on top of the code's
-  # built-in defaults (e.g. GOOGLE_CLOUD_*).
-  env:
-    GH_TOKEN: ${env.GH_TOKEN:-}
+  state:
+    # control: the runner's own bookkeeping (inbox, sessions, leases, ...).
+    control:
+      backend: ${env.STORE_BACKEND:-memory} # memory | sqlite | firestore
+      sqlite:
+        path: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db} # backend: sqlite only
+      firestore: # backend: firestore only
+        projectId: ${env.FIRESTORE_PROJECT_ID:-} # empty = auto-detect (GOOGLE_CLOUD_PROJECT / ADC)
+        database: ${env.FIRESTORE_DATABASE:-(default)} # named database
+        rootDoc: ${env.FIRESTORE_ROOT_DOC:-pi-chat-runner/default} # parent doc; all collections nest under it
+    # agent: what the agent itself writes (workdirs, per-channel shared dir).
+    # Empty values mean the feature is off.
+    agent:
+      workdirDir: ${env.WORKDIR_ARCHIVE_DIR:-} # empty = no workdir archival
+      sharedDir: ${env.SHARED_DIR:-} # empty = no per-channel shared dir
+      sharedWarnBytes: ${env.SHARED_WARN_BYTES:-} # empty = built-in threshold
 
   runtime:
     # UID/GID separation for the pi child process.
     # UNCOMMENT both to enable (set both or neither):
     # uid: ${env.PI_AGENT_UID}
     # gid: ${env.PI_AGENT_GID}
+
+    home: ${env.PI_AGENT_HOME:-/home/agent} # HOME passed to the pi child process
 
     # permissionMode toggles Node Permission Model sandboxing.
     permissionMode: ${env.PI_PERMISSION_MODE:-true} # SET: false for local dev against a fake pi binary
@@ -61,40 +70,55 @@ agent:
     # native deps (e.g. pi-smart-fetch's wreq-js). Native code can bypass this
     # layer's fs checks, so leave it off unless such an extension is enabled.
     allowAddons: ${env.PI_ALLOW_ADDONS:-false}
-    home: ${env.PI_AGENT_HOME:-/home/agent} # HOME passed to the pi child process
+
+  turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000} # pi is killed if a turn runs past this
+
+# --- agent: the default Agent Config for every channel ---
+# Fields here (systemPrompt, context, model, tools, excludeTools, skills,
+# extensions, memory, env) are the base that channels[].agent overrides
+# field-by-field. The model is pi's canonical
+# "provider/model-id[:thinking-level]" shorthand (e.g. "anthropic/claude-opus-4-8:high",
+# "openrouter/moonshotai/kimi-k2.6"); the provider prefix is required. Auth:
+# google-vertex uses ADC (SET: GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION);
+# other providers read their API key env var (e.g. OPENROUTER_API_KEY) — pass
+# it via agent.env below. A classifier gate's model goes on that gate's node.
+# systemPrompt/context values starting with ./ or ../ are read as files
+# relative to this file's directory.
+agent:
+  model: google-vertex/gemini-3.5-flash
+  systemPrompt: ./prompts/ask-ai.md
+
+  # Extra env vars passed to the pi child process, added on top of the code's
+  # built-in defaults (e.g. GOOGLE_CLOUD_*). This is the only place in
+  # agent/channels where ${env.X} is resolved.
+  env:
+    GH_TOKEN: ${env.GH_TOKEN:-}
 
 # --- channels: per-channel behavior, re-read on every message ---
 # One array of channel configs. "default" is required as the fallback base;
 # every other entry replaces default's fields wholesale (no deep-merge).
-# pi's model goes here (default.model / a channel's model) in pi's canonical
-# "provider/model-id[:thinking-level]" form (e.g. "anthropic/claude-opus-4-8:high",
-# "openrouter/moonshotai/kimi-k2.6"). The provider prefix is required. Auth:
-# google-vertex uses ADC (SET: GOOGLE_CLOUD_PROJECT / GOOGLE_CLOUD_LOCATION);
-# other providers read their API key env var (e.g. OPENROUTER_API_KEY) — pass
-# it via agent.env above. A classifier gate's model goes on that gate's node.
-# systemPrompt/context values starting with ./ or ../ are read as files
-# relative to this file's directory.
+# The Channel part (trigger / session / reply) merges in two stages
+# (default -> channel); the agent part merges in three (agent block ->
+# default.agent -> channel.agent).
 channels:
   - channel: "default"
     # Fallback for any channel below with no matching entry. Doesn't apply to
     # DMs (see the "dm" entry). Keep this mention-only — passthrough here
     # would react to every message in every channel the bot is in.
-    model: google-vertex/gemini-3.5-flash
-    systemPrompt: ./prompts/ask-ai.md
     trigger:
       when:
         - kind: mention
 
   - channel: "dm"
-    # Fallback for DMs (they do NOT inherit "default"). Without a "dm" entry
-    # DMs are disabled — this entry exists to opt them in, e.g.
-    # `when: [{kind: passthrough}]` to accept every DM. `when: []` (as shown)
-    # keeps them disabled explicitly.
+    # Fallback for DMs (their Channel part does NOT inherit "default"; the
+    # agent block above still applies). Without a "dm" entry DMs are disabled —
+    # this entry exists to opt them in, e.g. `when: [{kind: passthrough}]` to
+    # accept every DM. `when: []` (as shown) keeps them disabled explicitly.
     trigger:
       when: []
 
   - channel: "local"
-    # Used by `node dist/server.mjs local` / `pnpm run dev:local`
+    # Used by `node dist/server.js local` / `pnpm run dev:local`
     # (docs/design/local-dev.md) when no channelId argument is given. Not a
     # reserved name like "default"/"dm" — it's just the code's default
     # channelId for local mode, so a plain "mention" trigger is enough to
@@ -105,7 +129,6 @@ channels:
 
   - channel: "C0000000001" # REPLACE: your channel ID
     # General-purpose assistant, mention-triggered.
-    systemPrompt: ./prompts/ask-ai.md
     trigger:
       when:
         - kind: mention
@@ -115,15 +138,15 @@ channels:
     # should point at files baked into the image. A skills entry may be a
     # single skill dir (containing SKILL.md) or a parent dir of many skills.
     # UNCOMMENT to enable:
-    # skills:
-    #   - /app/skills/gc-logging
-    # extensions:
-    #   - /app/extensions/bq-runner.ts
+    # agent:
+    #   skills:
+    #     - /app/skills/gc-logging
+    #   extensions:
+    #     - /app/extensions/bq-runner.ts
 
   - channel: "C0000000003" # REPLACE: your channel ID
     # Classifier demo: judges every message, no mention needed. Only
     # cooking-related messages trigger a session.
-    systemPrompt: ./prompts/ask-ai.md
     trigger:
       when:
         - kind: classifier
@@ -137,14 +160,14 @@ channels:
           pattern: "([Hh]elp|エラー)"
         - kind: mention
     # Optional tool limits — reply is always allowed. UNCOMMENT to enable:
-    # tools: [read, grep, bash] # investigation-only allowlist
-    # excludeTools: [write, edit] # or just drop the write-capable tools
+    # agent:
+    #   tools: [read, grep, bash] # investigation-only allowlist
+    #   excludeTools: [write, edit] # or just drop the write-capable tools
 
   - channel: "C0000000004" # REPLACE: your channel ID
     # Reaction-or-mention demo: reacting :eyes:/:robot_face: on an existing
     # message starts a session on that message (resumes its thread if it's a
     # thread reply).
-    systemPrompt: ./prompts/ask-ai.md
     trigger:
       when:
         - kind: reaction

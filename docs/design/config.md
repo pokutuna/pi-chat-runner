@@ -373,16 +373,18 @@ Config は「静的な宣言」、Control State は「実行中に変わる事�
 
 ## 7. 実装対応
 
-現行実装との対応表。YAML は現状 `connector` / `store` / `agent{runtime}` ブロックと、Agent のフィールドを直接持つ `channels[]` の形で、本文の形とは異なる。
+現行実装との対応表。YAML のトップレベルは本文どおり `system` / `agent` / `channels` の 3 ブロックで、それぞれ独立に読む。
 
 | 設計上の名前 | 現行の実装 |
 |---|---|
-| System Config (chat) | `src/config/connector-config.ts` (`ConnectorConfigSchema`, `loadConnectorConfig`)。YAML では `connector` ブロック |
-| System Config (state) | `src/config/store-config.ts` (`StoreConfigSchema`, `loadStoreConfig`)。YAML では `store` ブロック。Agent State の `workdirDir` / `sharedDir` / `sharedWarnBytes` は `src/server.ts` が `WORKDIR_ARCHIVE_DIR` / `SHARED_DIR` / `SHARED_SHELF_WARN_BYTES` を直接読む |
-| System Config (runtime, 時間) | `src/config/agent-config.ts` (`AgentConfigSchema`, `loadAgentConfig`, `resolveAgentConfig`)。YAML では `agent.runtime` / `agent.turnTimeoutMs` / `agent.progressNoticeIntervalMs`。`leaseTtlMs` / `lingerMs` は `SessionRunner` のオプション既定 |
-| Channel Config + Agent Config | `src/config/channel-doc.ts` (`ChannelDocSchema` = `ChannelConfig`, `ChannelEntrySchema`, `ChannelsFileSchema`) |
-| Agent Config の `env` | `src/config/agent-config.ts` の `agent.env` (全 Channel 共通) |
-| ファイルのロードと Channel の解決 | `src/config/config-source.ts` (`ConfigSource`, `FileConfigSource`, `loadChannelsFile`, `resolveChannelConfig`, `mergeWithProvenance`, `CHANNEL_DOC_KEYS`) |
+| System Config | `src/config/system-config.ts` (`SystemConfigSchema`, `loadSystemConfig`, `resolveSystemConfig`)。YAML では `system` ブロック |
+| System Config (chat) | `system.chat.slack` (`SlackChatConfig`) |
+| System Config (state) | `system.state.control` (backend + sqlite/firestore) と `system.state.agent` (`workdirDir` / `sharedDir` / `sharedWarnBytes`) |
+| System Config (runtime, 時間) | `system.runtime` (`ResolvedRuntimeConfig`) と `system.{turnTimeoutMs,progressNoticeIntervalMs,leaseTtlMs,lingerMs}` |
+| Agent Config | `src/config/agent-config.ts` (`AgentConfigSchema`)。YAML ではトップレベル `agent` ブロックと `channels[].agent` の両方に同じスキーマが使われる |
+| Channel Config | `src/config/channel-config.ts` (`ChannelConfigSchema`, `ChannelEntrySchema`, `ChannelsFileSchema`) |
+| Agent Config の `env` | `AgentConfigSchema` の `env` (`agent.env` / `channels[].agent.env`)。`${env.X}` を解決する唯一の Agent Config フィールド |
+| ファイルのロードと Channel の解決 | `src/config/config-source.ts` (`ConfigSource`, `ResolvedChannel`, `FileConfigSource`, `loadChannelConfigFile`, `resolveChannelConfig`, `mergeChannelPart`, `mergeAgentConfig`) |
 | ブロックごとの独立ロード | `src/config/root-config.ts` (`readRootConfig`) |
 | `${env.X}` 参照 | `src/config/env-ref.ts` (`resolveEnvRefs`) |
 | dump | `src/config/dump.ts` (`formatEffectiveConfig`)、CLI は `src/server.ts` |

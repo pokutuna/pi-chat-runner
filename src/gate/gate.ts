@@ -3,7 +3,7 @@
 // 起動判定を差し替え可能な部品 (Gate) にし、config.md §4 のブール木 (配列 = OR,
 // {and:[]}/{or:[]} で明示合成、ネスト可、negate なし) で合成する。channel 設定
 // (criteria/pattern 等) は各 Gate のコンストラクタ引数で渡すため、GateContext には
-// event のみを持たせる (ChannelDoc.trigger.when の葉が GateConfig で、それを
+// event のみを持たせる (ChannelConfig.trigger.when の葉が GateConfig で、それを
 // ここで Gate インスタンスへ組み立てる)。
 //
 // classifier は LLM 呼び出しを要するため ClassifierClient を deps で注入する
@@ -11,7 +11,7 @@
 // 初期スコープ外のため registry 未登録 (createGate はエラーを投げる)。
 
 import type { ClassifierClient } from "../classifier/client.js";
-import type { GateConfig, WhenNode } from "../config/channel-doc.js";
+import type { GateConfig, WhenNode } from "../config/channel-config.js";
 import type { ChatEvent } from "../ingress/chat-event.js";
 import type { Logger } from "../logger.js";
 import { ClassifierGate } from "./gates/classifier.js";
@@ -36,7 +36,7 @@ export interface Gate {
   decide(ctx: GateContext): Promise<TriggerDecision> | TriggerDecision;
 }
 
-/** ChannelDoc.trigger.when の葉 (YAML 由来)。kind ごとに要るパラメータだけ持つ。
+/** ChannelConfig.trigger.when の葉 (YAML 由来)。kind ごとに要るパラメータだけ持つ。
  * classifier は criteria 必須 + model 任意 (per-gate モデル上書き)。 */
 export type GateSpec =
   | { kind: "mention" }
@@ -97,7 +97,7 @@ export function defaultWhen(isDm: boolean): WhenNode[] {
 }
 
 /** GateConfig (WhenNode の葉) → GateSpec への narrowing。criteria/pattern は
- * schema (channel-doc.ts) で kind ごとに必須が担保済みなので、ここでの欠落は
+ * schema (channel-config.ts) で kind ごとに必須が担保済みなので、ここでの欠落は
  * schema 通過後のバグとして fail-loud にする — 黙って無視すると起動判定が
  * 静かに変わってしまうため。 */
 function gateConfigToSpec(gate: GateConfig): GateSpec {

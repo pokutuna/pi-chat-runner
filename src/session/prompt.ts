@@ -1,6 +1,6 @@
-import type { ChannelDoc } from "../config/channel-doc.js";
+import type { ResolvedChannel } from "../config/config-source.js";
 
-/** app 共通プロンプトのプラットフォーム中立な固定部分。ChannelDoc.systemPrompt は
+/** app 共通プロンプトのプラットフォーム中立な固定部分。AgentConfig.systemPrompt は
  * これへの追記分 (runtime.md §6)。mention 記法の説明は mentionFormat に依存する
  * ため別関数 (mentionInstruction) で組み立て、buildSystemPrompt で結合する */
 const APP_SYSTEM_PROMPT = [
@@ -60,10 +60,10 @@ const MEMORY_INDEX_PROMPT_HEADER =
   "relevant to the current task:";
 
 /** app 共通 + mention 記法の説明 + shared の説明 + memory 索引 +
- * ChannelDoc.systemPrompt + thread_key の指示 (runtime.md §6) */
+ * AgentConfig.systemPrompt + thread_key の指示 (runtime.md §6) */
 export function buildSystemPrompt(
   sessionKey: string,
-  doc: ChannelDoc | null,
+  channel: ResolvedChannel | null,
   mentionFormat: MentionFormat,
   sharedEnabled: boolean,
   memoryIndex?: string,
@@ -73,7 +73,8 @@ export function buildSystemPrompt(
   if (memoryIndex !== undefined && memoryIndex.trim() !== "") {
     parts.push(`${MEMORY_INDEX_PROMPT_HEADER}\n\n${memoryIndex.trim()}`);
   }
-  if (doc?.systemPrompt !== undefined) parts.push(doc.systemPrompt.trim());
+  if (channel?.agent.systemPrompt !== undefined)
+    parts.push(channel.agent.systemPrompt.trim());
   parts.push(
     "Each incoming message is annotated with its thread_key. When calling " +
       "the reply tool, use the thread_key of the message you are replying to " +
@@ -83,8 +84,11 @@ export function buildSystemPrompt(
   return parts.join("\n\n");
 }
 
-export function prependContext(body: string, doc: ChannelDoc | null): string {
-  const context = doc?.context;
+export function prependContext(
+  body: string,
+  channel: ResolvedChannel | null,
+): string {
+  const context = channel?.agent.context;
   if (context === undefined || context.length === 0) return body;
   return `参考情報:\n${context.map((c) => c.trim()).join("\n\n")}\n\n${body}`;
 }

@@ -15,7 +15,7 @@ import { hostname } from "node:os";
 import { join } from "node:path";
 
 import type { ClassifierClient } from "../classifier/client.js";
-import type { ChannelDoc } from "../config/channel-doc.js";
+import type { ResolvedChannel } from "../config/config-source.js";
 import { type ConfigSource, DM_CHANNEL } from "../config/config-source.js";
 import type { EgressRouter } from "../egress/router.js";
 import type { TurnReactor } from "../egress/turn-reactor.js";
@@ -145,7 +145,7 @@ interface PendingKick {
   debounceSec: number;
   /** タイマー発火時に kick する対象。直近のイベントで都度更新する */
   triggerEvent: InboundMessage;
-  doc: ChannelDoc | null;
+  channel: ResolvedChannel | null;
   channelId: string;
 }
 
@@ -174,7 +174,7 @@ export class SessionRunner implements SessionHost {
   constructor(options: SessionRunnerOptions) {
     this.configSource = options.configSource;
     // memory skill は書き先が ../shared/ なので shared 前提。有効時は boot で解決して
-    // 配置壊れを fail-loud にする (チャンネル別の opt-out は kick 時に doc.memory で判定)
+    // 配置壊れを fail-loud にする (チャンネル別の opt-out は kick 時に channel.memory で判定)
     this.memorySkillPath =
       options.sharedStore !== undefined
         ? resolveBuiltinMemorySkillPath()
@@ -229,10 +229,10 @@ export class SessionRunner implements SessionHost {
   async handle(event: InboundMessage): Promise<void> {
     const channelId = event.conversation.channelId;
     const isDm = event.conversation.isDm === true;
-    // DM は channelId 個別の doc ではなく予約名 "dm" の doc を全 DM 共通で参照する
+    // DM は channelId 個別の channel ではなく予約名 "dm" の channel を全 DM 共通で参照する
     // (config.md §3.1, §1.2)。セッション自体は実 channelId (D...) で管理する
-    const doc = await this.loadChannelDoc(isDm ? DM_CHANNEL : channelId);
-    const policy = resolveSessionPolicy(doc, isDm);
+    const channel = await this.loadChannelConfig(isDm ? DM_CHANNEL : channelId);
+    const policy = resolveSessionPolicy(channel, isDm);
     // affinity で合流したスレッド内の追い発言は合流先レーンの発言として扱う
     // (message-dispatch.md §3.1 Thread → Session の対応)
     const naturalKey = sessionKeyOf(event, policy);
@@ -245,7 +245,7 @@ export class SessionRunner implements SessionHost {
 
     // bot 投稿 (自己エコーは bridge で除外済み) は allowBots opt-in の
     // channel でのみ gate 評価・steer に乗せる (config.md §4.3)
-    if (event.sender.isBot && doc?.trigger?.allowBots !== true) {
+    if (event.sender.isBot && channel?.trigger?.allowBots !== true) {
       this.ctx.logger.debug(
         { channelId, sessionKey },
         "bot message ignored (allowBots not enabled)",
@@ -297,11 +297,15 @@ export class SessionRunner implements SessionHost {
     }
 
     // 実行中 (起動中含む) セッションがあるレーン: gate は通さず enqueue して
-    // steer で配達 (message-dispatch.md §2, §5。後続発言は追加指示として扱う)
+    // steer で配達 (message-dispatch.md §2, §5。後続発言は追加指示として扱う)。
+    // これは trigger.whileRunning: "passthrough" (既定) の挙動をハードコードした
+    // もの。"evaluate" (channel.trigger?.whileRunning, config.md §4.4) で毎回 gate を
+    // 評価する分岐は Phase 5 (Gate 評価の切り出し) で入れる — 現状は解析・マージ・
+    // dump だけを行い、挙動は passthrough 固定。
     if (await this.trySteerExisting(sessionKey, item)) return;
 
     // 実行中でない: gate 評価 → trigger なら enqueue して kick (即 or debounce)
-    const when = this.resolveWhen(doc, isDm);
+    const when = this.resolveWhen(channel, isDm);
     const decision = await evaluateWhen(when, { event });
     if (!decision.trigger) {
       this.ctx.logger.debug(
@@ -330,7 +334,14 @@ export class SessionRunner implements SessionHost {
       return;
     }
 
-    await this.kickTriggered(sessionKey, channelId, policy, event, doc, item);
+    await this.kickTriggered(
+      sessionKey,
+      channelId,
+      policy,
+      event,
+      channel,
+      item,
+    );
   }
 
   /** reaction によるリアクション起動 (message-dispatch.md §1「人間によるリアクション
@@ -344,7 +355,7 @@ export class SessionRunner implements SessionHost {
   ): Promise<void> {
     const channelId = event.conversation.channelId;
     const isDm = event.conversation.isDm === true;
-    const doc = await this.loadChannelDoc(isDm ? DM_CHANNEL : channelId);
+    const channel = await this.loadChannelConfig(isDm ? DM_CHANNEL : channelId);
 
     // disabled 中は gate 評価 (classifier の LLM 呼び出し含む) 自体を行わず止める
     // (session-model.md §5.2)
@@ -356,7 +367,7 @@ export class SessionRunner implements SessionHost {
       return;
     }
 
-    const when = this.resolveWhen(doc, isDm);
+    const when = this.resolveWhen(channel, isDm);
     const decision = await evaluateWhen(when, { event });
     if (!decision.trigger) {
       this.ctx.logger.debug(
@@ -399,7 +410,7 @@ export class SessionRunner implements SessionHost {
       "reaction gate triggered",
     );
 
-    const policy = resolveSessionPolicy(doc, isDm);
+    const policy = resolveSessionPolicy(channel, isDm);
     // message 経路と同じ Thread → Session 解決 (合流済みスレッド内のメッセージへの reaction 起動)
     const naturalKey = sessionKeyOf(synthetic, policy);
     const sessionKey = await this.resolveBoundSession(naturalKey);
@@ -415,7 +426,7 @@ export class SessionRunner implements SessionHost {
       channelId,
       policy,
       synthetic,
-      doc,
+      channel,
       item,
     );
   }
@@ -527,7 +538,7 @@ export class SessionRunner implements SessionHost {
         channelId,
         policy,
         restEvent,
-        await this.loadChannelDoc(
+        await this.loadChannelConfig(
           event.conversation.isDm === true ? DM_CHANNEL : channelId,
         ),
         restItem,
@@ -542,8 +553,8 @@ export class SessionRunner implements SessionHost {
   }
 
   /** チャンネルが /disable で無効化されているか (session-model.md §5.2)。
-   * doc 不在 = enabled (既定)。DM 予約名でなく実 channelId で管理する
-   * (メッセージ側は実 channelId で判定するため、ChannelDoc の DM 束ねとは別軸) */
+   * channel 不在 = enabled (既定)。DM 予約名でなく実 channelId で管理する
+   * (メッセージ側は実 channelId で判定するため、ChannelConfig の DM 束ねとは別軸) */
   private async isChannelDisabled(channelId: string): Promise<boolean> {
     return (
       (await this.ctx.controlState.channels.get(channelId))?.enabled === false
@@ -611,7 +622,7 @@ export class SessionRunner implements SessionHost {
     channelId: string,
     policy: SessionPolicy,
     event: InboundMessage,
-    doc: ChannelDoc | null,
+    channel: ResolvedChannel | null,
     item: InboxItem,
     options?: { skipAffinity?: boolean },
   ): Promise<void> {
@@ -623,7 +634,7 @@ export class SessionRunner implements SessionHost {
         sessionKey,
         channelId,
         event,
-        doc,
+        channel,
       );
       if (target !== sessionKey) {
         // このイベントのスレッドを合流先 Session に束ね、以降のスレッド内の追い
@@ -661,14 +672,14 @@ export class SessionRunner implements SessionHost {
     // 上で enqueue した item はそのセッションの drain が拾う
     if (this.sessions.has(sessionKey)) return;
 
-    const debounceSec = doc?.session?.affinity?.debounceSec;
+    const debounceSec = channel?.session?.affinity?.debounceSec;
     if (debounceSec !== undefined && event.mentionsBot !== true) {
       this.scheduleDebouncedKick(
         sessionKey,
         channelId,
         policy,
         event,
-        doc,
+        channel,
         debounceSec,
       );
       return;
@@ -677,7 +688,13 @@ export class SessionRunner implements SessionHost {
     // mentionsBot による即 kick バイパス: 同レーンの保留タイマーがあれば
     // キャンセルする (item は inbox にあるので初回 prompt の drain がまとめて拾う)
     this.clearPendingKick(sessionKey);
-    await this.acquireLeaseAndKick(sessionKey, channelId, policy, event, doc);
+    await this.acquireLeaseAndKick(
+      sessionKey,
+      channelId,
+      policy,
+      event,
+      channel,
+    );
   }
 
   /** debounceSec のスライディングタイマーを (再)セットする。既存タイマーがあれば
@@ -689,7 +706,7 @@ export class SessionRunner implements SessionHost {
     channelId: string,
     policy: SessionPolicy,
     event: InboundMessage,
-    doc: ChannelDoc | null,
+    channel: ResolvedChannel | null,
     debounceSec: number,
   ): void {
     const existing = this.pendingKicks.get(sessionKey);
@@ -709,7 +726,7 @@ export class SessionRunner implements SessionHost {
         channelId,
         policy,
         event,
-        doc,
+        channel,
       ).catch((err) => {
         this.ctx.logger.warn({ sessionKey, err }, "debounced kick failed");
       });
@@ -720,7 +737,7 @@ export class SessionRunner implements SessionHost {
       firstPendingAtMs,
       debounceSec,
       triggerEvent: event,
-      doc,
+      channel,
       channelId,
     });
     this.ctx.logger.debug(
@@ -736,7 +753,7 @@ export class SessionRunner implements SessionHost {
     channelId: string,
     policy: SessionPolicy,
     event: InboundMessage,
-    doc: ChannelDoc | null,
+    channel: ResolvedChannel | null,
   ): Promise<void> {
     if (this.sessions.has(sessionKey)) return;
     // debounce 待機中に /disable された場合、タイマー発火時点で再チェックする
@@ -748,7 +765,13 @@ export class SessionRunner implements SessionHost {
       );
       return;
     }
-    await this.acquireLeaseAndKick(sessionKey, channelId, policy, event, doc);
+    await this.acquireLeaseAndKick(
+      sessionKey,
+      channelId,
+      policy,
+      event,
+      channel,
+    );
   }
 
   /** 保留中の debounce タイマーがあればキャンセルして Map から消す (mentionsBot の
@@ -768,9 +791,9 @@ export class SessionRunner implements SessionHost {
     naturalKey: string,
     channelId: string,
     event: InboundMessage,
-    doc: ChannelDoc | null,
+    channel: ResolvedChannel | null,
   ): Promise<string> {
-    const affinity = doc?.session?.affinity;
+    const affinity = channel?.session?.affinity;
     if (affinity?.scope !== "channel") return naturalKey;
     // スレッド内の発言はそのスレッドのセッションに属する (message-dispatch.md §3.1
     // Thread → Session の対応)。合流対象はチャンネル直下投稿のみ
@@ -874,7 +897,7 @@ export class SessionRunner implements SessionHost {
     channelId: string,
     policy: SessionPolicy,
     event: InboundMessage,
-    doc: ChannelDoc | null,
+    channel: ResolvedChannel | null,
   ): Promise<void> {
     // 実行ロック。取れなければ別プロセスが保持中 — enqueue 済みなので
     // 保持者側の drain (steer / agent_end / linger) が拾う
@@ -929,7 +952,13 @@ export class SessionRunner implements SessionHost {
     try {
       // kick シーケンス前半 (runtime.md §1, §2: restore → spawn 準備)。
       // PiProcess 生成以降 (spawn → prompt) は ActiveSession.start が担う
-      warnPolicyMismatches(this.ctx.logger, sessionKey, channelId, policy, doc);
+      warnPolicyMismatches(
+        this.ctx.logger,
+        sessionKey,
+        channelId,
+        policy,
+        channel,
+      );
 
       // workdir/shared の mkdir + restore、transcript 世代交代、UID 分離、
       // agentHome 作成、realpath 正規化 (runtime.md §2, §5.1)
@@ -945,7 +974,7 @@ export class SessionRunner implements SessionHost {
         channelId,
         workdir,
         policy,
-        doc,
+        channel,
         sessions: this.ctx.controlState.sessions,
         workdirStore: this.ctx.workdirStore,
         sharedStore: this.ctx.sharedStore,
@@ -963,17 +992,24 @@ export class SessionRunner implements SessionHost {
           agentHomeReal,
           workdirReal,
           sharedDirReal,
-          doc,
+          channel,
           builtinExtensionPaths: this.extensionPaths,
           memorySkillPath: this.memorySkillPath,
           piPermission: this.ctx.piPermission,
         });
 
-      const model = doc?.model;
-      // 常に HOME を agentHome に上書きする (Runner 自身の HOME は継承しない)。
-      // extraEnv で HOME を上書きする (buildPiEnv は extraEnv が PATH/HOME を
-      // 上書きできる実装になっている)
-      const extraEnv = { ...this.ctx.extraEnv, HOME: agentHomeReal };
+      const model = channel?.agent.model;
+      // pi 子プロセスへ渡す env は足し算モデル (config.md §1.3, §2.3): コード既定
+      // (server.ts の gcpEnv / PI_EXPORT_ENTRYPOINT。ctx.extraEnv) の上に、解決済み
+      // Channel の Agent Config の env を Channel ごとに重ねる。後勝ちなのは
+      // 「利用者が意図して GOOGLE_CLOUD_PROJECT 等を差し替える」を許すため。
+      // 最後に HOME を agentHome へ上書きする (Runner 自身の HOME は継承しない。
+      // buildPiEnv は extraEnv が PATH/HOME を上書きできる実装になっている)
+      const extraEnv = {
+        ...this.ctx.extraEnv,
+        ...channel?.agent.env,
+        HOME: agentHomeReal,
+      };
       // memory の索引 (MEMORY.md) は skill 発火 (agent の自発的な read) に頼らず
       // system prompt に常時注入する (docs/design/runtime.md §6)。1 行 1 メモリの
       // 短い索引という規約 (SKILL.md の Save 手順) が前提で、肥大化はしない想定。
@@ -982,7 +1018,7 @@ export class SessionRunner implements SessionHost {
 
       await session.start({
         triggerEvent: event,
-        doc,
+        channel,
         sessionPath,
         extensionPaths,
         workdirReal,
@@ -1037,28 +1073,33 @@ export class SessionRunner implements SessionHost {
     return join(this.workdirRoot, channelId, "shared");
   }
 
-  private async loadChannelDoc(channelId: string): Promise<ChannelDoc | null> {
+  private async loadChannelConfig(
+    channelId: string,
+  ): Promise<ResolvedChannel | null> {
     try {
       return await this.configSource.channel(channelId);
     } catch (err) {
       // YAML の壊れで受信ループを止めない。既定動作 (mention 起動 / DM は disabled) に落とす
-      this.ctx.logger.warn({ channelId, err }, "failed to load channel doc");
+      this.ctx.logger.warn({ channelId, err }, "failed to load channel config");
       return null;
     }
   }
 
-  private resolveWhen(doc: ChannelDoc | null, isDm: boolean): EvaluableNode[] {
+  private resolveWhen(
+    channel: ResolvedChannel | null,
+    isDm: boolean,
+  ): EvaluableNode[] {
     const deps: GateDeps = {
       ...(this.classifierClient !== undefined
         ? { classifierClient: this.classifierClient }
         : {}),
       logger: this.ctx.logger,
     };
-    if (doc?.trigger === undefined) {
-      // doc なし / trigger 未設定は既定 = mention のみ、DM は disabled (起動しない)
+    if (channel?.trigger === undefined) {
+      // channel なし / trigger 未設定は既定 = mention のみ、DM は disabled (起動しない)
       // (config.md §4.1, §3.1)
       return buildWhen(defaultWhen(isDm), deps);
     }
-    return buildWhen(doc.trigger.when, deps);
+    return buildWhen(channel.trigger.when, deps);
   }
 }

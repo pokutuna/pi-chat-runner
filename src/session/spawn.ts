@@ -18,7 +18,7 @@ import {
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import type { ChannelDoc } from "../config/channel-doc.js";
+import type { ResolvedChannel } from "../config/config-source.js";
 import type { Logger } from "../logger.js";
 import type { SharedStore, WorkdirStore } from "../state/agent/interfaces.js";
 import type { SessionStore } from "../state/control/interfaces.js";
@@ -84,7 +84,7 @@ export function resolveBuiltinExtensionPaths(): string[] {
  * 絶対パスを解決する (docs/design/runtime.md §4.4)。shared 有効時のみ使われる。
  * ルート直下の skills/ (利用者が $AGENT_HOME に焼き込む全チャンネル共通 skill の口。
  * Dockerfile 参照) とは別物 — そちらに置くと pi の HOME 自動発見で全チャンネルに
- * 効いてしまい、ChannelDoc.memory の opt-out が効かない。配置と解決規則は
+ * 効いてしまい、AgentConfig.memory の opt-out が効かない。配置と解決規則は
  * resolveBuiltinExtensionPaths と同じ — ソースツリーとバンドル後で深さが変わるため
  * 候補を実在チェックで選び、見つからなければ fail-loud。 */
 export function resolveBuiltinMemorySkillPath(): string {
@@ -102,7 +102,7 @@ export function resolveBuiltinMemorySkillPath(): string {
   );
 }
 
-/** チャンネル別の追加 skill / extension パス (ChannelDoc.skills / .extensions,
+/** チャンネル別の追加 skill / extension パス (AgentConfig.skills / .extensions,
  * config.md §3.5) を検証し realpath で正規化する。イメージに焼き込んだパスを指す
  * 想定なので、実在しないパスは設定ミスとして fail-loud で throw する。
  * extension は pi の --extension がディレクトリを受けないため、拡張子から
@@ -205,7 +205,7 @@ export function warnPolicyMismatches(
   sessionKey: string,
   channelId: string,
   policy: SessionPolicy,
-  doc: ChannelDoc | null,
+  channel: ResolvedChannel | null,
 ): void {
   // session.mode=thread かつ reply.mode=flat は文脈が切れるのに返事だけ散らばる
   // 非推奨な組み合わせ。動作は許可するので warn のみ (session-model.md §2)
@@ -219,8 +219,8 @@ export function warnPolicyMismatches(
   // thread モードで設定されていても効果がないため warn して無視する
   if (
     policy.sessionMode === "thread" &&
-    (doc?.session?.idleResetMinutes !== undefined ||
-      doc?.session?.maxTranscriptKb !== undefined)
+    (channel?.session?.idleResetMinutes !== undefined ||
+      channel?.session?.maxTranscriptKb !== undefined)
   ) {
     logger.warn(
       { sessionKey, channelId },
@@ -229,7 +229,7 @@ export function warnPolicyMismatches(
   }
   // affinity は mode=channel では自明に成立 (同一 sessionKey) するため意味を持たない。
   // windowSec も scope=channel 以外では読まれない (message-dispatch.md §3.2)
-  const affinity = doc?.session?.affinity;
+  const affinity = channel?.session?.affinity;
   if (affinity?.scope === "channel" && policy.sessionMode === "channel") {
     logger.warn(
       { sessionKey, channelId },
@@ -281,7 +281,7 @@ export async function prepareWorkdir(args: {
   channelId: string;
   workdir: string;
   policy: SessionPolicy;
-  doc: ChannelDoc | null;
+  channel: ResolvedChannel | null;
   /** rotateRequestedAt / lastActiveAt の読み出しのみに使う (書き込みはしない) */
   sessions: SessionStore;
   workdirStore: WorkdirStore;
@@ -297,7 +297,7 @@ export async function prepareWorkdir(args: {
     channelId,
     workdir,
     policy,
-    doc,
+    channel,
     sessions,
     workdirStore,
     sharedStore,
@@ -342,7 +342,7 @@ export async function prepareWorkdir(args: {
   const rotateConsumed = previous?.rotateRequestedAt !== undefined;
   // idleResetMinutes / maxTranscriptKb は channel モード専用 (runtime.md §2.1)
   if (policy.sessionMode === "channel") {
-    const idleResetMinutes = doc?.session?.idleResetMinutes;
+    const idleResetMinutes = channel?.session?.idleResetMinutes;
     if (!rotated && idleResetMinutes !== undefined && previous !== null) {
       const now = Date.now();
       if (isIdleExpired(previous.lastActiveAt, idleResetMinutes, now)) {
@@ -358,7 +358,7 @@ export async function prepareWorkdir(args: {
         );
       }
     }
-    const maxTranscriptKb = doc?.session?.maxTranscriptKb;
+    const maxTranscriptKb = channel?.session?.maxTranscriptKb;
     if (!rotated && maxTranscriptKb !== undefined) {
       const info = await stat(join(workdir, SESSION_FILE)).catch((err) => {
         if ((err as NodeJS.ErrnoException).code === "ENOENT") return null;
@@ -443,7 +443,7 @@ export async function buildSpawnOptions(args: {
   agentHomeReal: string;
   workdirReal: string;
   sharedDirReal: string | undefined;
-  doc: ChannelDoc | null;
+  channel: ResolvedChannel | null;
   builtinExtensionPaths: string[];
   memorySkillPath: string | undefined;
   piPermission: PiPermissionConfig | undefined;
@@ -452,7 +452,7 @@ export async function buildSpawnOptions(args: {
     agentHomeReal,
     workdirReal,
     sharedDirReal,
-    doc,
+    channel,
     builtinExtensionPaths,
     memorySkillPath,
     piPermission,
@@ -475,18 +475,18 @@ export async function buildSpawnOptions(args: {
   // 設定ミスとして fail-loud で落とす (黙って無効のまま動くと「skill が効かない」の
   // 調査が辛い)。realpath は workdir/HOME と同じ理由 (macOS /tmp symlink) の正規化
   const channelSkillPaths = await resolveChannelResourcePaths(
-    doc?.skills,
+    channel?.agent.skills,
     "skills",
   );
   const channelExtensionFiles = await resolveChannelResourcePaths(
-    doc?.extensions,
+    channel?.agent.extensions,
     "extensions",
   );
   // memory 機能 (組み込み skill + MEMORY.md 注入) の有効判定。shared 有効かつ
-  // doc.memory !== false のとき (runtime.md §4.4)
+  // channel.memory !== false のとき (runtime.md §4.4)
   const memoryEnabled =
     sharedDirReal !== undefined &&
-    doc?.memory !== false &&
+    channel?.agent.memory !== false &&
     memorySkillPath !== undefined;
   // shared skills (存在は上の mkdir で保証済み) と組み込み memory skill
   const sharedSkillPaths =

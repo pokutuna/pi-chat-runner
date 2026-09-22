@@ -86,7 +86,7 @@ COPY extensions ./extensions
 
 # Built-in skills (memory). Wired by the Runner via --skill when SHARED_DIR is
 # enabled (docs/design/runtime.md §4.4). Distinct from skills/ below — that one is
-# always loaded for all channels, this one is opt-out via ChannelDoc.memory.
+# always loaded for all channels, this one is opt-out via the Agent Config's memory field.
 COPY builtin-skills ./builtin-skills
 
 # Skills under pi's default search path $AGENT_HOME/.pi/agent/skills/ are

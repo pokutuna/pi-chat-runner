@@ -9,7 +9,7 @@
 export interface ConversationRef {
   channelId: string;
   threadTs?: string;
-  /** Slack の im (DM)。DM は ChannelDoc の予約名 dm と既定 passthrough gate の対象になる
+  /** Slack の im (DM)。DM は ChannelConfig の予約名 dm と既定 passthrough gate の対象になる
    * (docs/design/config.md §3.1)。 */
   isDm?: boolean;
 }
