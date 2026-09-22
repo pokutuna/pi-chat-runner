@@ -169,6 +169,7 @@ export function buildSpawnCommand(
  * 開けてしまい広すぎるため使わない。docker で確認済み)。
  */
 const PI_TRUST_PROBE_FILENAMES = [
+  "AGENTS.override.md",
   "AGENTS.md",
   "AGENTS.MD",
   "CLAUDE.md",

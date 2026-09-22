@@ -327,6 +327,7 @@ describe("buildPiPermissionOptions (runtime.md §5.2)", () => {
     // 各中間ディレクトリ × probe ファイル名の直積を含む必要がある
     // (1 つでも欠けると existsSync が ERR_ACCESS_DENIED で pi が即死する)
     expect(options.allowFsRead).toContain("/tmp/workdir/AGENTS.md");
+    expect(options.allowFsRead).toContain("/tmp/workdir/AGENTS.override.md");
     expect(options.allowFsRead).toContain("/tmp/AGENTS.md");
     expect(options.allowFsRead).toContain("/AGENTS.md");
     expect(options.allowFsRead).toContain("/tmp/.pi/settings.json");
