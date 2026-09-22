@@ -384,6 +384,6 @@ Channel や Agent ごとに変えたい項目は Agent Config で宣言し、Run
 | システムプロンプト | `buildSystemPrompt` / `prependContext` (`src/runtime/prompt.ts`) |
 | RPC プロトコル | `src/runtime/rpc.ts` (`RpcCommand` / `PiEvent` / `JsonlDecoder`) |
 | イベントの読み取り | `extractReply` / `turnStatusFromAgentEnd` / `extractUsageTotals` (`src/runtime/pi-events.ts`) |
-| reply の files の境界チェック | `resolveReplyFiles` (`src/runtime/reply-files.ts`)。呼び出しは `ActiveSession` (`src/session/active-session.ts`) |
+| reply の files の境界チェック | `resolveReplyFiles` (`src/runtime/reply-files.ts`)。呼び出しは `Session` (`src/session/session.ts`) |
 | 組み込み extension | `extensions/reply.ts` / `permission-gate.ts` / `export.ts` |
 | 組み込み memory skill | `builtin-skills/memory/SKILL.md` |

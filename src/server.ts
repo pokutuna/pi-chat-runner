@@ -1,9 +1,9 @@
 // エントリポイント (Cloud Run デプロイ / Events API)
 //
-// Ingress (Socket Mode / Events API) で受けたイベントをハードフィルタ (Layer 0)
-// だけ通し、SessionRunner に渡す。入口の選択は system.chat.slack.mode (設定ファイル /
-// SLACK_MODE env) で行い、後段 (gate 評価・inbox・lease・pi の kick/steer。すべて
-// SessionRunner の中, src/session/runner.ts) には入口の別を漏らさない
+// Ingress (Socket Mode / Events API) で受けたイベントをハードフィルタ
+// だけ通し、Dispatcher に渡す。入口の選択は system.chat.slack.mode (設定ファイル /
+// SLACK_MODE env) で行い、後段 (gate 評価・inbox・lease・pi の起動/steer。すべて
+// Dispatcher の中, src/dispatch/dispatcher.ts) には入口の別を漏らさない
 // (architecture.md §5)。State backend の実装選択 (system.state.control.backend) も
 // 同様にここで行う (state.md §4 / docs/design/architecture.md §3, §6)。
 
@@ -43,7 +43,7 @@ import type { ControlState } from "./state/control/interfaces.js";
 const logger = rootLogger.child({ component: "server" });
 
 /** system.state.control.backend (既定 memory) で Control State のバックエンドを選ぶ
- * (state.md §4)。SessionRunner 以下には実装の別を漏らさない。 */
+ * (state.md §4)。Dispatcher 以下には実装の別を漏らさない。 */
 function buildControlState(
   control: ResolvedSystemConfig["state"]["control"],
 ): ControlState {
@@ -285,11 +285,11 @@ function buildCommonBridgeOptions(system: ResolvedSystemConfig): {
       ...(sharedWarnBytes !== undefined
         ? { sharedShelfWarnBytes: sharedWarnBytes }
         : {}),
-      // system.turnTimeoutMs 未設定なら SessionRunner の既定 (600_000ms) を使う
+      // system.turnTimeoutMs 未設定なら Dispatcher の既定 (600_000ms) を使う
       ...(system.turnTimeoutMs !== undefined
         ? { turnTimeoutMs: system.turnTimeoutMs }
         : {}),
-      // system.progressNoticeIntervalMs 未設定なら SessionRunner の既定を使う
+      // system.progressNoticeIntervalMs 未設定なら Dispatcher の既定を使う
       ...(system.progressNoticeIntervalMs !== undefined
         ? { progressNoticeIntervalMs: system.progressNoticeIntervalMs }
         : {}),

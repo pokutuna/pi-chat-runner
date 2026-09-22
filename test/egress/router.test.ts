@@ -448,7 +448,7 @@ describe("EgressRouter", () => {
       expect(result.progressConsumed).toBe(true);
 
       // deliver の後ろでキューに積まれていた (体裁上は) 古いタイマー tick。
-      // レーンが閉じているため新規投稿してはならない
+      // 進捗経路が閉じているため新規投稿してはならない
       await router.notifyProgress("k", "stale tick after reply");
 
       expect(poster.calls).toEqual([
@@ -466,7 +466,7 @@ describe("EgressRouter", () => {
 
       await router.notifyProgress("k", "running");
       await router.deliver({ thread_key: "k", text: "final answer" });
-      // レーンが閉じている間は捨てられる
+      // 進捗経路が閉じている間は捨てられる
       await router.notifyProgress("k", "stale tick after reply");
       expect(poster.calls).toHaveLength(1);
 

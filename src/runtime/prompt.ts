@@ -14,7 +14,7 @@ const APP_SYSTEM_PROMPT = [
 ].join(" ");
 
 /** ユーザーへの言及をレンダリングする関数 (返信本文に埋め込む記法)。
- * プラットフォームごとに記法が異なるため SessionRunnerOptions では必須
+ * プラットフォームごとに記法が異なるため DispatcherOptions では必須
  * (bridge が利用先プラットフォームの記法を渡す。bridge 以外の利用者は自分で実装を渡す) */
 export type MentionFormat = (userId: string) => string;
 

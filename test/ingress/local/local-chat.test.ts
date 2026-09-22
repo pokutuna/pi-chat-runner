@@ -182,7 +182,7 @@ describe("createLocalChat", () => {
     const reactionEvents: unknown[] = [];
     chat.events.on("reaction", (r) => reactionEvents.push(r));
 
-    await chat.reactor.react("local", "1752800000.000001", "kick");
+    await chat.reactor.react("local", "1752800000.000001", "start");
 
     expect(reactionEvents).toHaveLength(1);
     expect(chat.reactionsLog()).toEqual([

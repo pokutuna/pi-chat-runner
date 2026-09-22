@@ -1,4 +1,4 @@
-// SlackTurnReactor — TurnReactor の Slack 実装。ターン状態 (kick/ok/error) を
+// SlackTurnReactor — TurnReactor の Slack 実装。Turn 状態 (start/ok/error) を
 // リアクション絵文字 (eyes/white_check_mark/x) に写像し、reactions.add で付ける。
 //
 // messageId はプラットフォーム中立なメッセージ ID で、Slack では ts として
@@ -18,7 +18,7 @@ export interface ReactionClient {
 }
 
 const STATE_EMOJI: Record<ReactionState, string> = {
-  kick: "eyes",
+  start: "eyes",
   ok: "white_check_mark",
   error: "x",
 };

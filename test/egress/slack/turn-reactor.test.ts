@@ -18,9 +18,9 @@ function client(impl?: Partial<ReactionClient>): ReactionClient & {
 }
 
 describe("SlackTurnReactor", () => {
-  it("maps kick to :eyes:", async () => {
+  it("maps start to :eyes:", async () => {
     const fake = client();
-    await new SlackTurnReactor(fake).react("C01", "1700.1", "kick");
+    await new SlackTurnReactor(fake).react("C01", "1700.1", "start");
     expect(fake.calls).toEqual([
       { channel: "C01", timestamp: "1700.1", name: "eyes" },
     ]);
@@ -44,7 +44,7 @@ describe("SlackTurnReactor", () => {
       },
     });
     await expect(
-      new SlackTurnReactor(fake).react("C01", "1", "kick"),
+      new SlackTurnReactor(fake).react("C01", "1", "start"),
     ).resolves.toBeUndefined();
   });
 
@@ -58,7 +58,7 @@ describe("SlackTurnReactor", () => {
       },
     });
     await expect(
-      new SlackTurnReactor(fake).react("C01", "1", "kick"),
+      new SlackTurnReactor(fake).react("C01", "1", "start"),
     ).rejects.toThrow(err);
   });
 });

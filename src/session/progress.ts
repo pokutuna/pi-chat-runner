@@ -1,42 +1,40 @@
+import {
+  PROGRESS_BASH_EMOJIS,
+  PROGRESS_DEFAULT_EMOJI,
+  PROGRESS_READ_EMOJI,
+  PROGRESS_WRITE_EMOJI,
+  progressThinkingText,
+  progressToolText,
+} from "../egress/notices.js";
 import type { EgressRouter } from "../egress/router.js";
 import type { Logger } from "../logger.js";
 import { preview } from "../runtime/pi-events.js";
 
 /** 進捗通知でツール名ごとに絵文字を出し分ける (ingress-egress.md §8)。
  * reply は呼び出し元 (tool_execution_start ハンドラ) で除外済みなのでここには
- * 来ない。分類が当たらないツールは既定の :gear: にフォールバックする。bash は
+ * 来ない。分類が当たらないツールは既定の絵文字にフォールバックする。bash は
  * 頻出のため呼び出しごとに候補からランダムに1つ選び、単調な見た目にならない
- * ようにする */
+ * ようにする。絵文字の表記そのものは Egress の担当 (egress/notices.ts) */
 export function progressEmoji(toolName: string): string {
   switch (toolName) {
     case "bash":
       return (
-        BASH_EMOJIS[Math.floor(Math.random() * BASH_EMOJIS.length)] ??
-        ":computer:"
+        PROGRESS_BASH_EMOJIS[
+          Math.floor(Math.random() * PROGRESS_BASH_EMOJIS.length)
+        ] ?? PROGRESS_BASH_EMOJIS[0]!
       );
     case "read":
     case "grep":
     case "find":
     case "ls":
-      return ":mag:";
+      return PROGRESS_READ_EMOJI;
     case "write":
     case "edit":
-      return ":memo:";
+      return PROGRESS_WRITE_EMOJI;
     default:
-      return ":gear:";
+      return PROGRESS_DEFAULT_EMOJI;
   }
 }
-
-const BASH_EMOJIS = [
-  ":computer:",
-  ":keyboard:",
-  ":zap:",
-  ":gear:",
-  ":hammer_and_wrench:",
-  ":rocket:",
-  ":robot_face:",
-  ":satellite:",
-];
 
 /** pi 組み込みツール (bash/read/write/edit/grep/find/ls) の主要な引数キー1つの
  * 値だけを取り出す。JSON.stringify のキー名込み表示 (`{"command":"..."}`) は
@@ -77,7 +75,7 @@ export interface ProgressNoticeOptions {
 /** 長時間ターンの進捗通知 (ingress-egress.md §8)。tool_execution_start/end の購読だけで
  * 状態を更新し (LLM 呼び出し・session.jsonl を経由しない)、intervalMs 間隔で
  * currentTool のスナップショットを Slack へ投稿/更新する。usage の集計は対象外
- * (ActiveSession に残す) */
+ * (Session に残す) */
 export class ProgressNotice {
   /** 直近に開始した、または直近に完了したツール呼び出し。tool_execution_start/end の
    * 購読だけで更新する (LLM 呼び出し・session.jsonl を経由しない、ingress-egress.md §8)。
@@ -97,14 +95,13 @@ export class ProgressNotice {
    * agent_end 冒頭でクリアする (turnTimeoutTimer と同じ寿命管理) */
   #timer: NodeJS.Timeout | undefined;
 
-  /** 現在の進捗投稿先キー。新規ターンの kick (start/#promptPending) のたびに
+  /** 現在の進捗投稿先キー。新規ターンの開始 (start/#promptPending) のたびに
    * そのターンの先頭発言の thread_key へ差し替える (reset の引数)。steer
    * (実行中セッションへの追い討ち) では差し替えない — session.affinity 合流や
    * session.mode=channel で、後から合流した発言の宛先が最初のスレッドと
    * 異なっても、進捗メッセージは「そのターンを起こした先頭発言のスレッド」に
-   * 留め続ける (RUNNER_TODO.md「progress-notice が affinity 合流時に別スレッドへ
-   * reply すると上書きされず残る」)。取り残された進捗メッセージ自体は次に
-   * そのスレッドへ reply が届いたときに通常どおり回収される */
+   * 留め続ける。取り残された進捗メッセージ自体は次にそのスレッドへ reply が
+   * 届いたときに通常どおり回収される */
   #progressKey: string;
   readonly #router: EgressRouter;
   readonly #intervalMs: number;
@@ -132,7 +129,7 @@ export class ProgressNotice {
    * あれば止めて張り直す)。turnTimeoutTimer と同じ寿命管理パターン
    * (ingress-egress.md §8)。間隔ごとに currentTool のスナップショットを投稿/更新する。
    *
-   * newTurnKey: 新規ターンの kick (start/#promptPending) から呼ぶときだけ、
+   * newTurnKey: 新規ターンの開始 (start/#promptPending) から呼ぶときだけ、
    * そのターンの先頭発言の thread_key を渡す。省略時 (steer) は現在の進捗キーを
    * 維持する */
   reset(newTurnKey?: string): void {
@@ -141,11 +138,14 @@ export class ProgressNotice {
     this.clear();
     // 新しいターンの内容と比較できるよう、前ターン分の記憶は引き継がない
     this.#lastText = undefined;
-    // 前ターンの reply 配達で閉じた進捗レーン (router.ts progressClosed) を
+    // 前ターンの reply 配達で閉じた進捗の経路 (router.ts progressClosed) を
     // 新ターン開始時に再び開く。fire-and-forget — 失敗しても次の notifyProgress
     // が warn を出すだけで、新ターンの進捗表示自体はタイマーが担う
     void this.#router.reopenProgress(progressKey).catch((err) => {
-      this.#logger.warn({ progressKey, err }, "failed to reopen progress lane");
+      this.#logger.warn(
+        { progressKey, err },
+        "failed to reopen progress delivery",
+      );
     });
     if (this.#intervalMs === 0) return;
     const timer = setInterval(() => {
@@ -153,10 +153,13 @@ export class ProgressNotice {
       const count = this.#toolCallCount;
       const text =
         tool === undefined
-          ? `:thinking_face: ... (step ${count})`
-          : tool.argsPreview === ""
-            ? `${tool.emoji} \`${tool.name}\` ... (step ${count})`
-            : `${tool.emoji} \`${tool.name}\` \`${tool.argsPreview}\` ... (step ${count})`;
+          ? progressThinkingText(count)
+          : progressToolText({
+              emoji: tool.emoji,
+              toolName: tool.name,
+              argsPreview: tool.argsPreview,
+              step: count,
+            });
       // 前回送信時から状況が進んでいなければ何もしない (Slack API を呼ばない)
       if (text === this.#lastText) return;
       this.#lastText = text;

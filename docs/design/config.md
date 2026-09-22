@@ -389,5 +389,5 @@ Config は「静的な宣言」、Control State は「実行中に変わる事�
 | `${env.X}` 参照 | `src/config/env-ref.ts` (`resolveEnvRefs`) |
 | dump | `src/config/dump.ts` (`formatEffectiveConfig`)、CLI は `src/server.ts` |
 | Gate の合成と評価 | `src/gate/gate.ts` (`defaultWhen`, `gateConfigToSpec`, `buildWhen`, `evaluateWhen`, `createGate`)、各 Gate は `src/gate/gates/` |
-| Gate 評価の呼び出し | `src/session/runner.ts` (`SessionRunner.handle` / `handleReaction` / `resolveWhen`) |
-| Channel Config の既定値解決 | `src/session/policy.ts` (`resolveSessionPolicy`) |
+| Gate 評価の呼び出し | `src/gate/evaluate.ts` (`GateEvaluator.admit` / `#resolveWhen`) |
+| Channel Config の既定値解決 | `src/dispatch/policy.ts` (`resolveSessionPolicy`) |

@@ -161,7 +161,7 @@ Turn の進行はリアクションで表す。Runner はプラットフォー�
 写像はチャット実装が持つ。
 
 ```typescript
-type ReactionState = "kick" | "ok" | "error";
+type ReactionState = "start" | "ok" | "error";
 
 interface TurnReactor {
   react(channelId: string, messageId: string, state: ReactionState): Promise<void>;
@@ -170,11 +170,11 @@ interface TurnReactor {
 
 | 状態 | 意味 | Slack での表現 |
 |---|---|---|
-| `kick` | その Turn の処理を開始した | `eyes` |
+| `start` | その Turn の処理を開始した | `eyes` |
 | `ok` | Turn が完走した | `white_check_mark` |
 | `error` | Turn が異常終了した | `x` |
 
-- 粒度は Turn であり Session ではない。`kick` はその Turn を起こしたメッセージに付け、
+- 粒度は Turn であり Session ではない。`start` はその Turn を起こしたメッセージに付け、
   `ok` / `error` はその Turn を構成した全メッセージに付ける。
 - 成否は Turn 終端の停止理由から判定する。想定内の停止理由なら `ok`、それ以外は `error`。
 - 同じリアクションの再付与は冪等な成功として扱い、握りつぶす。
@@ -207,8 +207,8 @@ Agent の推論を増やさず、Transcript にも痕跡を残さないため、
 **競合の防止**: 進捗タイマーの tick と `reply` の配送は別々の非同期経路から同じ進捗キーへ
 到達するため、Egress は進捗キーごとの FIFO キューで両者を直列化する。それだけでは
 「`reply` 配送の直後にキューへ積まれた stale な tick」を防げないので、`reply` の配送は
-送信先の解決より前にそのキーの進捗レーンを閉じ、閉鎖中の tick は何もせず捨てる。
-新しい Turn の開始時に同じキュー経由でレーンを開き直すことで、閉鎖前から残っていた前 Turn の
+送信先の解決より前にそのキーの進捗経路を閉じ、閉鎖中の tick は何もせず捨てる。
+新しい Turn の開始時に同じキュー経由で経路を開き直すことで、閉鎖前から残っていた前 Turn の
 遅延 tick は閉鎖中として破棄され、開き直した後に積まれた新 Turn の tick だけが通る。
 Session の終了時は記憶している messageId と閉鎖フラグの両方を捨てる。
 
@@ -227,7 +227,7 @@ Session の終了時は記憶している messageId と閉鎖フラグの両方�
 | 二重配送の吸収 / isSelf 除外 | `startBridge` の `seenMessages` (`src/bridge.ts`) |
 | user の解決 | `enrichEvent` (`src/ingress/user-resolver.ts`), `SlackUserResolver` (`src/ingress/slack/user-resolver.ts`) |
 | Thread Key → 送信先の解決 | `EgressRouter` (`src/egress/router.ts`) |
-| 送信先の登録 | `registerReplyDestination` (`src/session/reply-destination.ts`) |
+| 送信先の登録 | `registerReplyDestination` (`src/egress/reply-destination.ts`) |
 | 送信の実体 | `BridgeOptions.poster` (`ChatPoster`、`src/bridge.ts` 内の Slack 実装) |
 | mrkdwn 変換 | `toMrkdwn` (`src/egress/mrkdwn.ts`) |
 | chunk 分割 | `chunkMessage` (`src/egress/chunker.ts`) |

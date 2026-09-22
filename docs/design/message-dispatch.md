@@ -41,6 +41,10 @@ message と同じ形に変換し、以降の経路 (steer / affinity / enqueue /
 | `passthrough` (既定) | 実行中 Session への message は Gate を評価せず enqueue → steer |
 | `evaluate` | 実行中でもメッセージごとに Gate を評価する |
 
+`evaluate` で Gate を通過したメッセージも、実行中 Session があればそこへ届ける (起動はしない)。
+どちらの値も message 経路にのみ効く — reaction は対象メッセージを取得するまで sessionKey が
+決まらず、実行中 Session の照合が Gate より前に行えないため、常に Gate が先行する (§1)。
+
 Channel 有効状態の確認はどちらの場合も Gate より前に行う。無効中は steer も Gate 評価も
 行わずに捨てるので、classifier gate の LLM 呼び出しが走ることはない。
 
@@ -247,18 +251,18 @@ Inbox は Gate を通ったメッセージの耐久キューで、enqueue が de
 
 | 設計上の名前 | 現在の実装 |
 |---|---|
-| Dispatcher | `SessionRunner` (`src/session/runner.ts`) |
-| Session (実行中の実体) | `ActiveSession` (`src/session/active-session.ts`) |
-| Gate 評価 | `SessionRunner.handle` / `handleReaction` 内の `evaluateWhen` (`src/session/runner.ts`, `src/gate/gate.ts`) |
-| `trigger.whileRunning` | 未設定。現在は passthrough の順序のみ実装 (`SessionRunner.trySteerExisting` が Gate より前) |
+| Dispatcher | `Dispatcher` (`src/dispatch/dispatcher.ts`) |
+| Session (実行中の実体) | `Session` (`src/session/session.ts`) |
+| Gate 評価 | `GateEvaluator.admit` (`src/gate/evaluate.ts`) → `evaluateWhen` (`src/gate/gate.ts`) |
+| `trigger.whileRunning` | `GateEvaluator.admit` (`src/gate/evaluate.ts`)。message 経路のみに効く — reaction は sessionKey が fetch 後にしか決まらないため常に Gate 先行 |
 | Thread → Session 対応 | `ThreadStore.resolve` / `bind` (`src/state/control/interfaces.ts`)。Control State に永続化されるため再起動後も解決できる |
-| affinity 合流先の解決 | `SessionRunner.resolveAffinityTarget` (`src/session/runner.ts`) |
+| affinity 合流先の解決 | `Dispatcher.resolveAffinityTarget` (`src/dispatch/dispatcher.ts`) |
 | Channel の直近 Session | `ThreadStore.latest` / `touchLatest` / `markLatestEnded` (`src/state/control/interfaces.ts`) |
-| debounce | `SessionRunner.scheduleDebouncedKick` / `computeKickDelayMs` (`src/session/runner.ts`, `src/session/policy.ts`) |
-| steering | `SessionRunner.trySteerExisting` / `ActiveSession.steerPending` |
-| lease | `LeaseStore` (`src/state/control/interfaces.ts`)、`ActiveSession.#startRenewTimer` |
-| Session の起動 (dispatch) | `SessionRunner.acquireLeaseAndKick` → `ActiveSession.start` |
-| Turn 境界 (flush → ack → reaction → linger) | `ActiveSession.#onAgentEnd` |
-| 異常終了 | `ActiveSession.#abnormalShutdown` / `proc.on("exit")` |
-| Turn タイムアウト | `ActiveSession.#resetTurnTimeout` / `#timeoutSession` |
+| debounce | `Dispatcher.scheduleDebouncedDispatch` / `computeDispatchDelayMs` (`src/dispatch/dispatcher.ts`, `src/dispatch/policy.ts`) |
+| steering | `Dispatcher.trySteerExisting` / `Session.steerPending` |
+| lease | `LeaseStore` (`src/state/control/interfaces.ts`)、`Session.#startRenewTimer` |
+| Session の起動 (dispatch) | `Dispatcher.startOrResumeSession` → `Session.start` |
+| Turn 境界 (flush → ack → reaction → linger) | `Session.#onAgentEnd` |
+| 異常終了 | `Session.#abnormalShutdown` / `proc.on("exit")` |
+| Turn タイムアウト | `Session.#resetTurnTimeout` / `#timeoutSession` |
 | Inbox と dedupe | `InboxStore` / `inboxItemId` (`src/state/control/`) |

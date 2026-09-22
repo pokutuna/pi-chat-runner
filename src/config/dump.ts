@@ -9,7 +9,7 @@
 // 対象は agent / channels ブロックだけで system には触れない。agent.env の値も
 // 解決せず、書かれたままの参照文字列 (${env.X}) を表示する (config.md §2.1, §5)。
 
-import { resolveSessionPolicy } from "../session/policy.js";
+import { resolveSessionPolicy } from "../dispatch/policy.js";
 import type { AgentConfig } from "./agent-config.js";
 import type { ChannelsFile, WhenNode } from "./channel-config.js";
 import {

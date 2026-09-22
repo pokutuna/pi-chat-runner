@@ -2,7 +2,7 @@
 //
 // InboxStore / SessionStore / ThreadStore / LeaseStore / ChannelStateStore の 5 つを
 // 独立したインタフェースとして定義する (1 つの巨大な Store にしない。実装体は 1 つの
-// クラスが 5 つを implements してよい)。SessionRunner はこれらを受け取るだけで、
+// クラスが 5 つを implements してよい)。Dispatcher はこれらを受け取るだけで、
 // どの実装かを知らない。
 //
 // レコードは sessionKey で引く (state.md §2)。sessionKey は Session の識別子で、

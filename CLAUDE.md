@@ -19,7 +19,7 @@ The design overview is `docs/design.md`; detailed design docs live in `docs/desi
 
 ```sh
 pnpm test                                          # vitest run (all tests)
-pnpm exec vitest run test/session/runner.test.ts   # single file
+pnpm exec vitest run test/dispatch/dispatcher.test.ts # single file
 pnpm exec vitest run -t "some test name"           # single test by name
 pnpm run typecheck                                 # tsc --noEmit
 pnpm run lint                                      # oxlint . && oxfmt --check .
@@ -48,7 +48,7 @@ Gate               — decides whether to trigger a session (src/gate/)
 InboxStore         — durable, dedupe'd queue of accepted events (src/state/control/)
     │  InboxItem
     ▼
-SessionRunner      — acquires lease, drains inbox, kicks a turn (src/session/runner.ts)
+Dispatcher         — acquires lease, drains inbox, starts a turn (src/dispatch/dispatcher.ts)
     │  turn input
     ▼
 Runtime            — prepares the workdir and spawns/drives the pi child process via RPC (src/runtime/)
@@ -60,6 +60,6 @@ Egress             — resolves thread_key to destination, formats to mrkdwn, ch
 Chat (e.g. Slack)
 ```
 
-`src/server.ts` + `src/bridge.ts` form the composition root: they read env vars, pick concrete backends (EventSource mode, store backend, workdir archival), and wire everything together. Concrete backend selection happens only there — `SessionRunner` and below receive interfaces only. See `docs/design.md`, `docs/design/architecture.md`, and `docs/design/session-model.md` for the full rationale.
+`src/server.ts` + `src/bridge.ts` form the composition root: they read env vars, pick concrete backends (EventSource mode, store backend, workdir archival), and wire everything together. Concrete backend selection happens only there — `Dispatcher` and below receive interfaces only. See `docs/design.md`, `docs/design/architecture.md`, and `docs/design/session-model.md` for the full rationale.
 
 Several directories split a platform-neutral interface from its implementation on purpose (`src/ingress/` vs `src/ingress/slack/`, `src/state/control/` vs `src/state/agent/`, `src/gate/gate.ts` vs `src/gate/gates/`). Match that granularity when extending them — see `docs/design/architecture.md §4` for how the store split was decided.

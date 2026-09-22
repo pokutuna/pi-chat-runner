@@ -21,8 +21,8 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { ResolvedChannel } from "../config/config-source.js";
+import { isIdleExpired, type SessionPolicy } from "../dispatch/policy.js";
 import type { Logger } from "../logger.js";
-import { isIdleExpired, type SessionPolicy } from "../session/policy.js";
 import type { SharedStore, WorkdirStore } from "../state/agent/interfaces.js";
 import type { PiPermissionConfig } from "./config.js";
 import {
@@ -34,7 +34,7 @@ import { rotatedSessionFile, SESSION_FILE } from "./session-file.js";
 /** 組み込み extension のファイル名 (リポジトリ/パッケージ直下の extensions/)。
  * reply は唯一の返信経路、permission-gate は事故防止層 (runtime.md §4.1) で、どの
  * プラットフォームで使う場合も常時注入する — プラットフォーム非依存なので呼び出し側に
- * 渡させず SessionRunner 自身が解決する。export は標準機能として同様に扱う。
+ * 渡させず Dispatcher 自身が解決する。export は標準機能として同様に扱う。
  * pi が --extension で TS ソースを直接ロードするためビルド対象外。 */
 export const BUILTIN_EXTENSION_NAMES = [
   "reply.ts",
@@ -174,7 +174,7 @@ export async function chownRecursive(
   }
 }
 
-/** kick 前半、設定バリデーション warn 群 (session-model.md §2)。session.mode /
+/** Session 起動前半、設定バリデーション warn 群 (session-model.md §2)。session.mode /
  * reply.mode の非推奨な組み合わせ、channel モード専用オプションの thread モードでの
  * 指定、affinity.scope=channel の冗長設定を検知して warn するのみ (throw しない)。
  * record への書き込みは行わない */
@@ -235,8 +235,8 @@ export interface PreviousSession {
   rotateRequestedAt?: Date;
 }
 
-/** prepareWorkdir が返す、kick 後続処理 (extension/skill 解決・PiProcess 生成) に
- * 必要な値。record への書き込みはここでは行わず、呼び出し側 (kick) が
+/** prepareWorkdir が返す、Session 起動の後続処理 (extension/skill 解決・PiProcess 生成) に
+ * 必要な値。record への書き込みはここでは行わず、呼び出し側 (Dispatcher) が
  * resumed の記録・ログ出力等に使う */
 export interface PreparedWorkdir {
   /** realpath 正規化済みの workdir 絶対パス */
@@ -247,7 +247,7 @@ export interface PreparedWorkdir {
   sharedDirReal: string | undefined;
   /** workdirReal 直下の session.jsonl 絶対パス */
   sessionPath: string;
-  /** kick 開始時点で session.jsonl が既に存在したか (resume 判定用ログに使う) */
+  /** Session 起動時点で session.jsonl が既に存在したか (resume 判定用ログに使う) */
   resumed: boolean;
   /** /new マーカー (rotateRequestedAt) を消費して transcript を世代交代したか。
    * マーカーのクリア (Control State への書き込み) は Dispatcher 側が行う
@@ -255,7 +255,7 @@ export interface PreparedWorkdir {
   rotateConsumed: boolean;
 }
 
-/** kick 前半、workdir/shared の mkdir + restore、transcript 世代交代 (manual →
+/** Session 起動前半、workdir/shared の mkdir + restore、transcript 世代交代 (manual →
  * idle → size)、UID 分離 (chown/chmod)、agentHome 作成、realpath 正規化をまとめて
  * 行う (runtime.md §2 準備順序、§5.1 UID 分離)。
  *
@@ -424,7 +424,7 @@ export interface SpawnPaths {
   permission: PiPermissionOptions | undefined;
 }
 
-/** kick 中盤、extension/skill パス解決 (channel resource + builtin) と Node
+/** Session 起動中盤、extension/skill パス解決 (channel resource + builtin) と Node
  * Permission Model オプション組み立てをまとめる (runtime.md §4, §5.2)。
  * record への書き込みは行わない。 */
 export async function buildSpawnOptions(args: {
@@ -538,7 +538,7 @@ export async function buildSpawnOptions(args: {
   return { extensionPaths, skillPaths, memoryEnabled, permission };
 }
 
-/** kick 後半、memory index (MEMORY.md) の読み込み (docs/design/runtime.md §6)。
+/** Session 起動後半、memory index (MEMORY.md) の読み込み (docs/design/runtime.md §6)。
  * memory 無効 or ファイル未作成なら undefined を返す。ENOENT 以外は fail-loud。 */
 export async function loadMemoryIndex(
   memoryEnabled: boolean,

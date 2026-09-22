@@ -141,7 +141,7 @@ export const ChannelConfigSchema = z
             scope: z.enum(["session", "channel"]).optional(),
             /** セッション終了後も合流可能な秒数。既定 0 (稼働中のみ合流)。 */
             windowSec: z.number().int().nonnegative().optional(),
-            /** 連投バーストを 1 ターンに束ねる kick 遅延 (trigger から移設)。 */
+            /** 連投バーストを 1 ターンに束ねる dispatch 遅延 (trigger から移設)。 */
             debounceSec: z.number().int().positive().optional(),
           })
           .strict()

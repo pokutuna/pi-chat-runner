@@ -382,7 +382,7 @@ staging は復元されず、Shared 経由で全 Channel に効く指示は書�
 |---|---|
 | ControlState | 同名 (`src/state/control/interfaces.ts`) |
 | SessionRecord | 同名 (同上) |
-| ThreadStore | 同名 (同上)。`SessionRunner` は `threads.resolve` / `bind` / `latest` 経由で参照する |
+| ThreadStore | 同名 (同上)。`Dispatcher` は `threads.resolve` / `bind` / `latest` 経由で参照する |
 | InboxStore / SessionStore / LeaseStore / ChannelStateStore | 同名 (同上)。引数名は `sessionKey` |
 | Control State backend | `InMemoryControlState` / `SqliteControlState` / `FirestoreControlState` (`src/state/control/backends/`) |
 | SQLite / Firestore のキー名 | 列 `session_key`、`Lease.sessionKey`、コレクション `<rootDoc>/inbox/{sessionKey}/items/{itemId}`。旧列 `thread_key` の DB は SQLite を開くときに `ALTER TABLE ... RENAME COLUMN` で移行する |
@@ -390,5 +390,5 @@ staging は復元されず、Shared 経由で全 Channel に効く指示は書�
 | InboxItem.id の導出 | `inboxItemId` (`src/state/control/inbox-item.ts`) |
 | WorkdirStore / SharedStore | 同名 (`src/state/agent/interfaces.ts`)、`CopyWorkdirStore` / `CopySharedStore` (`src/state/agent/copy.ts`)、`NoopWorkdirStore` (`src/state/agent/noop.ts`) |
 | 棚の選択 | `createWorkdirStore` / `createSharedStore` (`src/state/agent/copy.ts`)、`src/server.ts` が env から組み立てる |
-| restore / flush の呼び出し | `prepareWorkdir` (`src/runtime/prepare.ts`)、`ActiveSession.#onAgentEnd` (`src/session/active-session.ts`) |
-| Workdir / staging のパス | `SessionRunner.workdirRoot` / `sharedStagingDir` (`src/session/runner.ts`) |
+| restore / flush の呼び出し | `prepareWorkdir` (`src/runtime/prepare.ts`)、`Session.#onAgentEnd` (`src/session/session.ts`) |
+| Workdir / staging のパス | `Dispatcher.workdirRoot` / `sharedStagingDir` (`src/dispatch/dispatcher.ts`) |

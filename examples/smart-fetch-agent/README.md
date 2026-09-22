@@ -26,7 +26,7 @@ This is the right shape when a capability (and its cost — see below) should
 only apply to a channel that actually needs it, rather than to every channel
 the bot is in.
 
-The runner (`src/session/runner.ts`) automatically adds each `extensions:`
+The Dispatcher (`src/dispatch/dispatcher.ts`) automatically adds each `extensions:`
 path's dirname to `--allow-fs-read` at kick time, so no extra filesystem
 permission wiring is needed here. `/app/node_modules/pi-smart-fetch/dist/`
 is also already covered by the base image's own Permission Model config

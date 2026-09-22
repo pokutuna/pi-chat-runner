@@ -12,7 +12,7 @@ import { EventEmitter } from "node:events";
 
 import type { ChatPoster } from "../../egress/router.js";
 import { SlackTurnReactor } from "../../egress/slack/turn-reactor.js";
-import type { FetchedMessage, FetchMessage } from "../../session/runner.js";
+import type { FetchedMessage, FetchMessage } from "../../gate/evaluate.js";
 import type { ChatEvent, InboundMessage, Sender } from "../chat-event.js";
 import type { Ack, Ingress } from "../ingress.js";
 import type { UserResolver } from "../user-resolver.js";

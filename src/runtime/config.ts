@@ -35,7 +35,7 @@ export interface RuntimeConfig {
 }
 
 /** Node Permission Model 有効化の静的パラメタ (runtime.md §5.2)。
- * workdir / home はセッションごとに決まるため kick 時に buildPiPermissionOptions
+ * workdir / home はセッションごとに決まるため Session 起動時に buildPiPermissionOptions
  * へ都度渡す — ここに載るのはイメージ内で固定のパスだけ */
 export interface PiPermissionConfig {
   /** pi 本体のエントリポイント JS の絶対パス (import.meta.resolve で自動検出する。
@@ -49,7 +49,7 @@ export interface PiPermissionConfig {
   /** 追加で read を許可したいパス (例 GOOGLE_APPLICATION_CREDENTIALS のファイル
    * パス)。HOME を agentHome に固定するとローカルのユーザー ADC は HOME 経由で
    * 見えなくなるため、明示指定されたファイルだけ個別に許可する用途。既定なし。
-   * extension (reply / permission-gate) の読み込みに必要な read 許可は kick 時に
+   * extension (reply / permission-gate) の読み込みに必要な read 許可は Session 起動時に
    * extensionPaths の dirname から自動導出してここへ足すため、呼び出し側が
    * 明示する必要はない (appDir 包括許可の廃止に伴う対応) */
   extraRead?: string[];

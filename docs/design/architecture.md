@@ -179,9 +179,9 @@ Agent の確定出力が `reply` tool の 1 経路しかなく、地の文を送
 | Ingress interface / Ack | `src/ingress/ingress.ts` |
 | HttpIngress / SocketIngress | `src/ingress/slack/{http-ingress,socket-ingress}.ts` |
 | Ingress の codec | `SlackIngressAdapter` (`src/ingress/slack/adapter.ts`) |
-| Gate | `src/gate/gate.ts`, `src/gate/gates/*.ts` (評価の呼び出しは `SessionRunner.handle`) |
-| Dispatcher | `SessionRunner` (`src/session/runner.ts`) |
-| Session | `ActiveSession` (`src/session/active-session.ts`) |
+| Gate | `src/gate/evaluate.ts` (`GateEvaluator.admit`)、`src/gate/gate.ts`, `src/gate/gates/*.ts` |
+| Dispatcher | `Dispatcher` (`src/dispatch/dispatcher.ts`) |
+| Session | `Session` (`src/session/session.ts`) |
 | Runtime | `src/runtime/` (`prepare.ts` / `pi-process.ts` / `pi-args.ts` / `rpc.ts` / `pi-events.ts` / `prompt.ts` / `reply-files.ts` / `config.ts` / `resolve.ts` / `session-file.ts`) |
 | Egress | `src/egress/` (`EgressRouter`, `chunker.ts`, `mrkdwn.ts`, `turn-reactor.ts`) |
 | Control State | `ControlState` (`src/state/control/interfaces.ts`) と `src/state/control/backends/` |

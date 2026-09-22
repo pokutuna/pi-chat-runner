@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// pi のスタブ (SessionRunner 統合テスト用)。実 LLM なしで RPC の入出力を再現する。
+// pi のスタブ (Dispatcher / Session 統合テスト用)。実 LLM なしで RPC の入出力を再現する。
 //
 // - stdin の JSONL コマンドをすべて `<workdir>/commands.jsonl` に追記する
 //   (workdir は --session の親ディレクトリ)。テストはこれを読んで assert する
@@ -40,15 +40,15 @@
 //                        ingress-egress.md §8)
 //     それ以外          … `echo: <本文>` の reply → agent_end を吐く
 // - agent_end.messages には固定の usage 付き assistant message を 1 件含める
-//   (SessionRunner の usage 集計ロジックをテストから確認するため)
+//   (Session の usage 集計ロジックをテストから確認するため)
 // - thread_key はまず prompt/steer の message 本文中の "(thread_key: <key>):" を拾う
 //   (session-model.md §3: メッセージごとの thread_key)。見つからなければ
 //   --append-system-prompt 末尾の "Fallback thread_key for this session: <key>" を使う
 // - stdin が閉じたら終了する (PiProcess.stop の graceful パス)
 // - 起動時に <workdir>/env-seen.json へ process.env のスナップショットを書く
-//   (SessionRunner → PiProcess の extraEnv 透過をテストから確認するため)
+//   (Session → PiProcess の extraEnv 透過をテストから確認するため)
 // - 起動時に <workdir>/argv-seen.json へ process.argv (先頭 2 要素を除く実引数) を書く
-//   (SessionRunner → PiProcess → buildPiArgs の --skill 等の透過をテストから確認するため)
+//   (Session → PiProcess → buildPiArgs の --skill 等の透過をテストから確認するため)
 
 import { appendFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";

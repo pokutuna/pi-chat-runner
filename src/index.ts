@@ -41,6 +41,7 @@ export {
   type SystemConfig,
   SystemConfigSchema,
 } from "./config/system-config.js";
+export { Dispatcher, type DispatcherOptions } from "./dispatch/dispatcher.js";
 export { toMrkdwn } from "./egress/mrkdwn.js";
 export {
   type ReactionClient,
@@ -54,6 +55,14 @@ export {
   EgressRouter,
   type EgressRouterOptions,
 } from "./egress/router.js";
+export {
+  type FetchedMessage,
+  type FetchMessage,
+  GateEvaluator,
+  type GateEvaluatorOptions,
+  type GateOutcome,
+  type GateRequest,
+} from "./gate/evaluate.js";
 export type {
   Attachment,
   ChatEvent,
@@ -83,9 +92,14 @@ export { SocketIngress } from "./ingress/slack/socket-ingress.js";
 export { SlackUserResolver } from "./ingress/slack/user-resolver.js";
 export { enrichEvent, type UserResolver } from "./ingress/user-resolver.js";
 export type { Logger } from "./logger.js";
-export { SessionRunner, type SessionRunnerOptions } from "./session/runner.js";
 export type { PiPermissionConfig, RuntimeConfig } from "./runtime/config.js";
 export { createRuntimeConfig } from "./runtime/resolve.js";
+export {
+  Session,
+  type SessionContext,
+  type SessionObserver,
+  type SessionOptions,
+} from "./session/session.js";
 export { CopyWorkdirStore } from "./state/agent/copy.js";
 export type { SharedStore, WorkdirStore } from "./state/agent/interfaces.js";
 export { InMemoryControlState } from "./state/control/backends/memory.js";

@@ -1,13 +1,26 @@
-// ActiveSession — 1 セッションの生存期間 (spawn → ターン実行 → 終了) を自分で
-// 管理する主語。SessionRunner はレーン解決とレジストリ
-// (Map<sessionKey, ActiveSession>) だけを持ち、1 セッションの遷移はここに閉じる。
+// Session — 1 Session の生存期間 (spawn → Turn 実行 → 終了) を自分で管理する主語。
+// Dispatcher は Session の選択とレジストリ (Map<sessionKey, Session>) だけを持ち、
+// 1 Session の遷移はここに閉じる。
 //
-// docs/design/architecture.md §6 (event は「きっかけ係」、session が「処理の担い手」)、
-// docs/design/message-dispatch.md §5 (起動と steering のフロー)、§7.2 (Turn 境界の
-// 順序: flush → ack)、§7.4 (turn timeout)、docs/design/runtime.md §1 (kick シーケンス)、
-// docs/design/state.md §7 (tmpfs + 境界 flush)。
+// docs/design/architecture.md §6 (event は「きっかけ係」、Session が「処理の担い手」)、
+// docs/design/session-model.md §7 (Turn)、docs/design/message-dispatch.md §5 (起動と
+// steering のフロー)、§7.2 (Turn 境界の順序: flush → ack)、§7.4 (turn timeout)、
+// docs/design/runtime.md §1 (起動シーケンス)、docs/design/state.md §7 (tmpfs + 境界 flush)。
+//
+// Turn は型ではなくこのクラスのフィールド群 (#turnEpoch / #turnMessageIds /
+// #turnTimeoutTimer) として表す (session-model.md §7)。
 
 import type { ResolvedChannel } from "../config/config-source.js";
+import {
+  renderEvent,
+  renderItems,
+  type SessionPolicy,
+} from "../dispatch/policy.js";
+import {
+  sessionFailedNoticeText,
+  turnTimeoutNoticeText,
+} from "../egress/notices.js";
+import { registerReplyDestination } from "../egress/reply-destination.js";
 import type { EgressRouter } from "../egress/router.js";
 import type { ReactionState, TurnReactor } from "../egress/turn-reactor.js";
 import type { InboundMessage } from "../ingress/chat-event.js";
@@ -38,27 +51,26 @@ import {
 import type { SharedStore, WorkdirStore } from "../state/agent/interfaces.js";
 import { inboxItemId } from "../state/control/inbox-item.js";
 import type { ControlState, Lease } from "../state/control/interfaces.js";
-import { renderEvent, renderItems, type SessionPolicy } from "./policy.js";
 import { ProgressNotice } from "./progress.js";
-import { registerReplyDestination } from "./reply-destination.js";
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-/** ActiveSession がレジストリ (SessionRunner) に対して要求する操作。全終了経路の
- * Map delete と markSessionPointerEnded の呼び出しをこのポート経由に集約する */
-export interface SessionHost {
-  /** レジストリから自分を外す (全終了経路の Map delete の置き換え) */
-  remove(session: ActiveSession): void;
-  /** windowSec 起点の記録 (旧 markSessionPointerEnded の呼び出し) */
-  markEnded(channelId: string, sessionKey: string): Promise<void>;
+/** Session がライフサイクルの節目を知らせる先 (実装は Dispatcher)。全終了経路の
+ * レジストリ離脱と、windowSec 起点の記録をこのポート経由に集約する。
+ * Session は Dispatcher を import せず、この 2 つのコールバックだけを知る */
+export interface SessionObserver {
+  /** Session がレジストリから外れた (全終了経路の Map delete の置き換え) */
+  onDisposed(session: Session): void;
+  /** Session が終了した (windowSec 起点の記録、message-dispatch.md §3.2) */
+  onEnded(channelId: string, sessionKey: string): Promise<void>;
 }
 
-/** セッション横断で不変の依存・設定一式。SessionRunner のコンストラクタで
- * options から一度だけ組み立て、以後は使い回す (SessionRunnerOptions の再梱包を
- * kick / ActiveSession 構築のたびに繰り返さないための束ね役)。ActiveSession は
- * これを `#ctx` 1 フィールドとして保持し、個々の値は展開しない。static* な値
+/** Session 横断で不変の依存・設定一式。Dispatcher のコンストラクタで options から
+ * 一度だけ組み立て、以後は使い回す (DispatcherOptions の再梱包を Session 構築の
+ * たびに繰り返さないための束ね役)。Session はこれを `#ctx` 1 フィールドとして
+ * 保持し、個々の値は展開しない。static* な値
  * (mentionFormat/piBinary/piEntrypoint/agentUid/agentGid) は StartArgs にはもう
  * 積まない — プロセス起動中に変わらないのでここから直接参照する */
 export interface SessionContext {
@@ -76,35 +88,35 @@ export interface SessionContext {
   mentionFormat: MentionFormat;
   /** Runtime レイヤの静的設定 (pi のパス・env allowlist・UID 分離・Permission
    * Model・workdir のルート。runtime.md §1)。Channel ごとの Agent Config の env
-   * (config.md §1.3) と HOME=agentHomeReal は kick 時に runtime.extraEnv の上へ
-   * 重ねて合成する (runner.ts) */
+   * (config.md §1.3) と HOME=agentHomeReal は起動時に runtime.extraEnv の上へ
+   * 重ねて合成する (dispatch/dispatcher.ts) */
   runtime: RuntimeConfig;
 }
 
-/** ActiveSession の構築に必要な依存一式。同一性 (sessionKey/channelId/threadTs/
+/** Session の構築に必要な依存一式。同一性 (sessionKey/channelId/threadTs/
  * triggerMessageId/workdir/policy) と lease/host/sharedStagingDir はセッションごとに
  * 決まる値、ctx はセッション横断の共有コンテキスト (SessionContext)。 */
-export interface ActiveSessionOptions {
+export interface SessionOptions {
   sessionKey: string;
   channelId: string;
   threadTs: string;
   /** セッションを起こしたトリガーメッセージの ID (セッション同一性・sessions.put 用) */
   triggerMessageId: string;
   workdir: string;
-  /** kick 時に導出した session.mode / reply.mode。promptPending / start から
+  /** 起動時に導出した session.mode / reply.mode。promptPending / start から
    * 参照して宛先登録・フォールバック登録に使う (session-model.md §3) */
   policy: SessionPolicy;
   /** このプロセスが保持する実行ロック。renew に失敗したら排他を失っている */
   lease: Lease;
-  host: SessionHost;
+  observer: SessionObserver;
   /** チャンネル共有ディレクトリの staging パス (docs/design/state.md §6) */
   sharedStagingDir: string | undefined;
   ctx: SessionContext;
 }
 
-/** start() に渡す、spawn 準備 (runtime/prepare.ts の関数群) の結果と per-kick な設定。
- * ActiveSession は spawn 準備を自分では持たない — runner の kick 相当が
- * prepareWorkdir / buildSpawnOptions / loadMemoryIndex を呼んだ結果を束ねて渡す。
+/** start() に渡す、spawn 準備 (runtime/prepare.ts の関数群) の結果と起動ごとの設定。
+ * Session は spawn 準備を自分では持たない — Dispatcher が prepareWorkdir /
+ * buildSpawnOptions / loadMemoryIndex を呼んだ結果を束ねて渡す。
  * mentionFormat や RuntimeConfig のような静的設定は ctx (SessionContext) 側に
  * あるためここには含まない */
 export interface StartArgs {
@@ -118,22 +130,31 @@ export interface StartArgs {
   skillPaths: string[];
   permission: PiPermissionOptions | undefined;
   memoryIndex: string | undefined;
-  /** kick 開始時点で session.jsonl が既に存在したか ("session started" ログ用) */
+  /** 起動時点で session.jsonl が既に存在したか ("session started" ログ用) */
   resumed: boolean;
   model: string | undefined;
   /** allowlist に追加で pi 子プロセスへ渡す env (HOME=agentHomeReal を含む、
-   * per-kick に合成されたもの) */
+   * 起動ごとに合成されたもの) */
   extraEnv: Record<string, string>;
 }
 
-export class ActiveSession {
+/** 1 つの sessionKey に対して実行中の pi プロセスと、その Turn の状態を持つ実体
+ * (message-dispatch.md §7, session-model.md §7)。Dispatcher が lease を取ってから
+ * 1 つだけ作り、Session が畳まれるときに observer 経由で Dispatcher へ返る。
+ *
+ * Inbox の読み出しについて: 起動と各 Turn の入力組み立ては Session 自身が
+ * `controlState.inbox.drain()` で行う (flush → ack の境界も Session が握るため、
+ * drain と ack を同じ場所に置く)。Dispatcher は「この sessionKey を起動/再開してよい」
+ * という判断と lease だけを渡し、どの item を prompt に載せるかには関与しない
+ * (message-dispatch.md §7.2)。 */
+export class Session {
   readonly sessionKey: string;
   readonly channelId: string;
   readonly threadTs: string;
   /** セッションを起こしたトリガーメッセージの ID (セッション同一性・sessions.put 用) */
   readonly triggerMessageId: string;
   readonly workdir: string;
-  /** kick 時に導出した session.mode / reply.mode。promptPending / start から
+  /** 起動時に導出した session.mode / reply.mode。promptPending / start から
    * 参照して宛先登録・フォールバック登録に使う (session-model.md §3) */
   readonly policy: SessionPolicy;
 
@@ -143,7 +164,7 @@ export class ActiveSession {
    * stopping = 終了処理中 (exit を異常扱いしない) */
   #state: "starting" | "running" | "lingering" | "stopping" = "starting";
   #process?: PiProcess;
-  /** kick 開始時刻 (finished ログの durationMs 算出用) */
+  /** 起動時刻 (finished ログの durationMs 算出用) */
   readonly #startedAt: number;
   /** このプロセスが保持する実行ロック。renew に失敗したら排他を失っている */
   readonly #lease: Lease;
@@ -176,11 +197,11 @@ export class ActiveSession {
    * 経路の Map delete の代わりに立てるフラグ。stale チェックの主語になる */
   #disposed = false;
 
-  readonly #host: SessionHost;
+  readonly #observer: SessionObserver;
   readonly #sharedStagingDir: string | undefined;
   readonly #ctx: SessionContext;
 
-  constructor(options: ActiveSessionOptions) {
+  constructor(options: SessionOptions) {
     this.sessionKey = options.sessionKey;
     this.channelId = options.channelId;
     this.threadTs = options.threadTs;
@@ -189,7 +210,7 @@ export class ActiveSession {
     this.policy = options.policy;
     this.#startedAt = Date.now();
     this.#lease = options.lease;
-    this.#host = options.host;
+    this.#observer = options.observer;
     this.#sharedStagingDir = options.sharedStagingDir;
     this.#ctx = options.ctx;
     this.#progress = new ProgressNotice({
@@ -209,9 +230,10 @@ export class ActiveSession {
     return this.#process?.running === true;
   }
 
-  /** kick 後半 (runtime.md §1: PiProcess 生成〜イベントハンドラ登録〜start〜
-   * register〜初回 prompt〜sessions.put〜started ログ)。spawn 準備 (spawn.ts の
-   * 関数群) の結果は args で受け取る — ActiveSession は spawn 準備を持たない */
+  /** 起動シーケンス後半 (runtime.md §1: PiProcess 生成〜イベントハンドラ登録〜start〜
+   * register〜初回 prompt〜sessions.put〜started ログ)。spawn 準備
+   * (runtime/prepare.ts の関数群) の結果は args で受け取る — Session は spawn 準備を
+   * 持たない */
   async start(args: StartArgs): Promise<void> {
     const sessionKey = this.sessionKey;
     const { channelId, threadTs, workdir, policy } = this;
@@ -425,7 +447,7 @@ export class ActiveSession {
         void this.#ctx.controlState.leases.release(this.#lease).catch((err) => {
           this.#ctx.logger.warn({ sessionKey, err }, "lease release failed");
         });
-        void this.#host.markEnded(this.channelId, sessionKey);
+        void this.#observer.onEnded(this.channelId, sessionKey);
         this.#ctx.logger.warn(
           { sessionKey, code, signal },
           "pi exited unexpectedly",
@@ -496,11 +518,10 @@ export class ActiveSession {
     );
   }
 
-  /** start() が throw したときのロールバック (旧 acquireLeaseAndKick の catch 節の
-   * セッション所有部分)。timer/process の後始末と progress レーンのクリアを行い、
-   * disposed を立ててレジストリから外す。lease の release / markEnded / warn ログは
-   * 呼び出し元 (runner) が現行と同じ順序で続けて行う。best-effort — stop の失敗は
-   * spawn 途中の失敗などで起こりうるので飲み込む */
+  /** start() が throw したときのロールバック (Session が所有する分)。timer/process の
+   * 後始末と進捗通知のクリアを行い、disposed を立ててレジストリから外す。lease の
+   * release / onEnded / warn ログは呼び出し元 (Dispatcher) が続けて行う。
+   * best-effort — stop の失敗は spawn 途中の失敗などで起こりうるので飲み込む */
   async abort(): Promise<void> {
     this.#dispose();
     const progressKey = this.#progress.currentKey;
@@ -513,10 +534,10 @@ export class ActiveSession {
     }
   }
 
-  /** running なレーンへの steer 配達 (trySteerExisting の後半)。呼び出し元 (runner)
-   * が state === "running" && processRunning を確認済みで、enqueue / dedupe /
-   * touchSessionPointer を済ませてから呼ぶ。drain → 未 prompt 抽出 → 宛先登録 →
-   * steer を行う */
+  /** running な Session への steer 配達 (message-dispatch.md §5)。呼び出し元
+   * (Dispatcher) が state === "running" && processRunning を確認済みで、
+   * enqueue / dedupe / 直近 Session の記録を済ませてから呼ぶ。drain → 未 prompt
+   * 抽出 → 宛先登録 → steer を行う */
   async steerPending(): Promise<void> {
     const sessionKey = this.sessionKey;
     const proc = this.#process;
@@ -607,8 +628,8 @@ export class ActiveSession {
     await this.#ctx.router.clearProgress(progressKey);
     await this.#ctx.controlState.leases.release(this.#lease);
     this.#dispose();
-    // windowSec の起点 (message-dispatch.md §3.2。以降このレーンは窓内なら resume 合流できる)
-    await this.#host.markEnded(this.channelId, sessionKey);
+    // windowSec の起点 (message-dispatch.md §3.2。以降この Session は窓内なら resume 合流できる)
+    await this.#observer.onEnded(this.channelId, sessionKey);
     this.#ctx.logger.info(
       {
         sessionKey,
@@ -636,7 +657,7 @@ export class ActiveSession {
     error: string | undefined,
   ): Promise<void> {
     await this.#abnormalShutdown(proc, {
-      noticeText: `:warning: セッションが異常終了しました: ${error ?? "unknown error"}`,
+      noticeText: sessionFailedNoticeText(error),
       logMessage: "session failed",
     });
   }
@@ -651,7 +672,7 @@ export class ActiveSession {
       "turn timed out",
     );
     await this.#abnormalShutdown(proc, {
-      noticeText: `:warning: ターンがタイムアウトしました (${this.#ctx.turnTimeoutMs}ms)。セッションを終了します`,
+      noticeText: turnTimeoutNoticeText(this.#ctx.turnTimeoutMs),
       logMessage: "session timed out",
     });
   }
@@ -683,7 +704,7 @@ export class ActiveSession {
     const progressKey = this.#progress.currentKey;
     this.#clearAllTimers();
 
-    // register 済み (kick で必ず register している) なので deliver できる。
+    // register 済み (起動時に必ず register している) なので deliver できる。
     // 通知の配達が失敗してもセッションの畳み込みは続ける。progressThreadKey は
     // 実際に進捗メッセージが出ている先 (progressKey) を渡す — reset(leadKey) で
     // sessionKey から差し替わっていた場合、sessionKey を渡すと取り残される
@@ -721,7 +742,7 @@ export class ActiveSession {
     // activeSessionCount (テストの waitFor 等) がこのログの後で 0 になるよう、
     // Map からの削除はクリーンアップ完了後に行う
     this.#dispose();
-    await this.#host.markEnded(this.channelId, sessionKey);
+    await this.#observer.onEnded(this.channelId, sessionKey);
   }
 
   /** 未 prompt の item があれば prompt して true (drain は非破壊なので
@@ -774,7 +795,7 @@ export class ActiveSession {
         this.#clearAllTimers();
         await this.#ctx.router.clearProgress(progressKey);
         await this.#process?.stop();
-        await this.#host.markEnded(this.channelId, sessionKey);
+        await this.#observer.onEnded(this.channelId, sessionKey);
       })().catch((err) => {
         this.#ctx.logger.error(
           { sessionKey, err },
@@ -845,7 +866,7 @@ export class ActiveSession {
 
   /** 全終了経路の共通後始末: 3 タイマー (renew / turn timeout / progress notice) を
    * まとめて止める。どの経路でもこの 3 つは隣接して呼ばれるため無条件に畳める。
-   * progress レーンの clearProgress / lease の release / markEnded / ログは経路ごとに
+   * 進捗通知の clearProgress / lease の release / onEnded / ログは経路ごとに
    * 位置も有無も異なる意図的な差異なのでここには含めない */
   #clearAllTimers(): void {
     this.#stopRenewTimer();
@@ -853,13 +874,13 @@ export class ActiveSession {
     this.#progress.clear();
   }
 
-  /** レジストリからの離脱 (disposed フラグ + host.remove)。呼び出し位置は経路ごとに
+  /** レジストリからの離脱 (disposed フラグ + observer.onDisposed)。呼び出し位置は経路ごとに
    * 異なる — abnormalShutdown はログ後 (activeSessionCount がログの後で 0 になるよう)、
    * exit / renew 失敗 / abort は先頭側。activeSessionCount を観測するテストに影響する
    * ので、各経路の現在位置から動かさないこと */
   #dispose(): void {
     this.#disposed = true;
-    this.#host.remove(this);
+    this.#observer.onDisposed(this);
   }
 
   /** ターンに 1 件の入力メッセージを取り込む共通処理 (start / steerPending /
@@ -875,12 +896,12 @@ export class ActiveSession {
     const threadKey = registerReplyDestination(this.#ctx.router, event, policy);
     this.#promptedIds.add(dedupeId);
     this.#turnMessageIds.push(event.id);
-    await this.#react(event.id, "kick");
+    await this.#react(event.id, "start");
     return threadKey;
   }
 
-  /** ターンの成否を、そのターンを起こした各メッセージへ返す (ok / error)。kick は
-   * prompt/steer 時点で付けてあるので、これで kick → ok/error が揃う。1 ターンに
+  /** ターンの成否を、そのターンを起こした各メッセージへ返す (ok / error)。start は
+   * prompt/steer 時点で付けてあるので、これで start → ok/error が揃う。1 ターンに
    * 複数メッセージが合流していれば全件に付く */
   async #reactMessages(
     messageIds: string[],

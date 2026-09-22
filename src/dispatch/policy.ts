@@ -20,9 +20,8 @@ export function resolveSessionPolicy(
   };
 }
 
-/** セッション (文脈) キーの導出。sessionMode "thread" は現行 threadKeyOf と同じ
- * (channelId:threadTs ?? メッセージ ts)、"channel" は channelId のみ
- * (session-model.md §2.1) */
+/** Session (文脈) キーの導出。sessionMode "thread" は `channelId:threadTs ??
+ * メッセージ ts`、"channel" は channelId のみ (session-model.md §2.1) */
 export function sessionKeyOf(
   event: InboundMessage,
   policy: SessionPolicy,
@@ -39,7 +38,7 @@ export function replyThreadKeyOf(event: InboundMessage): string {
   return `${event.conversation.channelId}:${event.conversation.threadTs ?? event.id}`;
 }
 
-/** イベント 1 件のプロンプト描画 (session-model.md §4 の renderEvent)。
+/** イベント 1 件のプロンプト描画 (session-model.md §4)。
  * threadKey 指定時は from/time/thread_key をラベル付きで列挙し、エージェントが
  * reply 時にどの宛先へ返すべきか、いつのメッセージかを判別できるようにする
  * (session-model.md §4)。time は ISO 8601 (タイムゾーン付き) で曖昧さをなくす。 */
@@ -73,11 +72,11 @@ export function isIdleExpired(
   return now - lastUpdatedAt.getTime() > idleResetMinutes * 60_000;
 }
 
-/** debounce の kick までの残り ms を求める (連投バーストの間、静まるまで kick を
- * 遅らせるための純関数)。「最後のメッセージ + debounceSec」まで延ばすが、
- * 「最初の滞留メッセージ + debounceSec*3」(hard cap) を超えない — 早い方を採用し、
- * 負なら 0 (即 kick) を返す */
-export function computeKickDelayMs(args: {
+/** debounce の dispatch までの残り ms を求める (連投バーストの間、静まるまで
+ * dispatch を遅らせるための純関数。message-dispatch.md §4)。「最後のメッセージ +
+ * debounceSec」まで延ばすが、「最初の滞留メッセージ + debounceSec*3」(hard cap) を
+ * 超えない — 早い方を採用し、負なら 0 (即 dispatch) を返す */
+export function computeDispatchDelayMs(args: {
   nowMs: number;
   firstPendingAtMs: number;
   debounceSec: number;

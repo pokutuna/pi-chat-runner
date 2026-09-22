@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseCommand } from "../../src/session/commands.js";
+import { parseCommand } from "../../src/dispatch/commands.js";
 
 describe("parseCommand", () => {
   it("素の /new は { kind: 'new' } (rest なし)", () => {

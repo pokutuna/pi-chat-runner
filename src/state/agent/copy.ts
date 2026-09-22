@@ -135,7 +135,7 @@ function logCopy(
 }
 
 /** sharedDir の設定値から対応する SharedStore を選ぶ。未設定/空文字なら
- * undefined (= shared 機能ごと無効。SessionRunner は undefined を見て staging の
+ * undefined (= shared 機能ごと無効。Dispatcher は undefined を見て staging の
  * 作成・skill 配線・system prompt への言及をすべて省く)。 */
 export function createSharedStore(
   sharedDir: string | undefined,

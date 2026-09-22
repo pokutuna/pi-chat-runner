@@ -1,11 +1,11 @@
-// startBridge — composition root (SessionRunner の組み立てと Ingress の配線)。
+// startBridge — composition root (Dispatcher の組み立てと Ingress の配線)。
 //
 // server.ts (CLI/bin) と、npm パッケージとして import して起動するライブラリ利用
 // (docs/design/config.md §3) の両方から呼ばれる共通の起動シーケンス。env パース・
 // composition の分離については server.ts のコメントを参照。
 //
-// 組み込み extension (reply/permission-gate/export) の解決と常時注入は SessionRunner
-// 自身が行う (src/session/runner.ts)。プラットフォーム非依存の Runner ⇔ pi 結線で
+// 組み込み extension (reply/permission-gate/export) の解決と常時注入は Dispatcher
+// 自身が行う (src/dispatch/dispatcher.ts)。プラットフォーム非依存の Runner ⇔ pi 結線で
 // あり、bridge (Slack 専用の composition root) の関心事ではない。
 
 import { basename } from "node:path";
@@ -17,11 +17,13 @@ import {
   GeminiClassifierClient,
 } from "./classifier/client.js";
 import type { ConfigSource } from "./config/config-source.js";
+import { Dispatcher } from "./dispatch/dispatcher.js";
 import { toMrkdwn } from "./egress/mrkdwn.js";
 import type { ChatPoster } from "./egress/router.js";
 import { EgressRouter } from "./egress/router.js";
 import { SlackTurnReactor } from "./egress/slack/turn-reactor.js";
 import type { TurnReactor } from "./egress/turn-reactor.js";
+import type { FetchMessage } from "./gate/evaluate.js";
 import type {
   ChatEvent,
   InboundMessage,
@@ -33,8 +35,6 @@ import { enrichEvent, type UserResolver } from "./ingress/user-resolver.js";
 import type { Logger } from "./logger.js";
 import { rootLogger } from "./logger.js";
 import type { RuntimeConfig } from "./runtime/config.js";
-import type { FetchMessage } from "./session/runner.js";
-import { SessionRunner } from "./session/runner.js";
 import { createSharedStore, createWorkdirStore } from "./state/agent/copy.js";
 import type { SharedStore, WorkdirStore } from "./state/agent/interfaces.js";
 import type { ControlState } from "./state/control/interfaces.js";
@@ -87,7 +87,7 @@ export interface BridgeOptions {
   sharedStore?: SharedStore;
 }
 
-/** SessionRunner を組み立て、eventSource を起動して配線する。呼び出し元 (server.ts の
+/** Dispatcher を組み立て、eventSource を起動して配線する。呼び出し元 (server.ts の
  * main、または import した Slack app 実装) が env パースを済ませた後に呼ぶ。 */
 export async function startBridge(options: BridgeOptions): Promise<void> {
   const logger = options.logger ?? rootLogger.child({ component: "server" });
@@ -207,7 +207,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
       });
     })();
 
-  const runner = new SessionRunner({
+  const dispatcher = new Dispatcher({
     configSource,
     controlState,
     router: new EgressRouter({
@@ -216,21 +216,23 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
       logger: logger.child({ component: "egress" }),
     }),
     reactor,
-    logger: logger.child({ component: "session" }),
-    // mentionFormat は必須 (SessionRunner はプラットフォーム中立で既定値を
+    logger,
+    // mentionFormat は必須 (Dispatcher はプラットフォーム中立で既定値を
     // 持たない)。bridge.ts は Slack 専用モジュールなので、Slack の mrkdwn
     // mention 記法をここで注入する
     mentionFormat: (userId) => `<@${userId}>`,
+    // reaction 起動の対象メッセージ本文の取得 (Gate ステージが Gate 通過後に使う)
+    fetchMessage,
     runtime: options.runtime,
     // workdirStore/archiveDir 未設定なら境界退避なし
     workdirStore,
     // sharedStore/sharedDir 未設定なら shared 無効
     ...(sharedStore !== undefined ? { sharedStore } : {}),
-    // turnTimeoutMs 未設定なら SessionRunner の既定 (600_000ms) を使う
+    // turnTimeoutMs 未設定なら Dispatcher の既定 (600_000ms) を使う
     ...(options.turnTimeoutMs !== undefined
       ? { turnTimeoutMs: options.turnTimeoutMs }
       : {}),
-    // progressNoticeIntervalMs 未設定なら SessionRunner の既定 (30_000ms) を使う
+    // progressNoticeIntervalMs 未設定なら Dispatcher の既定を使う
     ...(options.progressNoticeIntervalMs !== undefined
       ? { progressNoticeIntervalMs: options.progressNoticeIntervalMs }
       : {}),
@@ -238,12 +240,12 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
     ...(classifierClient !== undefined ? { classifierClient } : {}),
   });
 
-  // Layer 0 (ハードフィルタ): 同一メッセージは app_mention と message の 2 イベントで
+  // Ingress 側の重複吸収: 同一メッセージは app_mention と message の 2 イベントで
   // 届く (event_id は別) ため、メッセージ ts で重複排除する。inbox の dedupe は
   // event_id ベースなので、この二重配信はここでしか防げない
   //
   // 自己エコー (sender.isSelf) はここで無条件に除外する (無限ループ防止)。他 bot の
-  // 投稿はここでは弾かず、runner 側の allowBots 判定・gate に委ねる (config.md §4.3)。
+  // 投稿はここでは弾かず、Gate の allowBots 判定・Gate 木に委ねる (config.md §4.3)。
   const seenMessages = new Set<string>();
 
   await eventSource.start(async (event: ChatEvent, ack: Ack) => {
@@ -272,7 +274,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
         // sender gate の name 判定のため、reaction も sender を解決してから渡す
         // (enrichEvent は reaction では sender のみ enrich する)
         const enriched = (await enrichEvent(event, resolver)) as ReactionEvent;
-        await runner.handleReaction(enriched, fetchMessage);
+        await dispatcher.handleReaction(enriched);
       } catch (err) {
         logger.error({ err }, "failed to handle reaction");
       }
@@ -309,7 +311,7 @@ export async function startBridge(options: BridgeOptions): Promise<void> {
     const enriched = (await enrichEvent(event, resolver)) as InboundMessage;
 
     try {
-      await runner.handle(enriched);
+      await dispatcher.handle(enriched);
     } catch (err) {
       logger.error({ eventId: enriched.id, err }, "failed to handle event");
     }

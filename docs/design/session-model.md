@@ -205,20 +205,20 @@ Turn に複数のメッセージが合流していれば全件に付く。Sessio
 
 | 設計上の名前 | 現在の実装 |
 |---|---|
-| session.mode / reply.mode の解決 | `resolveSessionPolicy` (`src/session/policy.ts`) |
-| sessionKey の導出 | `sessionKeyOf` (`src/session/policy.ts`) |
-| Thread Key の導出 | `replyThreadKeyOf` (`src/session/policy.ts`) |
-| 送信先の解決と登録 | `registerReplyDestination` (`src/session/reply-destination.ts`) |
-| fallback Thread Key の登録 | `ActiveSession.start` (`src/session/active-session.ts`) |
-| プロンプトへの描画 | `renderEvent` / `renderItems` (`src/session/policy.ts`) |
+| session.mode / reply.mode の解決 | `resolveSessionPolicy` (`src/dispatch/policy.ts`) |
+| sessionKey の導出 | `sessionKeyOf` (`src/dispatch/policy.ts`) |
+| Thread Key の導出 | `replyThreadKeyOf` (`src/dispatch/policy.ts`) |
+| 送信先の解決と登録 | `registerReplyDestination` (`src/egress/reply-destination.ts`) |
+| fallback Thread Key の登録 | `Session.start` (`src/session/session.ts`) |
+| プロンプトへの描画 | `renderEvent` / `renderItems` (`src/dispatch/policy.ts`) |
 | System Prompt の組み立て | `buildSystemPrompt` (`src/runtime/prompt.ts`) |
-| コマンドの解析 | `parseCommand` (`src/session/commands.ts`) |
-| `/new` の処理 | `SessionRunner.handleNewCommand` (`src/session/runner.ts`) |
-| `/enable` `/disable` の処理 | `SessionRunner.handleToggleCommand` (`src/session/runner.ts`) |
-| Session の終了条件の判定 | `prepareWorkdir` / `isIdleExpired` (`src/runtime/prepare.ts`, `src/session/policy.ts`) |
+| コマンドの解析 | `parseCommand` (`src/dispatch/commands.ts`) |
+| `/new` の処理 | `handleNewCommand` (`src/dispatch/commands.ts`) |
+| `/enable` `/disable` の処理 | `handleToggleCommand` (`src/dispatch/commands.ts`) |
+| Session の終了条件の判定 | `prepareWorkdir` / `isIdleExpired` (`src/runtime/prepare.ts`, `src/dispatch/policy.ts`) |
 | Transcript の切り替え | `rotateTranscript` (`src/runtime/prepare.ts`) |
 | mode 不整合の警告 | `warnPolicyMismatches` (`src/runtime/prepare.ts`) |
 | Turn の成否判定 | `turnStatusFromAgentEnd` (`src/runtime/pi-events.ts`) |
-| リアクション | `ActiveSession.#beginTurnMessage` / `#reactMessages` (`src/session/active-session.ts`) |
+| リアクション | `Session.#beginTurnMessage` / `#reactMessages` (`src/session/session.ts`) |
 | Session 実行状況 (SessionRecord) | `SessionRecord` (`src/state/control/interfaces.ts`) |
 | Channel 有効状態 | `ChannelStateStore` (`src/state/control/interfaces.ts`) |

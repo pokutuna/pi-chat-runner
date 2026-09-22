@@ -2,9 +2,10 @@
 //
 // eventSource.start() が呼ばれたら ChatEvent を 1 個流すスタブ Ingress +
 // InMemoryControlState + FileConfigSource (test/fixtures/config) + fake-pi
-// (test/fixtures/fake-pi.mjs。test/session/runner.test.ts の harness と同じ方法) で、
+// (test/fixtures/fake-pi.mjs。test/helpers/session-harness.ts と同じ方法) で、
 // mention イベント → 返信が WebClient 相当の poster に届くことを 1 本だけ確認する。
-// SessionRunner 自体の詳細な振る舞い (gate/lease/linger 等) は runner.test.ts の担当。
+// Dispatcher 自体の詳細な振る舞い (gate/lease/linger 等) は
+// test/dispatch/dispatcher.test.ts の担当。
 
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -101,7 +102,7 @@ async function waitFor(
 }
 
 /** pino のログ 1 行 (JSON) を配列に集めるテスト用ロガー
- * (test/session/runner.test.ts の collectingLogger と同じ方法)。 */
+ * (test/helpers/session-harness.ts の collectingLogger と同じ方法)。 */
 function collectingLogger(): {
   logger: pino.Logger;
   lines: () => Record<string, unknown>[];
@@ -126,7 +127,7 @@ function collectingLogger(): {
 }
 
 describe("startBridge", () => {
-  it("wires eventSource → SessionRunner → web client for a mention event", async () => {
+  it("wires eventSource → Dispatcher → web client for a mention event", async () => {
     const channelId = "C0000000001";
     const triggerTs = "1700000000.000100";
     const event: ChatEvent = {

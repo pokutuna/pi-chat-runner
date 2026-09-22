@@ -5,7 +5,7 @@
 // userResolver/fetchMessage の全注入元として使い、web (WebClient) なしで
 // startBridge が起動できること (bridge.ts の 2 点の変更) を確認する。
 //
-// pi は test/session/runner.test.ts と同じ fake-pi (test/fixtures/fake-pi.mjs) を使う。
+// pi は test/session/session.test.ts と同じ fake-pi (test/fixtures/fake-pi.mjs) を使う。
 // Control State は InMemoryControlState、workdir は一時ディレクトリ (runner.test.ts の流儀)。
 
 import { mkdtemp } from "node:fs/promises";

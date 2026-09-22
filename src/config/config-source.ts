@@ -377,7 +377,7 @@ function parseDefaultAgent(
 /** systemPrompt / context の値が "./" か "../" で始まる場合、設定ファイルがある
  * ディレクトリからの相対パスでファイルを読んでインライン化する (config.md §3.5)。
  * skills / extensions の相対パスは内容を読まず、同じ基準で絶対パス化だけする —
- * pi の cwd は workdir なので相対のまま渡すと基準がズレる (runner.ts kick)。
+ * pi の cwd は workdir なので相対のまま渡すと基準がズレる (Session 起動時に解決する)。
  * マージ後の Agent 部分に対して一括で適用する — どの段の由来でも相対パスの起点は
  * 設定ファイルの場所で共通なため。 */
 async function resolveFileReferences(

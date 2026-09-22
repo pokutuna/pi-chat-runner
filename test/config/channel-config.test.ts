@@ -373,7 +373,7 @@ describe("ChannelConfigSchema", () => {
     expect(result.success).toBe(false);
   });
 
-  // trigger.whileRunning: 実行中セッションがあるレーンで gate を再評価するか
+  // trigger.whileRunning: 実行中 Session に届いたメッセージで gate を再評価するか
   // (config.md §4.4)。Phase 3 時点では解析・マージ・dump のみ。
   it.each(["passthrough", "evaluate"])(
     "accepts trigger.whileRunning: %s",

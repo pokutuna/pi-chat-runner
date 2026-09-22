@@ -7,7 +7,7 @@ import type { EventEmitter } from "node:events";
 
 import type { ChatPoster } from "../../egress/router.js";
 import type { TurnReactor } from "../../egress/turn-reactor.js";
-import type { FetchMessage } from "../../session/runner.js";
+import type { FetchMessage } from "../../gate/evaluate.js";
 import type { Sender } from "../chat-event.js";
 import type { Ingress } from "../ingress.js";
 import type { UserResolver } from "../user-resolver.js";
