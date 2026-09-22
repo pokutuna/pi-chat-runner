@@ -119,35 +119,35 @@ One pipeline, top to bottom. Boxes are components, cylinders are persistent stor
 flowchart TB
     ChatIn(["Chat (e.g. Slack)"]):::external
     ChatOut(["Chat (e.g. Slack)"]):::external
-    State[(State)]
-    Workdir[("WorkdirStorage<br/>(session filesystem,<br/>local dir or GCS)")]
+    State[(Control State)]
+    Workdir[("Agent State<br/>(session workdir / shared,<br/>local dir or GCS)")]
 
-    EventSource[EventSource]
+    Ingress[Ingress]
     Gate[Gate]
     Inbox[(Inbox)]
-    Runner[SessionRunner]
-    Runtime[SessionRuntime]
+    Dispatcher[Dispatcher]
+    Runtime[Runtime]
     Egress[Egress]
     Pi(["pi-coding-agent<br/>(child process)"]):::external
 
-    NoteES("normalizes raw platform events"):::note
+    NoteES("normalizes raw platform events, absorbs duplicates, resolves users"):::note
     NoteGate("decides whether to trigger a session"):::note
-    NoteInbox("Inbox: deduped event queue<br/>State: session info / channel toggle"):::note
-    NoteRunner("acquires the lease, drains the inbox, kicks a turn"):::note
+    NoteInbox("Inbox: deduped event queue<br/>Control State: session info / lease / channel toggle"):::note
+    NoteRunner("picks the session, acquires the lease, drains the inbox, starts or resumes a turn"):::note
     NoteRuntime("drives one agent turn in the restored workdir"):::note
     NotePi("runs with the prompt / skills / extensions the host injects; reply is a tool call the host relays"):::note
     NoteEgress("resolves the destination, formats, chunks"):::note
 
-    ChatIn -->|raw event| EventSource
-    EventSource -->|ChatEvent| Gate
+    ChatIn -->|raw event| Ingress
+    Ingress -->|ChatEvent| Gate
     Gate -->|"ChatEvent (accepted only)"| Inbox
-    Inbox -->|InboxItem| Runner
-    Runner -->|"turn input<br/>(messages + session)"| Runtime
+    Inbox -->|InboxItem| Dispatcher
+    Dispatcher -->|"turn input<br/>(messages + session)"| Runtime
     Runtime -->|"spawn + RPC"| Pi
     Pi -->|"reply(thread_key, text, files?)"| Egress
     Egress -->|outgoing message| ChatOut
-    State -.->|"lease / session info /<br/>channel state"| Runner
-    Runner -.-|"restore / flush per turn"| Workdir
+    State -.->|"lease / session info /<br/>channel state"| Dispatcher
+    Dispatcher -.-|"restore / flush per turn"| Workdir
     Workdir -.-|"cwd (restored copy)"| Pi
 
     %% notes form an invisible parallel column, each aligned with its component's rank.
@@ -162,7 +162,7 @@ flowchart TB
     classDef hidden fill:none,stroke:none,color:transparent
 ```
 
-Each stage only knows the interface of its neighbor, not which implementation is behind it. `SessionRunner` restores the workdir via `WorkdirStorage` before a turn; new vs. resume follows from whether a transcript exists after restore. `StateStore` feeds `SessionRunner`'s decisions — whether to run at all (channel mute), which instance runs (lease), and which session a message joins (session info, affinity pointer); the outcome travels down the pipeline as the session part of the turn input.
+Each stage only knows the interface of its neighbor, not which implementation is behind it. The workdir is restored from Agent State (`WorkdirStore`) before a turn; new vs. resume follows from whether a transcript exists after restore. Control State feeds the `Dispatcher`'s decisions — whether to run at all (channel mute), which instance runs (lease), and which session a message joins (thread → session binding, affinity pointer); the outcome travels down the pipeline as the session part of the turn input.
 
 A real deployment (your own Slack App, your own Cloud Run service) lives in a separate repo that extends the base image with `FROM` and fills in the `examples/` templates with real values — see [docs/design/runtime.md](docs/design/runtime.md) §4.3.
 
@@ -241,33 +241,40 @@ Runtime user is uid/gid `1001` (`agent`) when UID separation is enabled (`PI_AGE
 
 ### 3. Embed just the runner (no bundled Slack server)
 
-If you already have a Slack bot (or any other event source) and just want to kick a pi session from it — without running this project's HTTP/Socket-Mode server — import `SessionRunner` directly and call `handle()`/`handleReaction()` from your own event handler:
+If you already have a Slack bot (or any other event source) and just want to kick a pi session from it — without running this project's HTTP/Socket-Mode server — import `Dispatcher` directly and call `handle()`/`handleReaction()` from your own event handler:
 
 ```ts
 import {
-  SessionRunner,
+  Dispatcher,
   FileConfigSource,
-  InMemoryStateStore,
+  InMemoryControlState,
   EgressRouter,
-  Reactions,
+  EmojiTurnReactor,
   SlackIngressAdapter, // reuse Slack raw-event → InboundMessage normalization if useful
   toMrkdwn,
 } from "pi-chat-runner";
 
-const runner = new SessionRunner({
+const dispatcher = new Dispatcher({
   configSource: new FileConfigSource("./config/agent.yaml"),
-  store: new InMemoryStateStore(), // or a SQLite/Firestore-backed StateStore
+  controlState: new InMemoryControlState(), // or a SQLite/Firestore-backed ControlState
   router: new EgressRouter({ poster: myPoster, formatter: toMrkdwn }),
-  reactions: new Reactions(myReactionClient),
-  workdirStorage: myWorkdirStorage,
+  reactor: new EmojiTurnReactor(myReactionClient, {
+    start: "eyes",
+    ok: "white_check_mark",
+    error: "x",
+  }),
+  workdirStore: myWorkdirStore,
+  runtime: myRuntimeConfig, // createRuntimeConfig(system) builds this from System Config
   mentionFormat: (userId) => `<@${userId}>`, // your platform's mention syntax
 });
 
 // Inside your own bot's message handler:
-await runner.handle(inboundMessage);
+await dispatcher.handle(inboundMessage);
 ```
 
-`SessionRunner` owns gating, inbox/lease/dedupe, spawning pi, and steering — everything below the event source. The built-in extensions (`reply`/`permission-gate`/`export`) are resolved and injected by `SessionRunner` itself. You only need to normalize your incoming event into an `InboundMessage` (or reuse `SlackIngressAdapter` if the source is Slack) and supply a `ChatPoster` for replies. See `src/index.ts` for the full list of exported building blocks.
+`Dispatcher` owns gating, inbox/lease/dedupe, spawning pi, and steering — everything below Ingress. The built-in extensions (`reply`/`permission-gate`/`export`) are resolved and injected by `Dispatcher` itself. You only need to normalize your incoming event into an `InboundMessage` (or reuse `SlackIngressAdapter` if the source is Slack) and supply a `ChatPoster` for replies.
+
+To run the whole pipeline instead — including the Ingress stage (ack / self-echo exclusion / user resolution) — bundle your chat's seams into a `ChatPlatform` and call `startRunner`; `createSlackPlatform` does that for Slack. See `src/index.ts` for the full list of exported building blocks.
 
 Not published to npm yet (planned). Until then, clone this repo, run `pnpm install && pnpm build`, and reference it as a `file:` / workspace dependency — a bare git dependency won't work because `dist/` is built, not committed.
 

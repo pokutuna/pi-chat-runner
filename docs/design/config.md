@@ -334,7 +334,7 @@ Gate の種別ごとの必須項目は、まず schema の refinement で strict
 マージ規則 (§3.2) を頭の中で追わずに、ある Channel で実際に効く設定を確認できる `dump` サブコマンドを持つ。
 
 ```
-$ node dist/server.js dump C0000000001
+$ node dist/server.mjs dump C0000000001
 channel: C0000000001
 
 [channel]

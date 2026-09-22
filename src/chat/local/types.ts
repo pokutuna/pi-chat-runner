@@ -8,9 +8,9 @@ import type { EventEmitter } from "node:events";
 import type { ChatPoster } from "../../egress/router.js";
 import type { TurnReactor } from "../../egress/turn-reactor.js";
 import type { FetchMessage } from "../../gate/evaluate.js";
-import type { Sender } from "../chat-event.js";
-import type { Ingress } from "../ingress.js";
-import type { UserResolver } from "../user-resolver.js";
+import type { Sender } from "../../ingress/chat-event.js";
+import type { Ingress } from "../../ingress/ingress.js";
+import type { UserResolver } from "../../ingress/user-resolver.js";
 
 /** ログに積まれる 1 メッセージ。人間入力 (post) と bot 投稿 (poster) の両方が
  * 同じログに通し番号で積まれる — bot 投稿への reaction 起動 (fetchMessage) や
@@ -77,7 +77,8 @@ export interface LocalChatOptions {
 }
 
 export interface LocalChat {
-  /** startBridge へ渡す注入物。全て同一のメッセージログを共有する。 */
+  /** ChatPlatform (createLocalPlatform) が使う seam。全て同一のメッセージログを
+   * 共有する。 */
   readonly ingress: Ingress;
   readonly poster: ChatPoster;
   readonly reactor: TurnReactor;

@@ -224,14 +224,15 @@ Session の終了時は記憶している messageId と閉鎖フラグの両方�
 |---|---|
 | ChatEvent / ConversationRef / Sender | `src/ingress/chat-event.ts` |
 | Slack の codec | `SlackIngressAdapter` (`src/ingress/slack/adapter.ts`) |
-| 二重配送の吸収 / isSelf 除外 | `startBridge` の `seenMessages` (`src/bridge.ts`) |
-| user の解決 | `enrichEvent` (`src/ingress/user-resolver.ts`), `SlackUserResolver` (`src/ingress/slack/user-resolver.ts`) |
+| Ingress ステージ (ack / kind フィルタ / isSelf 除外 / user 解決の呼び出し) | `startIngressPipeline` (`src/ingress/pipeline.ts`) |
+| 二重配送の吸収 | `SlackIngressAdapter` の `seenMessages` (`src/ingress/slack/adapter.ts`) |
+| user の解決 | `enrichEvent` (`src/ingress/user-resolver.ts`), `SlackUserResolver` (`src/ingress/slack/user-resolver.ts`。本文中の mention の記法 `mentionPattern` もここ) |
 | Thread Key → 送信先の解決 | `EgressRouter` (`src/egress/router.ts`) |
 | 送信先の登録 | `registerReplyDestination` (`src/egress/reply-destination.ts`) |
-| 送信の実体 | `BridgeOptions.poster` (`ChatPoster`、`src/bridge.ts` 内の Slack 実装) |
+| 送信の実体 | `ChatPlatform.poster` (`ChatPoster`。Slack 実装は `createSlackPlatform`、`src/chat/slack.ts`) |
 | mrkdwn 変換 | `toMrkdwn` (`src/egress/mrkdwn.ts`) |
 | chunk 分割 | `chunkMessage` (`src/egress/chunker.ts`) |
 | `files` の境界チェック | `resolveReplyFiles` (`src/runtime/reply-files.ts`) |
-| Turn 状態のリアクション | `TurnReactor` (`src/egress/turn-reactor.ts`), `SlackTurnReactor` (`src/egress/slack/turn-reactor.ts`) |
+| Turn 状態のリアクション | `TurnReactor` (`src/egress/turn-reactor.ts`), `EmojiTurnReactor` (`src/egress/emoji-turn-reactor.ts`)。絵文字名は `ChatPlatform` が渡す (`SLACK_STATE_EMOJI`, `src/chat/slack.ts`) |
 | 進捗通知の状態とタイマー | `ProgressNotice` (`src/session/progress.ts`) |
 | 進捗通知の送信・閉鎖 | `EgressRouter.notifyProgress` / `clearProgress` / `reopenProgress` (`src/egress/router.ts`) |

@@ -1,12 +1,12 @@
-// LocalChat + fake-pi + startBridge の e2e smoke テスト (docs/design/local-dev.md §2)。
+// LocalChat + fake-pi + startRunner の e2e smoke テスト (docs/design/local-dev.md §2)。
 //
-// bridge.test.ts は StubIngress + fakeWebClient (Slack 経路) を検証する。こちらは
-// LocalChat core (src/ingress/local/local-chat.ts) を eventSource/poster/reactions/
-// userResolver/fetchMessage の全注入元として使い、web (WebClient) なしで
-// startBridge が起動できること (bridge.ts の 2 点の変更) を確認する。
+// runner.test.ts は StubIngress + fakeWebClient (Slack 経路) を検証する。こちらは
+// LocalChat core (src/chat/local/local-chat.ts) を createLocalPlatform で
+// ChatPlatform に束ねたものを渡し、Slack を一切通さずに startRunner が起動できる
+// ことを確認する。
 //
 // pi は test/session/session.test.ts と同じ fake-pi (test/fixtures/fake-pi.mjs) を使う。
-// Control State は InMemoryControlState、workdir は一時ディレクトリ (runner.test.ts の流儀)。
+// Control State は InMemoryControlState、workdir は退避なし (NoopWorkdirStore)。
 
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,9 +16,12 @@ import { fileURLToPath } from "node:url";
 import pino from "pino";
 import { describe, expect, it } from "vitest";
 
-import { startBridge } from "../src/bridge.js";
+import { createLocalChat } from "../src/chat/local/local-chat.js";
+import { createLocalPlatform } from "../src/chat/local/platform.js";
+import type { ChatPlatform } from "../src/chat/platform.js";
 import { FileConfigSource } from "../src/config/config-source.js";
-import { createLocalChat } from "../src/ingress/local/local-chat.js";
+import { startRunner } from "../src/runner.js";
+import { NoopWorkdirStore } from "../src/state/agent/noop.js";
 import { InMemoryControlState } from "../src/state/control/backends/memory.js";
 
 /** RuntimeConfig.workdirRoot は必須。これらのテストは workdir の中身を検証しない
@@ -28,7 +31,7 @@ const DEFAULT_WORKDIR_ROOT = "/tmp/pi-chat-runner/sessions";
 const FAKE_PI = fileURLToPath(
   new URL("./fixtures/fake-pi.mjs", import.meta.url),
 );
-// mention トリガーの channel エントリを持つ既存 fixture (bridge.test.ts と共用)。
+// mention トリガーの channel エントリを持つ既存 fixture (runner.test.ts と共用)。
 const CONFIG_PATH = fileURLToPath(
   new URL("./fixtures/config/channels.yaml", import.meta.url),
 );
@@ -51,18 +54,19 @@ async function waitFor(
   throw new Error(`timed out waiting for: ${label}`);
 }
 
-describe("startBridge with LocalChat (no Slack)", () => {
+describe("startRunner with the local ChatPlatform (no Slack)", () => {
   it("chat.post(mention) is answered by the bot and appears in chat.log()", async () => {
     const channelId = "C0000000001";
     const chat = createLocalChat({ defaultChannelId: channelId });
     const agentHome = await mkdtemp(
-      join(tmpdir(), "pi-chat-runner-bridge-local-home-"),
+      join(tmpdir(), "pi-chat-runner-runner-local-home-"),
     );
     const logger = pino({ level: "silent" });
 
-    await startBridge({
-      eventSource: chat.ingress,
+    await startRunner({
+      chat: createLocalPlatform(chat),
       controlState: new InMemoryControlState(),
+      agentState: { workdir: new NoopWorkdirStore() },
       configSource: new FileConfigSource(CONFIG_PATH),
       runtime: {
         piEntrypoint: FAKE_PI,
@@ -70,10 +74,6 @@ describe("startBridge with LocalChat (no Slack)", () => {
         workdirRoot: DEFAULT_WORKDIR_ROOT,
       },
       logger,
-      poster: chat.poster,
-      reactor: chat.reactor,
-      userResolver: chat.userResolver,
-      fetchMessage: chat.fetchMessage,
     });
 
     await chat.post("@bot local mode smoke test", { mentionsBot: true });
@@ -103,13 +103,14 @@ describe("startBridge with LocalChat (no Slack)", () => {
     const channelId = "C0000000001";
     const chat = createLocalChat({ defaultChannelId: channelId });
     const agentHome = await mkdtemp(
-      join(tmpdir(), "pi-chat-runner-bridge-local-reaction-home-"),
+      join(tmpdir(), "pi-chat-runner-runner-local-reaction-home-"),
     );
     const logger = pino({ level: "silent" });
 
-    await startBridge({
-      eventSource: chat.ingress,
+    await startRunner({
+      chat: createLocalPlatform(chat),
       controlState: new InMemoryControlState(),
+      agentState: { workdir: new NoopWorkdirStore() },
       configSource: new FileConfigSource(REACTION_CONFIG_PATH),
       runtime: {
         piEntrypoint: FAKE_PI,
@@ -117,17 +118,13 @@ describe("startBridge with LocalChat (no Slack)", () => {
         workdirRoot: DEFAULT_WORKDIR_ROOT,
       },
       logger,
-      poster: chat.poster,
-      reactor: chat.reactor,
-      userResolver: chat.userResolver,
-      fetchMessage: chat.fetchMessage,
     });
 
     // reaction gate (mentionsBot: false でよい — トリガーは reaction 側)。gate 自体は
     // trigger.when: reaction のみなので、この投稿単体は起動しない。
     const posted = await chat.post("please investigate this alert");
 
-    // 人間が :eyes: を付与 — bridge が fetchMessage 経由で対象メッセージ本文を取得し
+    // 人間が :eyes: を付与 — Runner が fetchMessage 経由で対象メッセージ本文を取得し
     // セッションを起動する (config.md §4.1 の `kind: reaction`)。
     await chat.react(posted.ts, "eyes");
 
@@ -148,17 +145,23 @@ describe("startBridge with LocalChat (no Slack)", () => {
     expect(botReply?.text).toContain("please investigate this alert");
   });
 
-  it("throws when web is omitted and an injection (fetchMessage) is missing", async () => {
+  it("throws when the ChatPlatform is missing a seam (fetchMessage)", async () => {
     const chat = createLocalChat({ defaultChannelId: "C0000000001" });
     const agentHome = await mkdtemp(
-      join(tmpdir(), "pi-chat-runner-bridge-local-invalid-home-"),
+      join(tmpdir(), "pi-chat-runner-runner-local-invalid-home-"),
     );
     const logger = pino({ level: "silent" });
 
+    // fetchMessage を意図的に落とした ChatPlatform。型では必須なので、JS から
+    // 呼ぶライブラリ利用や独自実装で欠けたときの fail-loud を検証するために
+    // 明示的に外す
+    const { fetchMessage: _omitted, ...incomplete } = createLocalPlatform(chat);
+
     await expect(
-      startBridge({
-        eventSource: chat.ingress,
+      startRunner({
+        chat: incomplete as ChatPlatform,
         controlState: new InMemoryControlState(),
+        agentState: { workdir: new NoopWorkdirStore() },
         configSource: new FileConfigSource(CONFIG_PATH),
         runtime: {
           piEntrypoint: FAKE_PI,
@@ -166,10 +169,6 @@ describe("startBridge with LocalChat (no Slack)", () => {
           workdirRoot: DEFAULT_WORKDIR_ROOT,
         },
         logger,
-        poster: chat.poster,
-        reactor: chat.reactor,
-        userResolver: chat.userResolver,
-        // fetchMessage は意図的に注入しない
       }),
     ).rejects.toThrow(/fetchMessage/);
   });

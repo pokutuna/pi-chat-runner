@@ -72,20 +72,44 @@ function stripMentions(
   return { text: stripped, mentionsBot };
 }
 
-/** SlackIngressAdapter: Slack raw event -> ChatEvent の正規化を担う codec。
- * transport 非依存 (Socket Mode / Events API の両方から使う想定, ingress-egress.md §2)。 */
+/** 同一メッセージの二重配送を覚えておく上限。超えたら丸ごと捨てる
+ * (取りこぼしても Inbox の event_id dedupe と同じ結果にはならないが、
+ * 二重配送は数秒以内に届くため実害がない)。 */
+const SEEN_MESSAGES_LIMIT = 1000;
+
+/** SlackIngressAdapter: Slack raw event -> ChatEvent の正規化と、Slack 固有の
+ * 二重配送の吸収を担う codec。transport 非依存 (Socket Mode / Events API の
+ * 両方から使う想定, ingress-egress.md §2)。
+ *
+ * 二重配送の吸収 (ingress-egress.md §2): bot への mention は app_mention と
+ * message の 2 イベントで届き、event_id が別なので Inbox の dedupe では防げない。
+ * メッセージ ts (channelId 付き) で 1 つ目だけを通す。これは Slack の配送仕様
+ * そのものなので、汎用の Ingress ステージ (src/ingress/pipeline.ts) ではなく
+ * codec 側に置く。 */
 export class SlackIngressAdapter {
+  private readonly seenMessages = new Set<string>();
+
   constructor(private readonly botUserId: string) {}
 
-  /** raw event payload -> ChatEvent。対象外の type は null を返す。 */
+  /** raw event payload -> ChatEvent。対象外の type と、既に配送済みの
+   * 同一メッセージは null を返す。 */
   normalize(rawEvent: SlackRawEvent, eventId?: string): ChatEvent | null {
     switch (rawEvent.type) {
       case "app_mention":
-      case "message":
-        return this.normalizeMessage(
+      case "message": {
+        const message = this.normalizeMessage(
           rawEvent as SlackMessageLikeEvent,
           eventId,
         );
+        if (message === null) return null;
+        const messageKey = `${message.conversation.channelId}:${message.id}`;
+        if (this.seenMessages.has(messageKey)) return null;
+        this.seenMessages.add(messageKey);
+        if (this.seenMessages.size > SEEN_MESSAGES_LIMIT) {
+          this.seenMessages.clear();
+        }
+        return message;
+      }
       case "reaction_added":
       case "reaction_removed":
         return this.normalizeReaction(rawEvent as SlackReactionAddedEvent);

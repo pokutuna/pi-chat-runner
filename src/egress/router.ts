@@ -3,7 +3,7 @@
 // エージェントの確定出力は reply(thread_key, text) ツール経由の 1 本のみで、
 // ホストが tool_execution_end を拾ってここへ流す (docs/design/architecture.md §2、
 // docs/design/ingress-egress.md §5)。formatter フックで GFM → mrkdwn 変換を差す
-// (Slack 配線は bridge.ts が toMrkdwn を注入する)。未注入時は identity。
+// (Slack では ChatPlatform (src/chat/slack.ts) が toMrkdwn を渡す)。未注入時は identity。
 
 import type { Logger } from "../logger.js";
 import { rootLogger } from "../logger.js";

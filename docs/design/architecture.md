@@ -90,6 +90,7 @@ src/
     slack.ts       Slack 実装
     local/         in-memory chat と TUI (local-dev.md)
   ingress/         Ingress: 受信・正規化・重複吸収・user 解決 (ingress-egress.md)
+    pipeline.ts    ack → kind フィルタ → isSelf 除外 → user 解決の共通ステージ
     slack/         Slack の transport (HttpIngress / SocketIngress) と codec
   gate/            Gate: 条件木の評価と個別 gate (mention / keyword / classifier / reaction / sender)
   dispatch/        Dispatcher: Session 選択・debounce・steering・lease・コマンド
@@ -174,16 +175,18 @@ Agent の確定出力が `reply` tool の 1 経路しかなく、地の文を送
 
 | 設計上の名前 | 現在のソース |
 |---|---|
-| Runner (composition root) | `startBridge` / `BridgeOptions` (`src/bridge.ts`) |
+| Runner (composition root) | `startRunner` / `RunnerOptions` (`src/runner.ts`) |
 | CLI エントリ | `src/server.ts` (`main` / `runLocal` / `runDump`) |
+| チャット実装の束 | `ChatPlatform` (`src/chat/platform.ts`)、`createSlackPlatform` (`src/chat/slack.ts`) / `createLocalPlatform` (`src/chat/local/platform.ts`) |
 | Ingress interface / Ack | `src/ingress/ingress.ts` |
+| Ingress ステージ | `startIngressPipeline` (`src/ingress/pipeline.ts`) |
 | HttpIngress / SocketIngress | `src/ingress/slack/{http-ingress,socket-ingress}.ts` |
 | Ingress の codec | `SlackIngressAdapter` (`src/ingress/slack/adapter.ts`) |
 | Gate | `src/gate/evaluate.ts` (`GateEvaluator.admit`)、`src/gate/gate.ts`, `src/gate/gates/*.ts` |
 | Dispatcher | `Dispatcher` (`src/dispatch/dispatcher.ts`) |
 | Session | `Session` (`src/session/session.ts`) |
 | Runtime | `src/runtime/` (`prepare.ts` / `pi-process.ts` / `pi-args.ts` / `rpc.ts` / `pi-events.ts` / `prompt.ts` / `reply-files.ts` / `config.ts` / `resolve.ts` / `session-file.ts`) |
-| Egress | `src/egress/` (`EgressRouter`, `chunker.ts`, `mrkdwn.ts`, `turn-reactor.ts`) |
+| Egress | `src/egress/` (`EgressRouter`, `chunker.ts`, `mrkdwn.ts`, `turn-reactor.ts`, `emoji-turn-reactor.ts`) |
 | Control State | `ControlState` (`src/state/control/interfaces.ts`) と `src/state/control/backends/` |
 | Agent State | `WorkdirStore` / `SharedStore` (`src/state/agent/`) |
 | System Config の読み込み | `src/config/system-config.ts` |

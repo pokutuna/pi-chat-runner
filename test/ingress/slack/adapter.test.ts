@@ -218,3 +218,72 @@ describe("SlackIngressAdapter.normalize", () => {
     expect(msg.conversation.isDm).toBeUndefined();
   });
 });
+
+// bot への mention は app_mention と message の 2 イベントで届き、event_id は
+// 別なので Inbox の dedupe では防げない。Slack の配送仕様そのものなので、
+// 汎用の Ingress ステージではなく codec 側で吸収する (ingress-egress.md §2)。
+describe("SlackIngressAdapter duplicate delivery", () => {
+  it("drops the second delivery of the same message ts", () => {
+    const adapter = new SlackIngressAdapter(BOT_USER_ID);
+    const first = adapter.normalize(
+      {
+        type: "app_mention",
+        text: `<@${BOT_USER_ID}> hello`,
+        user: "U123",
+        channel: "C123",
+        ts: "1720000100.000100",
+      },
+      "Ev-app-mention",
+    );
+    const second = adapter.normalize(
+      {
+        type: "message",
+        text: `<@${BOT_USER_ID}> hello`,
+        user: "U123",
+        channel: "C123",
+        ts: "1720000100.000100",
+      },
+      "Ev-message",
+    );
+
+    expect(first).not.toBeNull();
+    expect(second).toBeNull();
+  });
+
+  it("keeps the same ts in a different channel", () => {
+    const adapter = new SlackIngressAdapter(BOT_USER_ID);
+    const first = adapter.normalize({
+      type: "message",
+      text: "hello",
+      user: "U123",
+      channel: "C123",
+      ts: "1720000101.000100",
+    });
+    const other = adapter.normalize({
+      type: "message",
+      text: "hello",
+      user: "U123",
+      channel: "C456",
+      ts: "1720000101.000100",
+    });
+
+    expect(first).not.toBeNull();
+    expect(other).not.toBeNull();
+  });
+
+  it("does not dedupe reactions (they carry no message ts of their own)", () => {
+    const adapter = new SlackIngressAdapter(BOT_USER_ID);
+    const args = {
+      type: "reaction_added" as const,
+      user: "U123",
+      reaction: "eyes",
+      item: {
+        type: "message" as const,
+        channel: "C123",
+        ts: "1720000102.0001",
+      },
+    };
+    expect(adapter.normalize(args)).not.toBeNull();
+    expect(adapter.normalize(args)).not.toBeNull();
+  });
+});

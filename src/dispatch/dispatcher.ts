@@ -87,8 +87,8 @@ export interface DispatcherOptions {
   /** lease の owner 識別子。既定 `hostname:pid` */
   owner?: string;
   /** ユーザーへの言及をレンダリングする関数 (返信本文に埋め込む記法)。プラットフォーム
-   * ごとに記法が異なるため必須 (composition root が利用先プラットフォームの記法を
-   * 渡す。それ以外の利用者は自分で実装を渡す) */
+   * ごとに記法が異なるため必須 (Runner が ChatPlatform の記法を渡す。それ以外の
+   * 利用者は自分で実装を渡す) */
   mentionFormat: MentionFormat;
   /** reaction の対象メッセージ本文を取得する port (message-dispatch.md §1)。Gate を
    * 通過した reaction を message の形へ均すために Gate ステージが使う。省略時は

@@ -10,9 +10,6 @@ import { EventEmitter } from "node:events";
 
 import { describe, expect, it } from "vitest";
 
-import { SlackTurnReactor } from "../../../src/egress/slack/turn-reactor.js";
-import type { Sender } from "../../../src/ingress/chat-event.js";
-import type { Ingress } from "../../../src/ingress/ingress.js";
 import {
   displayName,
   formatMessageLine,
@@ -24,7 +21,7 @@ import {
   promptText,
   resolveThreadRef,
   type ReplState,
-} from "../../../src/ingress/local/repl-logic.js";
+} from "../../../src/chat/local/repl-logic.js";
 import type {
   LocalChat,
   LocalChatOutputEvents,
@@ -32,7 +29,19 @@ import type {
   PostOptions,
   ReactionRecord,
   ReactOptions,
-} from "../../../src/ingress/local/types.js";
+} from "../../../src/chat/local/types.js";
+import {
+  EmojiTurnReactor,
+  type StateEmojiMap,
+} from "../../../src/egress/emoji-turn-reactor.js";
+import type { Sender } from "../../../src/ingress/chat-event.js";
+import type { Ingress } from "../../../src/ingress/ingress.js";
+
+const STATE_EMOJI: StateEmojiMap = {
+  start: "eyes",
+  ok: "white_check_mark",
+  error: "x",
+};
 
 // ── フェイク LocalChat (post/react の呼び出しを記録する) ─────────────────
 
@@ -120,11 +129,14 @@ function createFakeLocalChat(): LocalChat & {
         return Promise.resolve();
       },
     },
-    reactor: new SlackTurnReactor({
-      add() {
-        return Promise.resolve();
+    reactor: new EmojiTurnReactor(
+      {
+        add() {
+          return Promise.resolve();
+        },
       },
-    }),
+      STATE_EMOJI,
+    ),
     userResolver: {
       resolve() {
         return Promise.resolve(null);

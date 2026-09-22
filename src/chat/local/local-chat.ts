@@ -3,19 +3,24 @@
 // I/O を持たないプログラマブルなフェイクチャット。公開契約は ./types.ts に確定済み
 // (このファイルはそれを実装するだけで、契約自体は変更しない)。
 //
-// 注入物 (ingress/poster/reactor/userResolver/fetchMessage) は全て同一の
+// seam (ingress/poster/reactor/userResolver/fetchMessage) は全て同一の
 // メッセージログを共有する — bot 投稿への reaction 起動 (fetchMessage) やスレッド
 // 返信を Slack と同じに動かすため。bot 投稿はログに isSelf: true で記録するが、
 // ChatEvent として onEvent へ還流はさせない (自己エコー経路を持たない)。
 
 import { EventEmitter } from "node:events";
 
+import { EmojiTurnReactor } from "../../egress/emoji-turn-reactor.js";
+import type { StateEmojiMap } from "../../egress/emoji-turn-reactor.js";
 import type { ChatPoster } from "../../egress/router.js";
-import { SlackTurnReactor } from "../../egress/slack/turn-reactor.js";
 import type { FetchedMessage, FetchMessage } from "../../gate/evaluate.js";
-import type { ChatEvent, InboundMessage, Sender } from "../chat-event.js";
-import type { Ack, Ingress } from "../ingress.js";
-import type { UserResolver } from "../user-resolver.js";
+import type {
+  ChatEvent,
+  InboundMessage,
+  Sender,
+} from "../../ingress/chat-event.js";
+import type { Ack, Ingress } from "../../ingress/ingress.js";
+import type { UserResolver } from "../../ingress/user-resolver.js";
 import type {
   LocalChat,
   LocalChatOptions,
@@ -29,6 +34,14 @@ import type {
 const DEFAULT_CHANNEL_ID = "local";
 const DEFAULT_BOT_USER_ID = "U_BOT";
 const DEFAULT_SENDER_ID = "U_LOCAL";
+
+/** Turn 状態に対応する絵文字名。Slack と同じ名前を使う — TUI では
+ * `:name:` の表記でそのまま表示し、絵文字画像には変換しないため。 */
+const LOCAL_STATE_EMOJI: StateEmojiMap = {
+  start: "eyes",
+  ok: "white_check_mark",
+  error: "x",
+};
 
 export function createLocalChat(options?: LocalChatOptions): LocalChat {
   const defaultChannelId = options?.defaultChannelId ?? DEFAULT_CHANNEL_ID;
@@ -110,18 +123,21 @@ export function createLocalChat(options?: LocalChatOptions): LocalChat {
     },
   };
 
-  const reactor = new SlackTurnReactor({
-    add(args: { channel: string; timestamp: string; name: string }) {
-      const record: ReactionRecord = {
-        channelId: args.channel,
-        ts: args.timestamp,
-        emoji: args.name,
-      };
-      reactionsLog.push(record);
-      events.emit("reaction", record);
-      return Promise.resolve();
+  const reactor = new EmojiTurnReactor(
+    {
+      add(args: { channel: string; timestamp: string; name: string }) {
+        const record: ReactionRecord = {
+          channelId: args.channel,
+          ts: args.timestamp,
+          emoji: args.name,
+        };
+        reactionsLog.push(record);
+        events.emit("reaction", record);
+        return Promise.resolve();
+      },
     },
-  });
+    LOCAL_STATE_EMOJI,
+  );
 
   const userResolver: UserResolver = {
     resolve(userId: string): Promise<string | null> {

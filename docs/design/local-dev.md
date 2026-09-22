@@ -19,7 +19,7 @@ vitest はフェイクの Agent で回すため、「本物の Agent と本物�
 ```sh
 pnpm run dev:local     # in-memory chat + TUI (.env.local)
 pnpm run dev:socket    # Slack Socket Mode (.env.socket)
-node dist/server.js local [channelId]   # ビルド済みバイナリから
+node dist/server.mjs local [channelId]  # ビルド済みバイナリから
 ```
 
 - 設定ファイルは `CONFIG_PATH` から読む。未設定なら `examples/config/agent.yaml`
@@ -30,8 +30,8 @@ node dist/server.js local [channelId]   # ビルド済みバイナリから
 - Agent は本物が起動する。必要な環境変数は `.env.local` に置く。`system.runtime` の
   uid 分離・Permission Model は `dev:socket` と同じ扱い ([runtime.md](runtime.md))。
 
-差し替えるのは Runner の配線だけで、Gate 以降には local 専用の分岐を持ち込まない
-([architecture.md](architecture.md) §3)。
+差し替えるのは Runner に渡す `ChatPlatform` だけで、Gate 以降には local 専用の分岐を
+持ち込まない ([architecture.md](architecture.md) §3, §4)。
 
 ## 2. in-memory chat
 
@@ -151,10 +151,11 @@ Turn の境界で退避・復元される。未設定なら退避せず、プロ
 | 設計上の名前 | 現在のソース |
 |---|---|
 | `local` サブコマンド | `runLocal` (`src/server.ts`) |
-| in-memory chat の契約 | `LocalChat` (`src/ingress/local/types.ts`) |
-| in-memory chat の実装 | `createLocalChat` (`src/ingress/local/local-chat.ts`) |
-| TUI のロジック層 | `src/ingress/local/repl-logic.ts` |
-| TUI の画面 | `src/ingress/local/repl.tsx` (`App` / `startRepl`) |
+| in-memory chat の契約 | `LocalChat` (`src/chat/local/types.ts`) |
+| in-memory chat の実装 | `createLocalChat` (`src/chat/local/local-chat.ts`) |
+| ChatPlatform への束ね | `createLocalPlatform` (`src/chat/local/platform.ts`) |
+| TUI のロジック層 | `src/chat/local/repl-logic.ts` |
+| TUI の画面 | `src/chat/local/repl.tsx` (`App` / `startRepl`) |
 | Control State backend の選択 | `buildControlState` (`src/server.ts`) |
 | 設定ファイルの既定パス | `DEFAULT_CONFIG_PATH` (`src/server.ts`) |
 | 既定チャンネル ID | `DEFAULT_LOCAL_CHANNEL_ID` (`src/server.ts`) |

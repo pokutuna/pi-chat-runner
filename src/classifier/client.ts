@@ -1,11 +1,11 @@
 // ClassifierClient — config.md §4.1 の `kind: classifier` Gate の LLM 呼び出し部。
 //
 // gate (src/gate/gates/classifier.ts) から criteria + 対象メッセージを渡し、
-// {result: boolean, reason: string} を得る薄いトランスポート。gate/bridge/runner が
+// {result: boolean, reason: string} を得る薄いトランスポート。gate / Runner が
 // LLM SDK に直接依存しないよう、この境界にまとめる (src/gate/gates/ には置かない)。
 //
 // 実装は Vertex AI + ADC (pi の google-vertex と同じ認証)。project/location は
-// bridge から注入する。モデルは既定 (defaultModel) を per-call で上書きできる
+// Runner (src/runner.ts) から注入する。モデルは既定 (defaultModel) を per-call で上書きできる
 // (per-gate の model 切替のため)。
 
 import { GoogleGenAI, type Schema, Type } from "@google/genai";

@@ -17,7 +17,7 @@ import {
   type Span,
   titleBarText,
   wrapSpans,
-} from "../../../src/ingress/local/repl.js";
+} from "../../../src/chat/local/repl.js";
 
 /** span を連結した文字列で内容検証するためのヘルパ。 */
 const flat = (entry: Line): string => entry.map((s) => s.text).join("");

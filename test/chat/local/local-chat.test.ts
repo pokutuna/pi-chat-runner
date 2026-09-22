@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import { createLocalChat } from "../../../src/chat/local/local-chat.js";
 import type {
   InboundMessage,
   ReactionEvent,
 } from "../../../src/ingress/chat-event.js";
 import type { Ack } from "../../../src/ingress/ingress.js";
-import { createLocalChat } from "../../../src/ingress/local/local-chat.js";
 
 describe("createLocalChat", () => {
   it("post が onEvent に channelId 既定値・mentionsBot・isDm 込みの InboundMessage を渡す", async () => {

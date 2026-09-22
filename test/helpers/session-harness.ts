@@ -10,6 +10,7 @@ import { fileURLToPath } from "node:url";
 
 import pino from "pino";
 
+import { SLACK_STATE_EMOJI } from "../../src/chat/slack.js";
 import type { ClassifierClient } from "../../src/classifier/client.js";
 import type { ChannelConfig } from "../../src/config/channel-config.js";
 import type {
@@ -18,8 +19,8 @@ import type {
 } from "../../src/config/config-source.js";
 import { Dispatcher } from "../../src/dispatch/dispatcher.js";
 import { type SessionPolicy, sessionKeyOf } from "../../src/dispatch/policy.js";
+import { EmojiTurnReactor } from "../../src/egress/emoji-turn-reactor.js";
 import { type ChatPoster, EgressRouter } from "../../src/egress/router.js";
-import { SlackTurnReactor } from "../../src/egress/slack/turn-reactor.js";
 import type { FetchMessage } from "../../src/gate/evaluate.js";
 import type { InboundMessage } from "../../src/ingress/chat-event.js";
 import type { PiPermissionConfig } from "../../src/runtime/config.js";
@@ -209,12 +210,15 @@ export async function harness(
     configSource: new FakeConfigSource(docs),
     controlState,
     router: new EgressRouter({ poster }),
-    reactor: new SlackTurnReactor({
-      add: async (args) => {
-        reactionCalls.push(args);
-        return {};
+    reactor: new EmojiTurnReactor(
+      {
+        add: async (args) => {
+          reactionCalls.push(args);
+          return {};
+        },
       },
-    }),
+      SLACK_STATE_EMOJI,
+    ),
     runtime: {
       workdirRoot,
       ...(options.piBinary !== undefined

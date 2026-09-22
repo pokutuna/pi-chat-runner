@@ -1,22 +1,26 @@
-// エントリポイント (Cloud Run デプロイ / Events API)
+// CLI エントリポイント (docs/design/architecture.md §3, §4)
 //
-// Ingress (Socket Mode / Events API) で受けたイベントをハードフィルタ
-// だけ通し、Dispatcher に渡す。入口の選択は system.chat.slack.mode (設定ファイル /
-// SLACK_MODE env) で行い、後段 (gate 評価・inbox・lease・pi の起動/steer。すべて
-// Dispatcher の中, src/dispatch/dispatcher.ts) には入口の別を漏らさない
-// (architecture.md §5)。State backend の実装選択 (system.state.control.backend) も
-// 同様にここで行う (state.md §4 / docs/design/architecture.md §3, §6)。
+// 持つのは 2 つだけ: CLI サブコマンド (`dump` / `local` / 既定) と、System Config から
+// 実装を 1 つ選ぶこと (チャット接続・Control State backend・Agent State の棚・
+// Runtime の静的設定)。選んだ実装を組み立てて startRunner (src/runner.ts) に渡し、
+// パイプラインの配線自体は Runner に委ねる。
+//
+// 入口の選択は system.chat.slack.mode (設定ファイル / SLACK_MODE env) で行い、後段
+// には入口の別を漏らさない (architecture.md §5)。Control State の backend 選択
+// (system.state.control.backend) も同様にここで行う (state.md §4)。
 
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { PassThrough } from "node:stream";
 
 import { Firestore } from "@google-cloud/firestore";
-import { WebClient } from "@slack/web-api";
 import pino from "pino";
 
-import type { BridgeOptions } from "./bridge.js";
-import { startBridge } from "./bridge.js";
+import { createLocalChat } from "./chat/local/local-chat.js";
+import { createLocalPlatform } from "./chat/local/platform.js";
+import { startRepl } from "./chat/local/repl.js";
+import type { ChatPlatform } from "./chat/platform.js";
+import { createSlackPlatform, createSlackWebClient } from "./chat/slack.js";
 import {
   FileConfigSource,
   loadChannelConfigFile,
@@ -29,12 +33,13 @@ import {
   type SlackChatConfig,
 } from "./config/system-config.js";
 import type { Ingress } from "./ingress/ingress.js";
-import { createLocalChat } from "./ingress/local/local-chat.js";
-import { startRepl } from "./ingress/local/repl.js";
 import { HttpIngress } from "./ingress/slack/http-ingress.js";
 import { SocketIngress } from "./ingress/slack/socket-ingress.js";
 import { rootLogger } from "./logger.js";
+import type { RunnerOptions } from "./runner.js";
+import { startRunner } from "./runner.js";
 import { createRuntimeConfig } from "./runtime/resolve.js";
+import { createSharedStore, createWorkdirStore } from "./state/agent/copy.js";
 import { FirestoreControlState } from "./state/control/backends/firestore.js";
 import { InMemoryControlState } from "./state/control/backends/memory.js";
 import { SqliteControlState } from "./state/control/backends/sqlite.js";
@@ -77,7 +82,7 @@ function buildControlState(
  * `--help` と、必須項目が欠けたままの起動 (missingChatConfig) で共有する。 */
 function printUsage(configPath: string): void {
   console.error(
-    "Usage: node dist/server.js [dump <channel> [--json] | local [channelId] | --help]",
+    "Usage: node dist/server.mjs [dump <channel> [--json] | local [channelId] | --help]",
   );
   console.error("");
   console.error(`${configPath} needs a system.chat.slack block to start:`);
@@ -164,51 +169,61 @@ function missingChatConfig(configPath: string): never {
   process.exit(1);
 }
 
-/** system.chat.slack.mode (既定 socket) で入口を切り替える (architecture.md §3)。両モードとも
- * dedupe・起動判定・inbox 積みの後段は共通で、「受け取り方 / ACK の意味」だけが違う。
- * モード別必須項目 (appToken / signingSecret) もここで振り分ける。system.chat.slack 自体が
- * 無い、またはモード別必須項目が欠けている場合は fail-loud で使い方を表示して exit する。 */
-function buildChat(
+/** system.chat.slack から Slack の ChatPlatform を組み立てる (architecture.md §3)。
+ * mode (既定 socket) で入口を切り替え、両モードとも後段は共通で「受け取り方 /
+ * ACK の意味」だけが違う。モード別必須項目 (appToken / signingSecret) もここで
+ * 振り分ける。system.chat.slack 自体が無い、またはモード別必須項目が欠けている
+ * 場合は fail-loud で使い方を表示して exit する。 */
+function buildSlackChat(
   slack: SlackChatConfig | undefined,
   configPath: string,
-): { ingress: Ingress; botToken: string } {
+): ChatPlatform {
   if (slack === undefined) {
     missingChatConfig(configPath);
   }
   const { mode, botToken, botUserId } = slack;
-  switch (mode) {
-    case "socket": {
-      if (slack.socket.appToken === undefined || slack.socket.appToken === "") {
-        missingChatConfig(configPath);
+  const web = createSlackWebClient(botToken);
+  const ingress: Ingress = (() => {
+    switch (mode) {
+      case "socket": {
+        if (
+          slack.socket.appToken === undefined ||
+          slack.socket.appToken === ""
+        ) {
+          missingChatConfig(configPath);
+        }
+        return new SocketIngress({
+          appToken: slack.socket.appToken,
+          botUserId,
+          web,
+          logger: rootLogger.child({ component: "socket" }),
+        });
       }
-      const ingress = new SocketIngress({
-        appToken: slack.socket.appToken,
-        botUserId,
-        web: new WebClient(botToken),
-        logger: rootLogger.child({ component: "socket" }),
-      });
-      return { ingress, botToken };
-    }
-    case "events": {
-      if (
-        slack.events.signingSecret === undefined ||
-        slack.events.signingSecret === ""
-      ) {
-        missingChatConfig(configPath);
+      case "events": {
+        if (
+          slack.events.signingSecret === undefined ||
+          slack.events.signingSecret === ""
+        ) {
+          missingChatConfig(configPath);
+        }
+        return new HttpIngress({
+          signingSecret: slack.events.signingSecret,
+          botUserId,
+          port: slack.events.port,
+          logger: rootLogger.child({ component: "http" }),
+        });
       }
-      const ingress = new HttpIngress({
-        signingSecret: slack.events.signingSecret,
-        botUserId,
-        port: slack.events.port,
-        logger: rootLogger.child({ component: "http" }),
-      });
-      return { ingress, botToken };
+      default:
+        throw new Error(
+          `Unknown system.chat.slack.mode "${mode}" (expected socket|events)`,
+        );
     }
-    default:
-      throw new Error(
-        `Unknown system.chat.slack.mode "${mode}" (expected socket|events)`,
-      );
-  }
+  })();
+  return createSlackPlatform({
+    web,
+    ingress,
+    logger: rootLogger.child({ component: "chat" }),
+  });
 }
 
 /** `dump <channel> [--json]` (config.md §5): bot を起動せず、あるチャンネルの
@@ -220,7 +235,7 @@ function buildChat(
 async function runDump(argv: string[]): Promise<void> {
   const channelId = argv[3];
   if (channelId === undefined) {
-    console.error("Usage: node dist/server.js dump <channel> [--json]");
+    console.error("Usage: node dist/server.mjs dump <channel> [--json]");
     process.exit(1);
   }
   const json = argv.includes("--json");
@@ -250,70 +265,58 @@ const DEFAULT_CONFIG_PATH = "examples/config/agent.yaml";
 /** `local` サブコマンドの既定チャンネル ID (docs/design/local-dev.md §2)。 */
 const DEFAULT_LOCAL_CHANNEL_ID = "local";
 
-/** main() / runLocal() 共通の組み立て (Control State backend, RuntimeConfig,
- * Agent State のディレクトリ等)。すべて system ブロック
- * (config.md §1.1) から取る。system.chat の消費 (Ingress の選択) と web (WebClient) の
- * 構築だけは呼び出し元ごとに異なるため、ここには含めない (local mode は chat を
- * 読まない。docs/design/local-dev.md §2)。
+/** main() / runLocal() 共通の実装選択 (Control State backend, Agent State の棚,
+ * RuntimeConfig, 各タイムアウト)。すべて system ブロック (config.md §1.1) から取る。
+ * system.chat の消費 (ChatPlatform の組み立て) だけは呼び出し元ごとに異なるため
+ * ここには含めない (local mode は chat を読まない。docs/design/local-dev.md §2)。
  *
- * 返す options は startBridge に渡す BridgeOptions のうち eventSource/web/configSource
- * を除いた共通部分 (呼び出し元がそれぞれの入口を追加してから startBridge に渡す)。 */
-function buildCommonBridgeOptions(system: ResolvedSystemConfig): {
-  controlState: ControlState;
-  options: Omit<
-    BridgeOptions,
-    "eventSource" | "web" | "configSource" | "controlState"
-  >;
-} {
+ * 返す options は startRunner に渡す RunnerOptions のうち chat/configSource を
+ * 除いた共通部分 (呼び出し元がそれぞれの ChatPlatform を足して startRunner に渡す)。 */
+function buildCommonRunnerOptions(
+  system: ResolvedSystemConfig,
+): Omit<RunnerOptions, "chat" | "configSource"> {
   const { state } = system;
-
-  const controlState = buildControlState(state.control);
   const { workdirDir, sharedDir, sharedWarnBytes } = state.agent;
+  // system.state.agent の未設定は「その機能ごと無し」を意味する
+  // (workdirDir 未設定 = 境界退避なし、sharedDir 未設定 = 共有ディレクトリなし。
+  // docs/design/state.md §8)。判定は createWorkdirStore / createSharedStore に閉じる
+  const shared = createSharedStore(sharedDir, logger, sharedWarnBytes);
 
   return {
-    controlState,
-    options: {
-      // Runtime レイヤの静的設定 (pi のパス解決・env allowlist・UID 分離・
-      // Permission Model・workdir のルート) は runtime/resolve.ts に閉じる
-      runtime: createRuntimeConfig(system),
-      // system.state.agent.workdirDir 未設定なら境界退避なし
-      ...(workdirDir !== undefined ? { archiveDir: workdirDir } : {}),
-      // system.state.agent.sharedDir 未設定ならチャンネル共有ディレクトリなし
-      // (docs/design/state.md §8)
-      ...(sharedDir !== undefined ? { sharedDir } : {}),
-      // 未設定なら createSharedStore の既定閾値を使う (state.md §5.1)
-      ...(sharedWarnBytes !== undefined
-        ? { sharedShelfWarnBytes: sharedWarnBytes }
-        : {}),
-      // system.turnTimeoutMs 未設定なら Dispatcher の既定 (600_000ms) を使う
-      ...(system.turnTimeoutMs !== undefined
-        ? { turnTimeoutMs: system.turnTimeoutMs }
-        : {}),
-      // system.progressNoticeIntervalMs 未設定なら Dispatcher の既定を使う
-      ...(system.progressNoticeIntervalMs !== undefined
-        ? { progressNoticeIntervalMs: system.progressNoticeIntervalMs }
-        : {}),
-      ...(system.leaseTtlMs !== undefined
-        ? { leaseTtlMs: system.leaseTtlMs }
-        : {}),
-      ...(system.lingerMs !== undefined ? { lingerMs: system.lingerMs } : {}),
-      logger,
+    controlState: buildControlState(state.control),
+    agentState: {
+      workdir: createWorkdirStore(workdirDir, logger),
+      ...(shared !== undefined ? { shared } : {}),
     },
+    // Runtime レイヤの静的設定 (pi のパス解決・env allowlist・UID 分離・
+    // Permission Model・workdir のルート) は runtime/resolve.ts に閉じる
+    runtime: createRuntimeConfig(system),
+    // 各 ms 設定は未設定なら Dispatcher の既定を使う
+    ...(system.turnTimeoutMs !== undefined
+      ? { turnTimeoutMs: system.turnTimeoutMs }
+      : {}),
+    ...(system.progressNoticeIntervalMs !== undefined
+      ? { progressNoticeIntervalMs: system.progressNoticeIntervalMs }
+      : {}),
+    ...(system.leaseTtlMs !== undefined
+      ? { leaseTtlMs: system.leaseTtlMs }
+      : {}),
+    ...(system.lingerMs !== undefined ? { lingerMs: system.lingerMs } : {}),
+    logger,
   };
 }
 
 /** `local [channelId]` (docs/design/local-dev.md §2): Slack を介さず stdin/stdout で
  * 全パイプラインを動かす開発用コネクタ。system.chat は読まない — system の残りと
- * CONFIG_PATH の扱いは main() と共通 (buildCommonBridgeOptions)。
- * startBridge に web を渡さず、poster/reactions/userResolver/fetchMessage を
- * LocalChat から注入する (bridge.ts の 2 点の変更で web なし起動が可能になった)。
- * startBridge (eventSource.start が resolve 次第すぐ返る) の後に REPL を起動し、
+ * CONFIG_PATH の扱いは main() と共通 (buildCommonRunnerOptions)。差し替えるのは
+ * ChatPlatform だけで、Gate 以降には local 専用の分岐を持ち込まない。
+ * startRunner (ingress の受信開始で resolve する) の後に REPL を起動し、
  * REPL 終了 (!quit / Ctrl-D) で exit(0) する。
  *
  * ink 化 (repl.tsx) に伴い、REPL 起動後は構造化ログとチャット画面が同じ
  * stdout に混在すると読みにくい。local mode 専用に pino の destination を
- * PassThrough に差し替えた logger を作り、startBridge にはその logger を
- * (buildCommonBridgeOptions が返す options.logger の代わりに) 渡し、同じ
+ * PassThrough に差し替えた logger を作り、startRunner にはその logger を
+ * (buildCommonRunnerOptions が返す logger の代わりに) 渡し、同じ
  * PassThrough を startRepl の logStream としてログペインに表示する。
  * rootLogger (通常の Slack 起動パス) 自体はそのまま stdout に出続ける —
  * この差し替えは runLocal 内に閉じる。 */
@@ -325,7 +328,7 @@ async function runLocal(argv: string[]): Promise<void> {
     await loadSystemConfig(configPath),
     process.env,
   );
-  const { controlState, options } = buildCommonBridgeOptions(system);
+  const options = buildCommonRunnerOptions(system);
 
   const chat = createLocalChat({ defaultChannelId: channelId });
 
@@ -344,15 +347,10 @@ async function runLocal(argv: string[]): Promise<void> {
     "local mode: state store configured",
   );
 
-  await startBridge({
-    eventSource: chat.ingress,
-    controlState,
-    configSource: new FileConfigSource(configPath),
-    poster: chat.poster,
-    reactor: chat.reactor,
-    userResolver: chat.userResolver,
-    fetchMessage: chat.fetchMessage,
+  await startRunner({
     ...options,
+    chat: createLocalPlatform(chat),
+    configSource: new FileConfigSource(configPath),
     logger: localLogger.child({ component: "server" }),
   });
 
@@ -390,10 +388,8 @@ async function main() {
     await loadSystemConfig(configPath),
     process.env,
   );
-  const { controlState, options } = buildCommonBridgeOptions(system);
-  const { ingress, botToken } = buildChat(system.chat.slack, configPath);
-
-  const web = new WebClient(botToken);
+  const options = buildCommonRunnerOptions(system);
+  const chat = buildSlackChat(system.chat.slack, configPath);
 
   logger.info(
     {
@@ -405,12 +401,10 @@ async function main() {
     "state store configured",
   );
 
-  await startBridge({
-    eventSource: ingress,
-    web,
-    controlState,
-    configSource: new FileConfigSource(configPath),
+  await startRunner({
     ...options,
+    chat,
+    configSource: new FileConfigSource(configPath),
   });
 }
 

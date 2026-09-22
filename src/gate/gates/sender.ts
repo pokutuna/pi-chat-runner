@@ -7,11 +7,11 @@
 //   - id: sender.id (プラットフォームのユーザ ID) が一覧に完全一致すれば trigger する。
 //     改名の影響を受けない安定した指定。
 //   - name: sender.displayName が一覧に完全一致すれば trigger する。displayName は
-//     EventSource/bridge 層が gate 評価前に正規化して埋める契約 (chat-event.ts)。
+//     Ingress ステージが gate 評価前に正規化して埋める契約 (chat-event.ts)。
 //     未解決 (undefined) は fail-closed で trigger しない。
 // negate を持たない方針 (config.md §4) のため id/name とも allowlist 専用。
 //
-// 注: 自分自身 (isSelf) の投稿は bridge が常に除外するため、is: "bot" は実質
+// 注: 自分自身 (isSelf) の投稿は Ingress ステージが常に除外するため、is: "bot" は実質
 // 「自分以外の bot」を意味する (trigger.allowBots が opt-in で bot 投稿を gate
 // 評価に届けたときに初めて意味を持つ。config.md §4.3)。
 

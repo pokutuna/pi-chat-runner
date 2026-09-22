@@ -36,30 +36,32 @@ After editing a file, run `pnpm exec oxfmt --write <file>` — oxfmt enforces 2-
 One pipeline, top to bottom; each stage only knows the interface of its neighbor, not which implementation is behind it:
 
 ```
-Chat (e.g. Slack)
-    │  ChatEvent
+Chat (Slack / local)
+    │  raw event
     ▼
-EventSource        — receives raw events, normalizes to ChatEvent (src/ingress/)
+Ingress            — receives, normalizes to ChatEvent, absorbs duplicates, resolves users (src/ingress/)
     │  ChatEvent
     ▼
 Gate               — decides whether to trigger a session (src/gate/)
     │  ChatEvent (accepted only)
     ▼
-InboxStore         — durable, dedupe'd queue of accepted events (src/state/control/)
+Inbox              — durable, dedupe'd queue of accepted events (src/state/control/)
     │  InboxItem
     ▼
-Dispatcher         — acquires lease, drains inbox, starts a turn (src/dispatch/dispatcher.ts)
+Dispatcher         — picks the session, acquires the lease, drains the inbox, starts/resumes it (src/dispatch/)
     │  turn input
     ▼
-Runtime            — prepares the workdir and spawns/drives the pi child process via RPC (src/runtime/)
+Session / Runtime  — drives the turn; prepares the workdir and spawns/drives the pi child process via RPC (src/session/, src/runtime/)
     │  reply(thread_key, text, files?)
     ▼
-Egress             — resolves thread_key to destination, formats to mrkdwn, chunks (src/egress/)
+Egress             — resolves thread_key to destination, formats (mrkdwn for Slack), chunks (src/egress/)
     │  outgoing message
     ▼
-Chat (e.g. Slack)
+Chat
 ```
 
-`src/server.ts` + `src/bridge.ts` form the composition root: they read env vars, pick concrete backends (EventSource mode, store backend, workdir archival), and wire everything together. Concrete backend selection happens only there — `Dispatcher` and below receive interfaces only. See `docs/design.md`, `docs/design/architecture.md`, and `docs/design/session-model.md` for the full rationale.
+`src/runner.ts` + `src/server.ts` form the composition root. `server.ts` is the CLI entry: it reads System Config and picks the implementations (chat platform, Control State backend, Agent State shelves, `RuntimeConfig`); `startRunner` wires the pipeline and knows nothing about which chat it is wiring. Concrete implementation selection happens only in `server.ts` — `Dispatcher` and below receive interfaces only. See `docs/design.md`, `docs/design/architecture.md`, and `docs/design/session-model.md` for the full rationale.
 
-Several directories split a platform-neutral interface from its implementation on purpose (`src/ingress/` vs `src/ingress/slack/`, `src/state/control/` vs `src/state/agent/`, `src/gate/gate.ts` vs `src/gate/gates/`). Match that granularity when extending them — see `docs/design/architecture.md §4` for how the store split was decided.
+Chat-specific code lives behind `ChatPlatform` (`src/chat/platform.ts`) — a bundle of ingress + poster + reactor + userResolver + fetchMessage + mentionFormat + formatter. `createSlackPlatform` (`src/chat/slack.ts`) and `createLocalPlatform` (`src/chat/local/`) are the two implementations; nothing outside `src/chat/slack.ts` and `src/ingress/slack/` may import `@slack/*`.
+
+Several directories split a platform-neutral interface from its implementation on purpose (`src/ingress/` vs `src/ingress/slack/`, `src/egress/turn-reactor.ts` vs `src/egress/emoji-turn-reactor.ts`, `src/state/control/` vs `src/state/agent/`, `src/gate/gate.ts` vs `src/gate/gates/`). Match that granularity when extending them — see `docs/design/architecture.md §4` for how the store split was decided.

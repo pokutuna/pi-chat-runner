@@ -3,7 +3,15 @@
 //
 // server.ts (CLI/bin) はこのファイルを経由せず直接内部モジュールを import する。
 
-export { type BridgeOptions, startBridge } from "./bridge.js";
+export { createLocalChat } from "./chat/local/local-chat.js";
+export { createLocalPlatform } from "./chat/local/platform.js";
+export type { LocalChat, LocalChatOptions } from "./chat/local/types.js";
+export type { ChatPlatform } from "./chat/platform.js";
+export {
+  createSlackPlatform,
+  createSlackWebClient,
+  type SlackPlatformOptions,
+} from "./chat/slack.js";
 export { type AgentConfig, AgentConfigSchema } from "./config/agent-config.js";
 // 自前 ConfigSource を書く利用者向け: 戻り値の型・検証スキーマ・予約名
 export {
@@ -42,11 +50,12 @@ export {
   SystemConfigSchema,
 } from "./config/system-config.js";
 export { Dispatcher, type DispatcherOptions } from "./dispatch/dispatcher.js";
-export { toMrkdwn } from "./egress/mrkdwn.js";
 export {
+  EmojiTurnReactor,
   type ReactionClient,
-  SlackTurnReactor,
-} from "./egress/slack/turn-reactor.js";
+  type StateEmojiMap,
+} from "./egress/emoji-turn-reactor.js";
+export { toMrkdwn } from "./egress/mrkdwn.js";
 export { type ReactionState, type TurnReactor } from "./egress/turn-reactor.js";
 export {
   type ChatPoster,
@@ -74,6 +83,13 @@ export type {
   SystemEvent,
 } from "./ingress/chat-event.js";
 export type { Ack, Ingress } from "./ingress/ingress.js";
+// 自前 ChatPlatform を書く利用者向け: ack → kind フィルタ → isSelf 除外 → enrich の
+// 共通ステージ (ingress-egress.md §3)
+export {
+  type IngressPipelineOptions,
+  type IngressSink,
+  startIngressPipeline,
+} from "./ingress/pipeline.js";
 // 自前 Ingress を書く利用者向け: raw Slack event → ChatEvent の正規化 codec
 // (mention 展開 / isDm 判定 / dedupeKey) を再実装せず使い回せるようにする
 export {
@@ -92,6 +108,7 @@ export { SocketIngress } from "./ingress/slack/socket-ingress.js";
 export { SlackUserResolver } from "./ingress/slack/user-resolver.js";
 export { enrichEvent, type UserResolver } from "./ingress/user-resolver.js";
 export type { Logger } from "./logger.js";
+export { type RunnerOptions, startRunner } from "./runner.js";
 export type { PiPermissionConfig, RuntimeConfig } from "./runtime/config.js";
 export { createRuntimeConfig } from "./runtime/resolve.js";
 export {

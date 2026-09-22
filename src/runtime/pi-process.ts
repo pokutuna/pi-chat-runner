@@ -4,7 +4,7 @@
  * stdout JSONL のイベントを購読する。起動引数・env の組み立ては pi-args.ts。
  *
  * TODO(将来): 現状は pi 専用実装で、AgentProcess のような抽象 interface は
- * 切っていない (ingress/ の EventSource のような抽象/実装分離は未実施)。
+ * 切っていない (ingress/ の Ingress のような抽象/実装分離は未実施)。
  * pi 以外の agent 実行コンテナが実際に必要になったタイミングで、この境界を
  * インタフェースとして切り出す (今は実装が1つしかなく、可変点を想像で決めると
  * 手戻りするため見送っている)。

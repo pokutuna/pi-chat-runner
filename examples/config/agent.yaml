@@ -118,7 +118,7 @@ channels:
       when: []
 
   - channel: "local"
-    # Used by `node dist/server.js local` / `pnpm run dev:local`
+    # Used by `node dist/server.mjs local` / `pnpm run dev:local`
     # (docs/design/local-dev.md) when no channelId argument is given. Not a
     # reserved name like "default"/"dm" — it's just the code's default
     # channelId for local mode, so a plain "mention" trigger is enough to

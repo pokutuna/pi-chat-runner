@@ -42,7 +42,7 @@ const GateSchema = z
     /** sender gate が trigger する送信者 ID の allowlist。Sender.id との完全一致
      * (config.md §4.2)。is/name と併記した場合は AND。 */
     id: z.array(z.string()).optional(),
-    /** sender gate が trigger する送信者名の allowlist。EventSource が正規化した
+    /** sender gate が trigger する送信者名の allowlist。Ingress ステージが正規化した
      * Sender.displayName との完全一致 (config.md §4.2)。is/id と併記した場合は AND。 */
     name: z.array(z.string()).optional(),
   })
