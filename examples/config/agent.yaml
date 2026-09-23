@@ -40,7 +40,7 @@ system:
   state:
     # control: the runner's own bookkeeping (inbox, sessions, leases, ...).
     control:
-      backend: ${env.STORE_BACKEND:-memory} # memory | sqlite | firestore
+      backend: ${env.CONTROL_STATE_BACKEND:-memory} # memory | sqlite | firestore
       sqlite:
         path: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db} # backend: sqlite only
       firestore: # backend: firestore only

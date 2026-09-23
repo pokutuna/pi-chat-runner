@@ -24,7 +24,7 @@ spec:
           env:
             - name: SLACK_MODE
               value: events # production uses events (HTTP push), not socket
-            - name: STORE_BACKEND
+            - name: CONTROL_STATE_BACKEND
               value: firestore # production needs a durable backend
             # To share a Firestore in an existing project, set these (see agent.yaml):
             # - name: FIRESTORE_PROJECT_ID

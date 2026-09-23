@@ -19,7 +19,7 @@ let baseDir: string;
 let workdir: string;
 
 beforeEach(async () => {
-  baseDir = await mkdtemp(join(tmpdir(), "workdir-storage-shelf-"));
+  baseDir = await mkdtemp(join(tmpdir(), "workdir-storage-archive-"));
   workdir = await mkdtemp(join(tmpdir(), "workdir-storage-workdir-"));
 });
 
@@ -39,7 +39,7 @@ async function writeWorkdirFiles(): Promise<void> {
 }
 
 describe("CopyWorkdirStore", () => {
-  it("flushes workdir to the shelf and restores it into a fresh workdir", async () => {
+  it("flushes workdir to the archive and restores it into a fresh workdir", async () => {
     const storage = new CopyWorkdirStore(baseDir);
     await writeWorkdirFiles();
 
@@ -62,7 +62,7 @@ describe("CopyWorkdirStore", () => {
     ).toBe("deep content");
   });
 
-  it("returns false and does nothing when the shelf is empty", async () => {
+  it("returns false and does nothing when the archive is empty", async () => {
     const storage = new CopyWorkdirStore(baseDir);
 
     const restored = await storage.restore(SESSION_KEY, workdir);
@@ -73,12 +73,12 @@ describe("CopyWorkdirStore", () => {
     ).rejects.toThrow(/ENOENT/);
   });
 
-  it("does not restore when the shelf has other files but no session.jsonl", async () => {
+  it("does not restore when the archive has other files but no session.jsonl", async () => {
     const storage = new CopyWorkdirStore(baseDir);
-    const shelf = join(baseDir, "C123ABC", "1720000000.123456");
-    await mkdir(join(shelf, "workspace"), { recursive: true });
+    const archive = join(baseDir, "C123ABC", "1720000000.123456");
+    await mkdir(join(archive, "workspace"), { recursive: true });
     await writeFile(
-      join(shelf, "workspace", "note.txt"),
+      join(archive, "workspace", "note.txt"),
       "partial flush trace",
     );
 
@@ -90,7 +90,7 @@ describe("CopyWorkdirStore", () => {
     ).rejects.toThrow(/ENOENT/);
   });
 
-  it("overwrites the shelf content on a second flush", async () => {
+  it("overwrites the archive content on a second flush", async () => {
     const storage = new CopyWorkdirStore(baseDir);
     await writeWorkdirFiles();
     await storage.flush(SESSION_KEY, workdir);
@@ -111,7 +111,7 @@ describe("CopyWorkdirStore", () => {
     );
   });
 
-  it("maps the ':' in sessionKey to a path separator on the shelf", async () => {
+  it("maps the ':' in sessionKey to a path separator on the archive", async () => {
     const storage = new CopyWorkdirStore(baseDir);
     await writeWorkdirFiles();
 
@@ -166,7 +166,7 @@ function collectingLogger(): { logger: pino.Logger; lines: () => unknown[] } {
 describe("CopySharedStore", () => {
   const CHANNEL_ID = "C123ABC";
 
-  it("flushes staging to the shelf and restores it into a fresh staging dir", async () => {
+  it("flushes staging to the archive and restores it into a fresh staging dir", async () => {
     const storage = new CopySharedStore(baseDir);
     await mkdir(join(workdir, "memory"), { recursive: true });
     await writeFile(join(workdir, "memory", "MEMORY.md"), "- note");
@@ -185,9 +185,9 @@ describe("CopySharedStore", () => {
 
   it("restores without a session.jsonl gate (unlike CopyWorkdirStore)", async () => {
     const storage = new CopySharedStore(baseDir);
-    const shelf = join(baseDir, CHANNEL_ID);
-    await mkdir(shelf, { recursive: true });
-    await writeFile(join(shelf, "notes.md"), "no transcript here");
+    const archive = join(baseDir, CHANNEL_ID);
+    await mkdir(archive, { recursive: true });
+    await writeFile(join(archive, "notes.md"), "no transcript here");
 
     await storage.restore(CHANNEL_ID, workdir);
 
@@ -196,7 +196,7 @@ describe("CopySharedStore", () => {
     );
   });
 
-  it("does nothing when the shelf is empty", async () => {
+  it("does nothing when the archive is empty", async () => {
     const storage = new CopySharedStore(baseDir);
 
     await storage.restore(CHANNEL_ID, workdir);
@@ -206,14 +206,14 @@ describe("CopySharedStore", () => {
     );
   });
 
-  it("uses the channelId as the shelf directory", async () => {
+  it("uses the channelId as the archive directory", async () => {
     const storage = new CopySharedStore(baseDir);
-    await writeFile(join(workdir, "notes.md"), "shelf layout");
+    await writeFile(join(workdir, "notes.md"), "archive layout");
 
     await storage.flush(CHANNEL_ID, workdir);
 
     expect(await readFile(join(baseDir, CHANNEL_ID, "notes.md"), "utf8")).toBe(
-      "shelf layout",
+      "archive layout",
     );
   });
 
@@ -256,9 +256,9 @@ describe("CopySharedStore", () => {
     await expect(storage.flush(CHANNEL_ID, workdir)).resolves.toBeUndefined();
   });
 
-  // 判定は staging の実測バイト数で行い、棚を走査し直さない。棚に残った過去の
+  // 判定は staging の実測バイト数で行い、archiveを走査し直さない。archiveに残った過去の
   // ファイル (削除が伝播しないため残りうる。#12) は判定に入らない
-  it("judges by staging size, not by what already sits on the shelf", async () => {
+  it("judges by staging size, not by what already sits on the archive", async () => {
     const { logger, lines } = collectingLogger();
     const storage = new CopySharedStore(baseDir, logger, 100);
     await mkdir(join(baseDir, CHANNEL_ID), { recursive: true });
@@ -316,7 +316,7 @@ describe("createWorkdirStore", () => {
 
 describe("copy measurement logs", () => {
   /** writeWorkdirFiles が作る通常ファイル (session.jsonl / note.txt / deep.txt)。
-   * ディレクトリは files に数えない — 棚が GCS FUSE のとき往復のコストを持つのは
+   * ディレクトリは files に数えない — archiveが GCS FUSE のとき往復のコストを持つのは
    * ファイルだけなので、往復回数の目安として使えるようにする */
   const EXPECTED_FILES = 3;
 
@@ -359,7 +359,7 @@ describe("copy measurement logs", () => {
     });
   });
 
-  it("does not log a restore line when the shelf has no transcript", async () => {
+  it("does not log a restore line when the archive has no transcript", async () => {
     const { logger, lines } = collectingLogger();
     const storage = new CopyWorkdirStore(baseDir, logger);
 

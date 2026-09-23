@@ -94,7 +94,7 @@ export async function rejectNewWhileRunning(
 /** `/new` コマンドの処理 (session-model.md §5.1)。Gate を通過済み、かつこの Session に
  * 実行中の実体が無いことが呼び出し元で確定した後にのみ呼ばれる。短時間の lease を
  * 取得してマーカー (rotateRequestedAt) を書くだけで、即座の rotate はしない
- * (WorkdirStore の棚に旧 session.jsonl が残っており、次の restore で復元されて
+ * (WorkdirStore の archive に旧 session.jsonl が残っており、次の restore で復元されて
  * 巻き戻るため。次の dispatch が restore 後に消費する)。
  *
  * 戻り値: 続きの指示 (`/new <text>`) があればその本文。呼び出し元はこれを新規

@@ -173,9 +173,9 @@ export const SystemConfigSchema = z
     turnTimeoutMs: z.coerce.number().int().positive().optional(),
     /** 長時間ターンの進捗通知の間隔 (ingress-egress.md §8)。0 で機能自体を無効化する。 */
     progressNoticeIntervalMs: z.coerce.number().int().nonnegative().optional(),
-    /** Session 実行の lease TTL (message-dispatch.md §5)。 */
+    /** Session 実行の lease TTL (message-dispatch.md §6)。 */
     leaseTtlMs: z.coerce.number().int().positive().optional(),
-    /** Turn 終了後に Agent プロセスと lease を保つ時間 (message-dispatch.md §6)。 */
+    /** Turn 終了後に Agent プロセスと lease を保つ時間 (message-dispatch.md §7.3)。 */
     lingerMs: z.coerce.number().int().nonnegative().optional(),
   })
   .strict();

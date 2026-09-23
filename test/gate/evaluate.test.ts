@@ -147,8 +147,10 @@ describe("Gate: reaction 起動 (handleReaction 経由の段の順序)", () => {
     ).not.toBeNull();
   });
 
-  it("reaction 起動が過去セッションと同じ sessionKey に着地すると、棚の transcript が restore されて resumed:true になる (実質再開)", async () => {
-    const baseDir = await mkdtemp(join(tmpdir(), "pi-chat-runner-test-shelf-"));
+  it("reaction 起動が過去セッションと同じ sessionKey に着地すると、archiveの transcript が restore されて resumed:true になる (実質再開)", async () => {
+    const baseDir = await mkdtemp(
+      join(tmpdir(), "pi-chat-runner-test-archive-"),
+    );
     const storage = new CopyWorkdirStore(baseDir);
     const threadTs = "1700000000.000050";
     const { fetch } = fetchReturning({ text: "continue please", threadTs });
@@ -159,12 +161,12 @@ describe("Gate: reaction 起動 (handleReaction 経由の段の順序)", () => {
       { workdirStore: storage, fetchMessage: fetch },
     );
 
-    // 過去セッションの棚 (baseDir/C01/<threadTs>/session.jsonl) を事前に用意する。
+    // 過去セッションのarchive (baseDir/C01/<threadTs>/session.jsonl) を事前に用意する。
     // workdirRoot 側には何も置かない (コールドスタートを模す — 731 行目のテストは
-    // workdirRoot に直接置くが、こちらは棚経由の restore だけで再開が成立することを見る)
-    const shelfDir = join(baseDir, "C01", threadTs);
-    await mkdir(shelfDir, { recursive: true });
-    await writeFile(join(shelfDir, "session.jsonl"), "PAST TRANSCRIPT\n");
+    // workdirRoot に直接置くが、こちらはarchive経由の restore だけで再開が成立することを見る)
+    const archiveDir = join(baseDir, "C01", threadTs);
+    await mkdir(archiveDir, { recursive: true });
+    await writeFile(join(archiveDir, "session.jsonl"), "PAST TRANSCRIPT\n");
 
     const target = reaction({ targetMessageId: "1700000000.000300" });
 
@@ -178,12 +180,12 @@ describe("Gate: reaction 起動 (handleReaction 経由の段の順序)", () => {
       .logLines()
       .filter((line) => line.msg === "session started");
     expect(startedLogs).toHaveLength(1);
-    // 命題の核心: 棚からの restore によって pi が既存 transcript を検出し、
+    // 命題の核心: archiveからの restore によって pi が既存 transcript を検出し、
     // resumed:true として起動している (同一インスタンス内で workdir に直接ファイルを
-    // 置く既存テストとは異なり、棚経由の restore だけで再開が成立する)
+    // 置く既存テストとは異なり、archive経由の restore だけで再開が成立する)
     expect(startedLogs[0]?.resumed).toBe(true);
 
-    // workdir にも棚の内容が復元されている
+    // workdir にもarchiveの内容が復元されている
     const restored = await readFile(
       join(h.workdirRoot, "C01", threadTs, "session.jsonl"),
       "utf-8",
@@ -199,8 +201,10 @@ describe("Gate: reaction 起動 (handleReaction 経由の段の順序)", () => {
     );
   });
 
-  it("棚に transcript が無ければ resumed:false (新規セッション、再開ではない)", async () => {
-    const baseDir = await mkdtemp(join(tmpdir(), "pi-chat-runner-test-shelf-"));
+  it("archiveに transcript が無ければ resumed:false (新規セッション、再開ではない)", async () => {
+    const baseDir = await mkdtemp(
+      join(tmpdir(), "pi-chat-runner-test-archive-"),
+    );
     const storage = new CopyWorkdirStore(baseDir);
     const threadTs = "1700000000.000060";
     const { fetch } = fetchReturning({ text: "fresh start please", threadTs });

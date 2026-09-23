@@ -1,7 +1,7 @@
 // CLI エントリポイント (docs/design/architecture.md §3, §4)
 //
 // 持つのは 2 つだけ: CLI サブコマンド (`dump` / `local` / 既定) と、System Config から
-// 実装を 1 つ選ぶこと (チャット接続・Control State backend・Agent State の棚・
+// 実装を 1 つ選ぶこと (チャット接続・Control State backend・Agent State の archive・
 // Runtime の静的設定)。選んだ実装を組み立てて startRunner (src/runner.ts) に渡し、
 // パイプラインの配線自体は Runner に委ねる。
 //
@@ -265,7 +265,7 @@ const DEFAULT_CONFIG_PATH = "examples/config/agent.yaml";
 /** `local` サブコマンドの既定チャンネル ID (docs/design/local-dev.md §2)。 */
 const DEFAULT_LOCAL_CHANNEL_ID = "local";
 
-/** main() / runLocal() 共通の実装選択 (Control State backend, Agent State の棚,
+/** main() / runLocal() 共通の実装選択 (Control State backend, Agent State の archive,
  * RuntimeConfig, 各タイムアウト)。すべて system ブロック (config.md §1.1) から取る。
  * system.chat の消費 (ChatPlatform の組み立て) だけは呼び出し元ごとに異なるため
  * ここには含めない (local mode は chat を読まない。docs/design/local-dev.md §2)。

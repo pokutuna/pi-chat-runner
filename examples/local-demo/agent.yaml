@@ -5,11 +5,11 @@
 # Channel ids here ("local", "notes", ...) are plain strings — the REPL's
 # `!channel <id>` switches between them; nothing has to exist on Slack.
 
-# --- system: in-memory state by default; STORE_BACKEND=sqlite survives restarts ---
+# --- system: in-memory state by default; CONTROL_STATE_BACKEND=sqlite survives restarts ---
 system:
   state:
     control:
-      backend: ${env.STORE_BACKEND:-memory}
+      backend: ${env.CONTROL_STATE_BACKEND:-memory}
   runtime:
     # The "links" channel loads pi-smart-fetch, which contains a native addon
     # (.node) — loading it under the Node Permission Model requires

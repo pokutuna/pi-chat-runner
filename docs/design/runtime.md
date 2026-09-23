@@ -4,7 +4,7 @@ Runtime は Workdir、環境変数、Channel の設定に応じた Skill やツ�
 できる状態にし、Agent を子プロセスとして起動する。Agent 自体は作らず、pi に渡す引数と
 ファイルシステムを整えることだけを行う。
 
-関連: [state.md](state.md) (Agent State の棚と staging)、
+関連: [state.md](state.md) (Agent State の archive と staging)、
 [message-dispatch.md](message-dispatch.md) (Turn 境界の制御)、
 [config.md](config.md) (Agent Config の項目)。
 
@@ -29,8 +29,8 @@ Agent プロセスは使い捨てである。Session の再開に専用のフロ
 副作用の順序に意味があるため、次の順で行う。
 
 1. **mkdir** — Workdir を作る
-2. **Workdir restore** — 棚から Transcript と作業ファイルを復元する ([state.md](state.md))
-3. **Shared restore** — `<staging>/skills/` を mkdir してから棚を復元する。skills/ は
+2. **Workdir restore** — archive から Transcript と作業ファイルを復元する ([state.md](state.md))
+3. **Shared restore** — `<staging>/skills/` を mkdir してから archive を復元する。skills/ は
    空でも常に作る — pi の `--skill` は空ディレクトリを黙って無視するので無条件に配線
    でき、Agent は mkdir なしで skill を置ける
 4. **Transcript の世代交代** — 下記の優先順位で最大 1 回
@@ -164,7 +164,7 @@ Agent は bash tool で任意のコマンドを実行できる。Runner と同�
 | 守る対象 | 漏れる経路 | 対策 |
 |---|---|---|
 | Runner の環境変数 (チャットのトークン等) | 子プロセスへの env 継承、同一 UID なら `/proc/<pid>/environ` | env allowlist (§5.3) + UID 分離 |
-| Agent State の棚 (全 Channel・全 Session 分) | マウントはコンテナ全体から見える | 棚を Runner の UID・0700 で持ち、Agent には traverse させない。Agent が触るのは staging のコピーだけ |
+| Agent State の archive (全 Channel・全 Session 分) | マウントはコンテナ全体から見える | archive を Runner の UID・0700 で持ち、Agent には traverse させない。Agent が触るのは staging のコピーだけ |
 | 同一インスタンス上の他 Session の Workdir | 並行実行で同居する | Workdir を Session ごとに 0700 |
 | Runner のコード | 読める | 秘密が無いので読めてよい。書き換えは所有権で防ぐ |
 
@@ -176,7 +176,7 @@ Agent は bash tool で任意のコマンドを実行できる。Runner と同�
 
 Workdir と Shared staging は Runner (root) が作成・復元するので root 所有のまま残る。
 Agent が書けるよう、restore の後に再帰的に chown して 0700 にする。この再帰 chown は
-**symlink を辿らずスキップする** — Agent が Workdir 内に棚などへのリンクを仕込み、次の
+**symlink を辿らずスキップする** — Agent が Workdir 内に archive などへのリンクを仕込み、次の
 restore で root の Runner がリンク先を chown して所有権を奪われる経路を防ぐ。
 
 agentHome は「Runner が作ったものだけ chown する」規則にする。`mkdir(recursive)` は新規
@@ -378,7 +378,7 @@ Channel や Agent ごとに変えたい項目は Agent Config で宣言し、Run
 | memory 索引の読み込み | `loadMemoryIndex` (同上) |
 | Runtime の静的設定 | `RuntimeConfig` / `PiPermissionConfig` (`src/runtime/config.ts`)、組み立ては `createRuntimeConfig` (`src/runtime/resolve.ts`) を `src/server.ts` が呼ぶ |
 | 起動引数の組み立て | `buildPiArgs` / `buildSpawnCommand` (`src/runtime/pi-args.ts`) |
-| Permission Model | `buildPiPermissionOptions` / `ancestorDirs` / `PI_TRUST_PROBE_FILENAMES` (`src/runtime/pi-args.ts`)、`PiPermissionConfig` (`src/runtime/config.ts`)、`buildPiPermissionConfig` / `resolvePiPaths` / `outermostNodeModules` (`src/runtime/resolve.ts`) |
+| Permission Model | `buildPiPermissionOptions` / `ancestorDirs` (`src/runtime/pi-args.ts`)、`PiPermissionConfig` (`src/runtime/config.ts`)、`buildPiPermissionConfig` / `resolvePiPaths` / `outermostNodeModules` (`src/runtime/resolve.ts`) |
 | env allowlist | `buildPiEnv` (`src/runtime/pi-args.ts`)、`collectGcpEnv` (`src/runtime/resolve.ts`) |
 | 子プロセスのラッパ | `PiProcess` (`src/runtime/pi-process.ts`) |
 | システムプロンプト | `buildSystemPrompt` / `prependContext` (`src/runtime/prompt.ts`) |

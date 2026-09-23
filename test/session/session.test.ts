@@ -199,11 +199,11 @@ describe("Session (fake-pi integration)", () => {
     expect(h.poster.calls).toEqual([]);
   });
 
-  it("shared: 棚から staging へ復元され、--skill 配線とプロンプト言及が入り、ターン終了で棚へ書き戻される", async () => {
+  it("shared: archiveから staging へ復元され、--skill 配線とプロンプト言及が入り、ターン終了でarchiveへ書き戻される", async () => {
     const sharedRoot = await mkdtemp(
       join(tmpdir(), "pi-chat-runner-test-shared-"),
     );
-    // 過去セッションの蓄積がある棚を模す (docs/design/state.md §5.1:
+    // 過去セッションの蓄積があるarchiveを模す (docs/design/state.md §5.1:
     // session.jsonl が無くても復元される — WorkdirStore との差分)
     await mkdir(join(sharedRoot, "C01", "memory"), { recursive: true });
     await writeFile(
@@ -215,7 +215,7 @@ describe("Session (fake-pi integration)", () => {
       {},
       { sharedStore: new CopySharedStore(sharedRoot) },
     );
-    // 前ターンで agent が staging に書いた体のファイル (flush で棚へ上がるはず)
+    // 前ターンで agent が staging に書いた体のファイル (flush でarchiveへ上がるはず)
     const staging = join(h.workdirRoot, "C01", "shared");
     await mkdir(staging, { recursive: true });
     await writeFile(join(staging, "notes.md"), "learned in a past turn");
@@ -228,7 +228,7 @@ describe("Session (fake-pi integration)", () => {
       "session removed",
     );
 
-    // 棚の内容が staging (workdir の隣 = agent からは ../shared/) に復元されている
+    // archiveの内容が staging (workdir の隣 = agent からは ../shared/) に復元されている
     expect(await readFile(join(staging, "memory", "MEMORY.md"), "utf-8")).toBe(
       "- past fact",
     );
@@ -247,7 +247,7 @@ describe("Session (fake-pi integration)", () => {
     const appendPrompt = argv[argv.indexOf("--append-system-prompt") + 1];
     expect(appendPrompt).toContain("../shared/");
 
-    // ターン終了の flush で staging の内容 (mkdir された skills/ 含む) が棚へ
+    // ターン終了の flush で staging の内容 (mkdir された skills/ 含む) がarchiveへ
     expect(await readFile(join(sharedRoot, "C01", "notes.md"), "utf-8")).toBe(
       "learned in a past turn",
     );
@@ -283,7 +283,7 @@ describe("Session (fake-pi integration)", () => {
     expect(appendPrompt).not.toContain("memory index");
   });
 
-  it("shared: 棚に MEMORY.md があると、その中身が system prompt に注入される (runtime.md §6)", async () => {
+  it("shared: archiveに MEMORY.md があると、その中身が system prompt に注入される (runtime.md §6)", async () => {
     const sharedRoot = await mkdtemp(
       join(tmpdir(), "pi-chat-runner-test-shared-"),
     );
@@ -308,7 +308,7 @@ describe("Session (fake-pi integration)", () => {
     expect(appendPrompt).toContain("- some memory fact");
   });
 
-  it("shared: 棚に MEMORY.md が無い (新規チャンネル) 場合、memory index の文言は system prompt に入らない", async () => {
+  it("shared: archiveに MEMORY.md が無い (新規チャンネル) 場合、memory index の文言は system prompt に入らない", async () => {
     const sharedRoot = await mkdtemp(
       join(tmpdir(), "pi-chat-runner-test-shared-"),
     );

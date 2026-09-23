@@ -18,7 +18,7 @@ Slack などのチャットから pi を駆動するエージェントランナ�
 | [design/architecture.md](design/architecture.md) | Core Components と Pipeline、起動時の実装選択、モジュール配置、event と session の分離 |
 | [design/session-model.md](design/session-model.md) | Channel / Thread / Session / Turn、session.mode と reply.mode、Thread Key、コマンド、終了条件 |
 | [design/message-dispatch.md](design/message-dispatch.md) | Session の選択と affinity、debounce、steering、lease、起動と Turn 境界、Inbox の dedupe |
-| [design/state.md](design/state.md) | Control State の Store と backend、Agent State の棚、Workdir / Shared のパスと復元・保存 |
+| [design/state.md](design/state.md) | Control State の Store と backend、Agent State の archive、Workdir / Shared のパスと復元・保存 |
 | [design/runtime.md](design/runtime.md) | pi の起動準備と引数、Extension と Skill、Agent の隔離 (UID / Permission Model / env)、システムプロンプト、RPC |
 | [design/config.md](design/config.md) | Config の 3 分類、YAML の形、ロードと Channel の解決、Gate の合成規則、dump |
 | [design/ingress-egress.md](design/ingress-egress.md) | ChatEvent と Slack の正規化、Thread Key から送信先への解決、整形と分割、リアクション、進捗通知 |

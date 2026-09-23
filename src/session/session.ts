@@ -3,8 +3,8 @@
 // 1 Session の遷移はここに閉じる。
 //
 // docs/design/architecture.md §6 (event は「きっかけ係」、Session が「処理の担い手」)、
-// docs/design/session-model.md §7 (Turn)、docs/design/message-dispatch.md §5 (起動と
-// steering のフロー)、§7.2 (Turn 境界の順序: flush → ack)、§7.4 (turn timeout)、
+// docs/design/session-model.md §7 (Turn)、docs/design/message-dispatch.md §7.1 (起動の
+// フロー)、§5 (steering)、§7.2 (Turn 境界の順序: flush → ack)、§7.4 (turn timeout)、
 // docs/design/runtime.md §1 (起動シーケンス)、docs/design/state.md §7 (tmpfs + 境界 flush)。
 //
 // Turn は型ではなくこのクラスのフィールド群 (#turnEpoch / #turnMessageIds /
@@ -410,7 +410,7 @@ export class Session {
       void this.#failSession(proc, response.error).catch((err) => {
         this.#ctx.logger.warn(
           { sessionKey, err },
-          "failSession handling failed",
+          "session failure handling failed",
         );
       });
     });
@@ -599,7 +599,7 @@ export class Session {
     const reactTargets = this.#turnMessageIds;
     this.#turnMessageIds = [];
     await this.#ctx.workdirStore.flush(sessionKey, this.workdir);
-    // shared も同じ境界で棚へ書き戻す (docs/design/state.md §7)。異常終了パス
+    // shared も同じ境界で archive へ書き戻す (docs/design/state.md §7)。異常終了パス
     // (exit / abnormalShutdown / renew 失敗) で書き戻さないのは workdir と同じ理由
     if (
       this.#ctx.sharedStore !== undefined &&
@@ -834,7 +834,7 @@ export class Session {
       void this.#timeoutSession(proc).catch((err) => {
         this.#ctx.logger.warn(
           { sessionKey: this.sessionKey, err },
-          "timeoutSession handling failed",
+          "turn timeout handling failed",
         );
       });
     }, this.#ctx.turnTimeoutMs);

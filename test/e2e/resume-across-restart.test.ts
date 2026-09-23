@@ -73,7 +73,7 @@ describeLive("live: 再起動をまたぐ再開", () => {
         60_000,
       );
 
-      // 「プロセス再起動」に相当する組み直し。Control State と Workdir の棚だけを
+      // 「プロセス再起動」に相当する組み直し。Control State と Workdir のarchiveだけを
       // 共有し、LocalChat・Runner は新しく作る。
       //
       // ts は Inbox の dedupe キーなので、chat1 の最後の seq より後ろから採番する

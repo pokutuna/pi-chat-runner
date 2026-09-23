@@ -12,7 +12,7 @@ system:
 
   state:
     control:
-      backend: ${env.STORE_BACKEND:-memory}
+      backend: ${env.CONTROL_STATE_BACKEND:-memory}
       sqlite:
         path: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db}
 

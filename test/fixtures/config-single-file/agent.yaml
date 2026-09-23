@@ -12,7 +12,7 @@ system:
 
   state:
     control:
-      backend: ${env.UNSET_FIXTURE_STORE_BACKEND:-memory}
+      backend: ${env.UNSET_FIXTURE_CONTROL_STATE_BACKEND:-memory}
 
 agent:
   env:

@@ -27,7 +27,7 @@ system:
 
   state:
     control:
-      backend: ${env.STORE_BACKEND:-sqlite}
+      backend: ${env.CONTROL_STATE_BACKEND:-sqlite}
       sqlite:
         path: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db}
       firestore:

@@ -258,23 +258,23 @@ Dispatcher 以下には実装の別を漏らさない ([config.md](config.md))�
 
 Firestore は `FIRESTORE_EMULATOR_HOST` が立っているときだけ実行し、未起動なら skip する。
 
-## 5. Agent State の棚
+## 5. Agent State の archive
 
-Agent State は Session 単位の棚と Channel 単位の棚の 2 つに分かれる。どちらもディレクトリ
-のコピーで往復するだけなので、棚の実体が Cloud Storage のマウント先でもローカルの
-ディレクトリでも同じに動く。
+Agent State は Session 単位の archive と Channel 単位の archive の 2 つに分かれる。どちらも
+ディレクトリのコピーで往復するだけなので、archive の実体が Cloud Storage のマウント先でも
+ローカルのディレクトリでも同じに動く。
 
-| 棚 | パス | キー | 中身 |
+| archive | パス | キー | 中身 |
 |---|---|---|---|
 | Workdir (Session) | `<workdirBase>/<channelId>/<threadTs\|channel>/` | sessionKey | `session.jsonl` (Transcript) + Agent の作業ファイル |
 | Shared (Channel) | `<sharedBase>/<channelId>/` | channelId | `skills/`、`memory/`、Agent が置いた任意のファイル |
 
-Transcript と Workdir は 1 つの棚に同居させる。Transcript は Agent が `--session` で
+Transcript と Workdir は 1 つの archive に同居させる。Transcript は Agent が `--session` で
 読み書きする Workdir 内の 1 ファイルであり、別の保存先に分ける理由がない。
 
 ```typescript
 interface WorkdirStore {
-  /** 棚 → workdir。復元したかを返す */
+  /** archive → workdir。復元したかを返す */
   restore(sessionKey: string, workdir: string): Promise<boolean>;
   flush(sessionKey: string, workdir: string): Promise<void>;
 }
@@ -287,9 +287,9 @@ interface SharedStore {
 
 ### 5.1 復元と保存の規則
 
-- **restore は `session.jsonl` の有無で gate する**: 棚に Transcript が無ければ何も
+- **restore は `session.jsonl` の有無で gate する**: archive に Transcript が無ければ何も
   復元せず `false` を返す。これが「新規 Session か再開か」の判定そのものになる。
-  Shared にはこの gate が無い — Transcript を持たないただのディレクトリなので、棚に
+  Shared にはこの gate が無い — Transcript を持たないただのディレクトリなので、archive に
   エントリがあれば常に復元する。
 - **flush は `session.jsonl` を最後に書く**: それ以外のファイルを先にコピーし、
   Transcript を最後に置く。コピーの途中で落ちても「Transcript があるのに作業ファイルが
@@ -298,25 +298,25 @@ interface SharedStore {
 - **コピーは通常ファイルとディレクトリのみ**: socket 等の特殊ファイルは除外し、コピー先
   の同名エントリは置き換える。削除は伝播しない (コピーは上書きのみ)。
 - **サイズの警告**: Shared の flush でコピーしたバイト数が閾値 (既定 50MiB) を超えたら
-  warn を出す。ブロックはしない。判定にはコピー中に数えた実測値を使い、棚を走査し直さ
-  ない — 棚がネットワーク越しなら走査はファイル数に比例する往復になり、気づきのための
-  警告には高すぎる。
+  warn を出す。ブロックはしない。判定にはコピー中に数えた実測値を使い、archive を走査し
+  直さない — archive がネットワーク越しなら走査はファイル数に比例する往復になり、気づき
+  のための警告には高すぎる。
 - restore / flush は所要時間・ファイル数・バイト数をログに出す。肥大化対策の判断材料は
   files と bytes のどちらが支配的かで変わるため両方残す。
 
 ### 5.2 排他
 
-Workdir の棚は sessionKey 単位なので、lease により同時に flush するプロセスは常に 1 つ
-に保たれる。Shared の棚は Channel 単位で、同一 Channel の複数 Session が並行して Turn を
-終えると flush が交錯しうる。ここにはロックを置かず、**ファイル単位の last-write-wins**
-を受容する。Channel 単位のロックは無関係な Session 同士をブロックし、クラッシュ時の
-ロック回収という新しい故障モードを持ち込む。flush はファイルごとのコピーなので、負けた
-側も「ファイル単位で古い」だけでディレクトリ全体は壊れない。
+Workdir の archive は sessionKey 単位なので、lease により同時に flush するプロセスは常に
+1 つに保たれる。Shared の archive は Channel 単位で、同一 Channel の複数 Session が並行して
+Turn を終えると flush が交錯しうる。ここにはロックを置かず、**ファイル単位の
+last-write-wins** を受容する。Channel 単位のロックは無関係な Session 同士をブロックし、
+クラッシュ時のロック回収という新しい故障モードを持ち込む。flush はファイルごとのコピー
+なので、負けた側も「ファイル単位で古い」だけでディレクトリ全体は壊れない。
 
 ## 6. Workdir と Shared staging のパス
 
-Agent が触るのは棚そのものではなく、tmpfs 上に置いた実行用のディレクトリである。
-棚との往復は Runner の仕事で、Agent は棚の存在を知らない。
+Agent が触るのは archive そのものではなく、tmpfs 上に置いた実行用のディレクトリである。
+archive との往復は Runner の仕事で、Agent は archive の存在を知らない。
 
 ```
 /tmp/pi-chat-runner/sessions/<channelId>/
@@ -329,8 +329,9 @@ Agent が触るのは棚そのものではなく、tmpfs 上に置いた実行�
 ```
 
 staging を Workdir の**中**ではなく**隣**に置く。中に置くと Workdir の flush / restore
-から除外する処理が要り、除外漏れは「Session の棚の汚染」「古い Shared の復活」という
-静かな事故になる。隣に置けば Session 層と完全に直交し、除外処理も名前の予約も要らない。
+から除外する処理が要り、除外漏れは「Session の archive の汚染」「古い Shared の復活」
+という静かな事故になる。隣に置けば Session 層と完全に直交し、除外処理も名前の予約も
+要らない。
 代償は権限の配線が別途要ることだが、こちらの漏れは「Agent が書けない」というすぐ気づく
 失敗になる。Workdir は Session のどちらのモードでも `<channelId>/` の 1 階層下なので、
 Agent に教える相対パスが常に `../shared/` で一定になる。
@@ -348,8 +349,9 @@ ack されず、未 ack のメッセージは次の実行で拾い直される (
 flush 前にスナップショットした id — flush の await 中に届いたメッセージを、そのターンの
 成果に含まれていないのに ack してしまわないため。
 
-異常終了パスで書き戻さないのは、壊れた状態を棚へ伝播させないためと、lease を失った側が
-棚を上書きして排他を破らないためである。失われるのは最後の flush 以降の Transcript
+異常終了パスで書き戻さないのは、壊れた状態を archive へ伝播させないためと、lease を
+失った側が archive を上書きして排他を破らないためである。失われるのは最後の flush 以降の
+Transcript
 (会話の文脈が少し巻き戻る) だけで、入力は Inbox に残っており再実行される。
 
 ## 8. 保存先が未設定のときの挙動
@@ -359,16 +361,16 @@ Agent State の保存先は設定しなくても動く。ローカルで動作�
 
 | 設定 | 未設定時 |
 |---|---|
-| Workdir の棚 (`system.state.agent.workdirDir`) | 境界での退避を行わない。restore は常に `false`、flush は何もしない。Session はプロセスが生きている間だけ文脈を保つ |
-| Shared の棚 (`system.state.agent.sharedDir`) | Shared 機能ごと無効。staging の作成、skill の配線、システムプロンプトへの言及をすべて省く |
+| Workdir の archive (`system.state.agent.workdirDir`) | 境界での退避を行わない。restore は常に `false`、flush は何もしない。Session はプロセスが生きている間だけ文脈を保つ |
+| Shared の archive (`system.state.agent.sharedDir`) | Shared 機能ごと無効。staging の作成、skill の配線、システムプロンプトへの言及をすべて省く |
 
 Shared には「何もしない実装」を置かない。無効時は Runtime が Shared に関する配線を丸ごと
 省くため、空の Store を渡す意味がない。
 
 ## 9. Shared の用途
 
-Shared は Channel 単位の知識置き場である。Workdir の棚が Session 単位の状態を守るのに
-対し、Shared は Session を越えて残るものを守る。
+Shared は Channel 単位の知識置き場である。Workdir の archive が Session 単位の状態を守る
+のに対し、Shared は Session を越えて残るものを守る。
 
 - `../shared/skills/` — Agent が自分で書いた skill。次の Session から自動でロードされる
   ([runtime.md](runtime.md))。空でも常に mkdir する
@@ -382,7 +384,7 @@ memory を「1 事実 1 ファイル」に分けるのは、Shared がロック�
 縮む。索引だけは追記が競合しうるが、負けても本文ファイルは残り、次に気づいた Session が
 索引を直せる。
 
-影響範囲は棚が channelId 単位で分かれるため**その Channel に閉じる**。他 Channel の
+影響範囲は archive が channelId 単位で分かれるため**その Channel に閉じる**。他 Channel の
 staging は復元されず、Shared 経由で全 Channel に効く指示は書けない。信頼できない入力が
 流れる Channel では、Shared の保存先を設定しない (機能ごと無効) か Channel を分ける。
 
@@ -399,6 +401,6 @@ staging は復元されず、Shared 経由で全 Channel に効く指示は書�
 | contract test | `test/state/control/contract.ts` |
 | InboxItem.id の導出 | `inboxItemId` (`src/state/control/inbox-item.ts`) |
 | WorkdirStore / SharedStore | 同名 (`src/state/agent/interfaces.ts`)、`CopyWorkdirStore` / `CopySharedStore` (`src/state/agent/copy.ts`)、`NoopWorkdirStore` (`src/state/agent/noop.ts`) |
-| 棚の選択 | `createWorkdirStore` / `createSharedStore` (`src/state/agent/copy.ts`)、`src/server.ts` が env から組み立てる |
+| archive の選択 | `createWorkdirStore` / `createSharedStore` (`src/state/agent/copy.ts`)、`src/server.ts` が env から組み立てる |
 | restore / flush の呼び出し | `prepareWorkdir` (`src/runtime/prepare.ts`)、`Session.#onAgentEnd` (`src/session/session.ts`) |
 | Workdir / staging のパス | `RuntimeConfig.workdirRoot` (`src/runtime/config.ts`)、`Dispatcher.sharedStagingDir` (`src/dispatch/dispatcher.ts`) |

@@ -94,7 +94,7 @@ system:
         port: ${env.PORT:-8080}
   state:
     control:
-      backend: ${env.STORE_BACKEND:-memory}    # memory | sqlite | firestore
+      backend: ${env.CONTROL_STATE_BACKEND:-memory}    # memory | sqlite | firestore
       sqlite:
         path: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db}
       firestore:
@@ -388,6 +388,6 @@ Config は「静的な宣言」、Control State は「実行中に変わる事�
 | ブロックごとの独立ロード | `src/config/root-config.ts` (`readRootConfig`) |
 | `${env.X}` 参照 | `src/config/env-ref.ts` (`resolveEnvRefs`) |
 | dump | `src/config/dump.ts` (`formatEffectiveConfig`)、CLI は `src/server.ts` |
-| Gate の合成と評価 | `src/gate/gate.ts` (`defaultWhen`, `gateConfigToSpec`, `buildWhen`, `evaluateWhen`, `createGate`)、各 Gate は `src/gate/gates/` |
+| Gate の合成と評価 | `src/gate/gate.ts` (`defaultWhen`, `buildWhen`, `evaluateWhen`, `createGate`)、各 Gate は `src/gate/gates/` |
 | Gate 評価の呼び出し | `src/gate/evaluate.ts` (`GateEvaluator.admit` / `#resolveWhen`) |
 | Channel Config の既定値解決 | `src/dispatch/policy.ts` (`resolveSessionPolicy`) |

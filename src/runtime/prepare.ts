@@ -115,7 +115,7 @@ export async function resolveChannelResourcePaths(
 }
 
 /** workdir の session.jsonl が既に存在するか (pi が既存 transcript を読んで
- * 文脈継続するかどうかの判定。restore 後に評価すれば保存棚からの復元も拾える)。 */
+ * 文脈継続するかどうかの判定。restore 後に評価すれば archive からの復元も拾える)。 */
 export async function transcriptExists(sessionPath: string): Promise<boolean> {
   try {
     await stat(sessionPath);
