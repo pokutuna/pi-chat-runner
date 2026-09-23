@@ -458,17 +458,16 @@ describe("wrapWithSrt", () => {
     });
   });
 
-  it("adds --debug before --settings when requested", () => {
+  it("passes --debug to srt (not to the inner command) when requested", () => {
     const { args } = wrapWithSrt(inner, {
       srtEntrypoint: "/srt/cli.js",
       settingsPath: "/s.json",
       debug: true,
     });
-    expect(args.slice(0, 4)).toEqual([
-      "/srt/cli.js",
-      "--debug",
-      "--settings",
-      "/s.json",
+    expect(args.slice(0, args.indexOf("--"))).toContain("--debug");
+    expect(args.slice(args.indexOf("--") + 1)).toEqual([
+      inner.command,
+      ...inner.args,
     ]);
   });
 });

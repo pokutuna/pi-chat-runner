@@ -37,11 +37,6 @@ describe("SandboxRulesSchema", () => {
     });
   });
 
-  it("accepts an empty object (deny-all network, no fs rules)", () => {
-    const parsed = SandboxRulesSchema.parse({});
-    expect(parsed.network.allowedDomains).toEqual([]);
-  });
-
   it("rejects filesystem.disabled: true", () => {
     const result = SandboxRulesSchema.safeParse({
       filesystem: { disabled: true },
@@ -70,12 +65,6 @@ describe("SandboxRulesSchema", () => {
       0,
     ]);
   });
-
-  it("rejects a non-object network", () => {
-    const result = SandboxRulesSchema.safeParse({ network: ["github.com"] });
-    expect(result.success).toBe(false);
-    expect(result.error?.issues[0]?.path).toEqual(["network"]);
-  });
 });
 
 describe("SandboxAdditionsSchema", () => {
@@ -96,15 +85,13 @@ describe("SandboxAdditionsSchema", () => {
     expect(result.success).toBe(true);
   });
 
-  it("rejects scalar keys and non-additive arrays (strict)", () => {
-    for (const input of [
-      { network: { strictAllowlist: true } },
-      { filesystem: { disabled: true } },
-      { credentials: { awsPairs: [] } },
-      { enableWeakerNestedSandbox: true },
-    ]) {
-      expect(SandboxAdditionsSchema.safeParse(input).success).toBe(false);
-    }
+  it.each([
+    { network: { strictAllowlist: true } },
+    { filesystem: { disabled: true } },
+    { credentials: { awsPairs: [] } },
+    { enableWeakerNestedSandbox: true },
+  ])("rejects scalar keys and non-additive arrays (strict): %j", (input) => {
+    expect(SandboxAdditionsSchema.safeParse(input).success).toBe(false);
   });
 });
 

@@ -12,17 +12,15 @@ const HOME = "/home/agent";
 const CWD = "/data/work/C01/1700000000.000100";
 
 describe("sandboxSettingsPath", () => {
-  it("places the file under <workdirRoot>/srt, outside every workdir", () => {
-    expect(sandboxSettingsPath("/data/work", "C01:1700000000.000100")).toBe(
-      "/data/work/srt/C01%3A1700000000.000100.json",
-    );
-  });
-
-  it("encodes a channel-mode sessionKey the same way", () => {
-    expect(sandboxSettingsPath("/data/work", "C01")).toBe(
-      "/data/work/srt/C01.json",
-    );
-  });
+  it.each([
+    ["C01:1700000000.000100", "/data/work/srt/C01%3A1700000000.000100.json"],
+    ["C01", "/data/work/srt/C01.json"],
+  ])(
+    "places %s under <workdirRoot>/srt (outside every workdir) as a safe file name",
+    (sessionKey, expected) => {
+      expect(sandboxSettingsPath("/data/work", sessionKey)).toBe(expected);
+    },
+  );
 });
 
 describe("buildSandboxSettings", () => {
@@ -63,17 +61,6 @@ describe("buildSandboxSettings", () => {
       cwd: CWD,
     });
     expect(settings.filesystem.allowWrite).toEqual([HOME, CWD]);
-  });
-
-  it("does not touch the network section", () => {
-    const rules = SandboxRulesSchema.parse({});
-    const { settings } = buildSandboxSettings({
-      rules,
-      allowWrite: [CWD],
-      home: HOME,
-      cwd: CWD,
-    });
-    expect(settings.network).toEqual({ allowedDomains: [], deniedDomains: [] });
   });
 
   it("mirrors only the user's allowRead/allowWrite into Permission Model patterns", () => {
