@@ -121,9 +121,6 @@ Session 要求 (`/new`) の伝達に使う。Session が「実行中かどうか
 置き直すのは Transcript が新しく始まったとき — §6 の切り替え条件が成立した起動、または
 記録がまだ無いとき — だけである ([session-model.md](session-model.md) §6)。
 
-`startedAt` / `lastActiveAt` を持たない永続ドキュメントは、代わりに持つ `updatedAt`
-(それも無ければ読み取り時刻) を代入して読む。移行は行わず、次の `put` で現行の形に揃う。
-
 ### 3.3 ThreadStore
 
 Thread と Session の対応、および Channel の最新 Session へのポインタ。
@@ -396,7 +393,7 @@ staging は復元されず、Shared 経由で全 Channel に効く指示は書�
 | ThreadStore | 同名 (同上)。`Dispatcher` は `threads.resolve` / `bind` / `latest` 経由で参照する |
 | InboxStore / SessionStore / LeaseStore / ChannelStateStore | 同名 (同上)。引数名は `sessionKey` |
 | Control State backend | `InMemoryControlState` / `SqliteControlState` / `FirestoreControlState` (`src/state/control/backends/`) |
-| SQLite / Firestore のキー名 | 列 `session_key`、`Lease.sessionKey`、コレクション `<rootDoc>/inbox/{sessionKey}/items/{itemId}`。旧列 `thread_key` (Thread Key ではなく sessionKey の値を保持していた列名) の DB は SQLite を開くときに `ALTER TABLE ... RENAME COLUMN` で移行する |
+| SQLite / Firestore のキー名 | 列 `session_key`、`Lease.sessionKey`、コレクション `<rootDoc>/inbox/{sessionKey}/items/{itemId}` |
 | contract test | `test/state/control/contract.ts` |
 | InboxItem.id の導出 | `inboxItemId` (`src/state/control/inbox-item.ts`) |
 | WorkdirStore / SharedStore | 同名 (`src/state/agent/interfaces.ts`)、`CopyWorkdirStore` / `CopySharedStore` (`src/state/agent/copy.ts`)、`NoopWorkdirStore` (`src/state/agent/noop.ts`) |

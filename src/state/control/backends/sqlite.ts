@@ -18,7 +18,7 @@ import type {
   SessionStore,
   ThreadStore,
 } from "../interfaces.js";
-import { fillSessionTimestamps, parseInboundMessage } from "./serialize.js";
+import { parseInboundMessage } from "./serialize.js";
 
 interface InboxRow {
   item_id: string;
@@ -91,26 +91,15 @@ class SqliteInboxStore implements InboxStore {
   }
 }
 
-/** 永続 doc の生の形。put は常に startedAt / lastActiveAt を書くが、以前のスキーマで
- * 書かれた doc は代わりに status / updatedAt を持つ。読み出し側で補完するため、
- * ここでは全て optional にしておく (state.md §3.2)。返す SessionRecord は必須
- * フィールドを満たした形のままである。 */
+/** 永続 doc の生の形。SessionRecord の Date フィールドを JSON 互換の文字列にした形。 */
 interface SessionRecordJson {
   channelId: string;
   threadTs: string;
   triggerMessageId: string;
-  startedAt?: string;
-  lastActiveAt?: string;
+  startedAt: string;
+  lastActiveAt: string;
   endedAt?: string;
   rotateRequestedAt?: string;
-  /** 以前のスキーマのフィールド。読み出し時のみ参照する */
-  status?: string;
-  /** 以前のスキーマのフィールド。startedAt / lastActiveAt の補完元 */
-  updatedAt?: string;
-}
-
-function toDate(value: string | undefined): Date | undefined {
-  return value === undefined ? undefined : new Date(value);
 }
 
 class SqliteSessionStore implements SessionStore {
@@ -122,20 +111,12 @@ class SqliteSessionStore implements SessionStore {
       .get(sessionKey) as SessionRow | undefined;
     if (row === undefined) return null;
     const parsed = JSON.parse(row.doc) as SessionRecordJson;
-    // startedAt / lastActiveAt を持たない doc は updatedAt (無ければ読み取り時刻) で
-    // 補完する。移行は行わない (state.md §3.2)
-    const { startedAt, lastActiveAt } = fillSessionTimestamps({
-      startedAt: toDate(parsed.startedAt),
-      lastActiveAt: toDate(parsed.lastActiveAt),
-      updatedAt: toDate(parsed.updatedAt),
-      now: new Date(),
-    });
     return {
       channelId: parsed.channelId,
       threadTs: parsed.threadTs,
       triggerMessageId: parsed.triggerMessageId,
-      startedAt,
-      lastActiveAt,
+      startedAt: new Date(parsed.startedAt),
+      lastActiveAt: new Date(parsed.lastActiveAt),
       ...(parsed.endedAt !== undefined && {
         endedAt: new Date(parsed.endedAt),
       }),
@@ -342,21 +323,6 @@ class SqliteLeaseStore implements LeaseStore {
   }
 }
 
-/** 旧スキーマ (列名 thread_key) で作られた DB を開いたときに列名を移行する。
- * 引数名・列名を sessionKey / session_key へ統一した際の互換措置で、既存の
- * ローカル DB をそのまま開けるようにする。テーブルが無い場合は CREATE TABLE に任せる。 */
-function renameLegacyThreadKeyColumn(
-  db: Database.Database,
-  table: string,
-): void {
-  const columns = db.pragma(`table_info(${table})`) as { name: string }[];
-  if (columns.length === 0) return;
-  const hasLegacy = columns.some((column) => column.name === "thread_key");
-  const hasCurrent = columns.some((column) => column.name === "session_key");
-  if (!hasLegacy || hasCurrent) return;
-  db.exec(`ALTER TABLE ${table} RENAME COLUMN thread_key TO session_key`);
-}
-
 /** DB ファイルパス (":memory:" 可) を受け取り、CREATE TABLE IF NOT EXISTS で初期化する。 */
 export class SqliteControlState implements ControlState {
   private readonly db: Database.Database;
@@ -369,9 +335,6 @@ export class SqliteControlState implements ControlState {
   constructor(filePath: string, now: () => number = Date.now) {
     this.db = new Database(filePath);
     this.db.pragma("journal_mode = WAL");
-    for (const table of ["inbox_items", "sessions", "leases"]) {
-      renameLegacyThreadKeyColumn(this.db, table);
-    }
     this.db.exec(`
 			CREATE TABLE IF NOT EXISTS inbox_items (
 				session_key TEXT NOT NULL,
