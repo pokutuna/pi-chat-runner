@@ -114,7 +114,7 @@ system:
   turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000}
   progressNoticeIntervalMs: ${env.PROGRESS_NOTICE_INTERVAL_MS:-30000}
   leaseTtlMs: ${env.LEASE_TTL_MS:-60000}
-  lingerMs: ${env.LINGER_MS:-3000}
+  lingerMs: ${env.LINGER_MS:-30000}
 
 # --- agent: 全 Channel 共通の Agent Config (default) ---
 agent:

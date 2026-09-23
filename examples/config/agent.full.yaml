@@ -52,7 +52,7 @@ system:
   # meaningful value here, not "unset").
   progressNoticeIntervalMs: ${env.PROGRESS_NOTICE_INTERVAL_MS:-20000}
   leaseTtlMs: ${env.LEASE_TTL_MS:-60000}
-  lingerMs: ${env.LINGER_MS:-3000}
+  lingerMs: ${env.LINGER_MS:-30000}
 
 # --- agent: the default Agent Config, shared by every channel (config.md §1.3) ---
 # Every field here can be overridden per channel under channels[].agent, one
