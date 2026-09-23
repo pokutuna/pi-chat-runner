@@ -808,12 +808,15 @@ export class Dispatcher implements SessionObserver {
       // 最後に HOME を agentHome へ、TMPDIR を Session 専用ディレクトリへ上書きする
       // (Runner 自身の HOME は継承しない。buildPiEnv は extraEnv が PATH/HOME を
       // 上書きできる実装になっている)。TMPDIR は Permission Model / srt の
-      // allowWrite と同じ tmpDirReal を向ける (runtime.md §5.5)
+      // allowWrite と同じ tmpDirReal を向ける (runtime.md §5.5)。srt は sandbox 内の
+      // TMPDIR を自分の env の CLAUDE_CODE_TMPDIR (既定 /tmp/claude) で上書きするので、
+      // sandbox 有効時はそれも同じディレクトリに向けておく
       const extraEnv = {
         ...this.ctx.runtime.extraEnv,
         ...channel?.agent.env,
         HOME: agentHomeReal,
         TMPDIR: tmpDirReal,
+        ...(sandbox !== undefined ? { CLAUDE_CODE_TMPDIR: tmpDirReal } : {}),
       };
       // memory の索引 (MEMORY.md) は skill 発火 (agent の自発的な read) に頼らず
       // system prompt に常時注入する (docs/design/runtime.md §6)。1 行 1 メモリの

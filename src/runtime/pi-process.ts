@@ -128,6 +128,11 @@ export class PiProcess extends EventEmitter<PiProcessEvents> {
       cwd: this.options.cwd,
       env: buildPiEnv(process.env, this.options.extraEnv),
       stdio: ["pipe", "pipe", "pipe"],
+      // 子を独自のプロセスグループにして、kill() でグループごと落とせるようにする。
+      // srt で包むと Runner の直接の子は srt (node) で、その下に `sh -c` → bwrap →
+      // (pid namespace 内の) pi と続く。srt だけを SIGKILL すると sh が生き残り、
+      // bwrap の --die-with-parent は発火せず、pi とその子が残留する (runtime.md §5.5)
+      detached: true,
       // uid/gid はキー自体を省略すると現行プロセスの uid/gid を継承する
       // (runtime.md §5.1: UID 分離。コンテナは root 起動、spawn 時に落とす)。
       // キーを渡した上で値を undefined にすると Node の spawn は継承ではなく
@@ -218,15 +223,24 @@ export class PiProcess extends EventEmitter<PiProcessEvents> {
     });
     child.stdin.end();
     if (await withTimeout(exited, stdinCloseGraceMs)) return;
+    // SIGTERM は直接の子にだけ送る (srt は自分の子へ転送し、sh → bwrap → pi の順に
+    // 畳まれる)。猶予を超えたらグループごと SIGKILL
     child.kill("SIGTERM");
     if (await withTimeout(exited, sigtermGraceMs)) return;
-    child.kill("SIGKILL");
+    this.kill();
     await exited;
   }
 
-  /** 即時 kill */
+  /** 即時 kill。プロセスグループごと SIGKILL する (srt / sh / bwrap / socat まで)。
+   * グループへの送信に失敗したら直接の子だけを kill する */
   kill(): void {
-    this.child?.kill("SIGKILL");
+    const child = this.child;
+    if (!child || child.pid === undefined || child.exitCode !== null) return;
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      child.kill("SIGKILL");
+    }
   }
 }
 

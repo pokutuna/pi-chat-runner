@@ -1316,9 +1316,12 @@ describe("Session sandbox (srt, runtime.md §5.5)", () => {
     // 内側コマンドは fake-pi の rpc 起動そのもの
     expect(seen.inner[0]).toBe(FAKE_PI);
     expect(seen.inner.slice(1, 3)).toEqual(["--mode", "rpc"]);
-    // pi の TMPDIR は Session 専用ディレクトリ
+    // pi の TMPDIR は Session 専用ディレクトリ。srt が sandbox 内 TMPDIR の決定に使う
+    // CLAUDE_CODE_TMPDIR も同じ場所を向く (srt の既定 /tmp/claude に飛ばないように)
     const env = await h.envSeen("C01", trigger.id);
-    expect(env.TMPDIR).toBe(join(workdirRoot, "C01", "tmp", trigger.id));
+    const tmpDir = join(workdirRoot, "C01", "tmp", trigger.id);
+    expect(env.TMPDIR).toBe(tmpDir);
+    expect(env.CLAUDE_CODE_TMPDIR).toBe(tmpDir);
 
     // Session 終了で settings ファイルは消える
     await waitFor(

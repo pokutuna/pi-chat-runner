@@ -73,10 +73,14 @@ RUN groupadd --gid 1001 agent \
 
 # ---- e2e: full dev install + os deps, for the deterministic sandbox E2E ----
 # `docker build --target e2e` then `docker run --cap-add SYS_ADMIN
-# --security-opt seccomp=unconfined --security-opt apparmor=unconfined`
-# (bubblewrap needs user namespaces). Runs vitest against the source tree;
-# see test/e2e-sandbox/ and `pnpm run test:e2e:sandbox`.
+# --security-opt seccomp=unconfined --security-opt apparmor=unconfined
+# --security-opt systempaths=unconfined` (bubblewrap needs user namespaces and
+# an unmasked /proc to mount a fresh proc inside them). Runs vitest against the
+# source tree; see test/e2e-sandbox/ and `pnpm run test:e2e:sandbox`.
+# procps (ps) is for the tests' process-leak assertions only.
 FROM os-deps AS e2e
+RUN apt-get update && apt-get install -y --no-install-recommends procps \
+  &&  rm -rf /var/lib/apt/lists/*
 
 ENV PNPM_HOME=/usr/local/share/pnpm
 ENV PATH=$PNPM_HOME:$PATH
@@ -84,6 +88,7 @@ COPY --from=base $PNPM_HOME $PNPM_HOME
 WORKDIR /app
 COPY --from=builder /app/node_modules ./node_modules
 COPY . .
+ENV E2E_SANDBOX=1
 ENTRYPOINT ["pnpm", "exec", "vitest", "run", "test/e2e-sandbox"]
 
 # ---- runtime ----
