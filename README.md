@@ -109,7 +109,7 @@ Slack, and [Configuration](#configuration) covers `agent.yaml`.
 
 ## Components
 
-One pipeline, top to bottom. Boxes are components, cylinders are persistent stores, and blue rounded nodes are the outside world (the chat platform, the pi child process); edge labels name the data handed between stages, and notes describe each component's job. A **turn** is one run of the agent over the messages drained from the inbox — one conversational round-trip in the chat.
+One pipeline, top to bottom. Boxes are components, cylinders are persistent state, and blue rounded nodes are the outside world (the chat platform, the pi child process); edge labels name the data handed between stages, and notes describe each component's job. A **turn** is one run of the agent over the messages drained from the inbox — one conversational round-trip in the chat.
 
 > [!NOTE]
 > The chat implementations shipped today are Slack and the local dev REPL. Each stage knows only its neighbor's interface, though — the pipeline itself is chat-agnostic, so any chat or message stream could sit at either end.
@@ -126,15 +126,15 @@ flowchart TB
     Gate[Gate]
     Inbox[(Inbox)]
     Dispatcher[Dispatcher]
-    Runtime[Runtime]
+    Runtime["Agent (Session / Runtime)"]
     Egress[Egress]
     Pi(["pi-coding-agent<br/>(child process)"]):::external
 
     NoteES("normalizes raw platform events, absorbs duplicates, resolves users"):::note
     NoteGate("decides whether to trigger a session"):::note
     NoteInbox("Inbox: deduped event queue<br/>Control State: session info / lease / channel toggle"):::note
-    NoteRunner("picks the session, acquires the lease, drains the inbox, starts or resumes a turn"):::note
-    NoteRuntime("drives one agent turn in the restored workdir"):::note
+    NoteDispatcher("picks the session, acquires the lease, drains the inbox, starts or resumes a turn"):::note
+    NoteRuntime("drives one agent turn in the restored workdir; spawns pi via RPC"):::note
     NotePi("runs with the prompt / skills / extensions the host injects; reply is a tool call the host relays"):::note
     NoteEgress("resolves the destination, formats, chunks"):::note
 
@@ -155,7 +155,7 @@ flowchart TB
     %% the main chain's edges stay straight.
     NoteAnchor[ ]:::hidden
     NoteAnchor ~~~ NoteES
-    NoteES ~~~ NoteGate ~~~ NoteInbox ~~~ NoteRunner ~~~ NoteRuntime ~~~ NotePi ~~~ NoteEgress
+    NoteES ~~~ NoteGate ~~~ NoteInbox ~~~ NoteDispatcher ~~~ NoteRuntime ~~~ NotePi ~~~ NoteEgress
 
     classDef note fill:#fff3b8,stroke:#b59a3b,color:#333,stroke-dasharray:3 3
     classDef external fill:#d9edf7,stroke:#4a7fa5,color:#333
@@ -164,7 +164,7 @@ flowchart TB
 
 Each stage only knows the interface of its neighbor, not which implementation is behind it. The workdir is restored from Agent State (`WorkdirStore`) before a turn; new vs. resume follows from whether a transcript exists after restore. Control State feeds the `Dispatcher`'s decisions — whether to run at all (channel enable/disable), which instance runs (lease), and which session a message joins (thread → session binding, affinity pointer); the outcome travels down the pipeline as the session part of the turn input.
 
-A real deployment (your own Slack App, your own Cloud Run service) lives in a separate repo that extends the base image with `FROM` and fills in the `examples/` templates with real values — see [docs/design/runtime.md](docs/design/runtime.md) §4.3.
+A real deployment (your own Slack App, your own Cloud Run service) lives in a separate repo that extends the base image with `FROM` and fills in the `examples/` templates with real values — see [docs/design/runtime.md](docs/design/runtime.md) §8.
 
 ## Core Concepts
 
@@ -184,9 +184,9 @@ Per-channel trigger conditions decide which messages start a turn: mention, keyw
 
 The agent replies only through the `reply(thread_key, text, files?)` tool; the host resolves `thread_key` to an actual destination, so the pi process holds no chat credentials. Session and reply destination are independent axes: inside a thread, replies always stay in that thread; for channel-surface triggers, `reply.mode` decides between opening a thread (`thread`, default) and posting flat (`flat`, the DM default).
 
-### Workdir and storage
+### Workdir and Agent State
 
-Each session works in its own filesystem, restored before a turn and flushed after it (to a local dir or GCS); files the agent writes there can be attached to replies. Skills and extensions live on the filesystem too — bake them into the image's agent home (`$AGENT_HOME/.pi/agent/{skills,extensions}`) or point per-channel config (`skills:` / `extensions:`) at them. Storage has two levels: the per-session workdir, and an optional channel-shared area (`SHARED_DIR`) that persists across sessions and backs the built-in memory skill.
+Each session works in its own filesystem, restored before a turn and flushed after it (to a local dir or GCS); files the agent writes there can be attached to replies. Skills and extensions live on the filesystem too — bake them into the image's agent home (`$AGENT_HOME/.pi/agent/{skills,extensions}`) or point per-channel config (`skills:` / `extensions:`) at them. Agent State has two levels: the per-session workdir, and an optional channel-shared area (`SHARED_DIR`) that persists across sessions and backs the built-in memory skill.
 
 ## Usage Patterns
 

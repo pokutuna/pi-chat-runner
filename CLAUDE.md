@@ -60,7 +60,7 @@ Egress             — resolves thread_key to destination, formats (mrkdwn for S
 Chat
 ```
 
-`src/runner.ts` + `src/server.ts` form the composition root. `server.ts` is the CLI entry: it reads System Config and picks the implementations (chat platform, Control State backend, Agent State shelves, `RuntimeConfig`); `startRunner` wires the pipeline and knows nothing about which chat it is wiring. Concrete implementation selection happens only in `server.ts` — `Dispatcher` and below receive interfaces only. See `docs/design.md`, `docs/design/architecture.md`, and `docs/design/session-model.md` for the full rationale.
+`src/runner.ts` + `src/server.ts` form the composition root. `server.ts` is the CLI entry: it reads System Config and picks the implementations (chat platform, Control State backend, Agent State archives, `RuntimeConfig`); `startRunner` wires the pipeline and knows nothing about which chat it is wiring. Concrete implementation selection happens only in `server.ts` — `Dispatcher` and below receive interfaces only. See `docs/design.md`, `docs/design/architecture.md`, and `docs/design/session-model.md` for the full rationale.
 
 Chat-specific code lives behind `ChatPlatform` (`src/chat/platform.ts`) — a bundle of ingress + poster + reactor + userResolver + fetchMessage + mentionFormat + formatter. `createSlackPlatform` (`src/chat/slack.ts`) and `createLocalPlatform` (`src/chat/local/`) are the two implementations; nothing outside `src/chat/slack.ts` and `src/ingress/slack/` may import `@slack/*`.
 
