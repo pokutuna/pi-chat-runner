@@ -174,7 +174,7 @@ A session is one conversation with the agent, with its own transcript and workdi
 
 ### Turn
 
-One run of the agent over the drained inbox messages — one round-trip in the chat. Messages posted while a turn is running are steered into it mid-flight; follow-ups shortly after it ends join the same session (`session.affinity`), and bursts are debounced into one turn. A later trigger on the same session resumes with the transcript and workdir restored.
+One run of the agent over the drained inbox messages — one round-trip in the chat. Messages posted while a turn is running are steered into it mid-flight, and bursts are debounced into one turn. Follow-ups in the thread always continue the same session; with `session.affinity` (`scope: channel`), new channel-level posts shortly after also join the channel's latest session instead of starting their own. A later trigger on the same session resumes with the transcript and workdir restored.
 
 ### Trigger and Gate
 
@@ -186,7 +186,7 @@ The agent replies only through the `reply(thread_key, text, files?)` tool; the h
 
 ### Workdir and Agent State
 
-Each session works in its own filesystem, restored before a turn and flushed after it (to a local dir or GCS); files the agent writes there can be attached to replies. Skills and extensions live on the filesystem too — bake them into the image's agent home (`$AGENT_HOME/.pi/agent/{skills,extensions}`) or point per-channel config (`skills:` / `extensions:`) at them. Agent State has two levels: the per-session workdir, and an optional channel-shared area (`SHARED_DIR`) that persists across sessions and backs the built-in memory skill.
+Each session works in its own filesystem, restored before a turn and flushed after it (to a local dir or GCS); files the agent writes there can be attached to replies. Skills and extensions live on the filesystem too — bake them into the image's agent home (`$AGENT_HOME/.pi/agent/{skills,extensions}`) or point per-channel config (`skills:` / `extensions:`) at them. Agent State has two levels: the per-session workdir, and an optional channel-shared area (`system.state.agent.sharedDir`) that persists across sessions and backs the built-in memory skill.
 
 ## Usage Patterns
 
@@ -283,7 +283,7 @@ Not published to npm yet (planned). Until then, clone this repo, run `pnpm insta
 
 Text commands, sent as a chat message, control a channel without touching config:
 
-- `/new` — cut the session: the next trigger starts with clean context. `/new <text>` starts a new session with that text immediately. Rejected while a session is running.
+- `/new` — cut the session: the next trigger starts with clean context. `/new <text>` starts a new session with that text immediately. Rejected while a session is running (the process lingers briefly after a turn — retry if rejected).
 - `/enable` / `/disable` — per-channel kill switch (default enabled). While disabled, all triggers are silently dropped; `/enable` recovers. State persists in Control State.
 
 Commands are exact-match (except `/new <text>`), human-senders only, and normally apply to messages that pass the Gate — in a mention-gated channel send `@bot /new` (which also keeps Slack's client from capturing a bare leading `/` as its own slash command).
@@ -340,7 +340,7 @@ channels:
         - and: [{ kind: sender, is: bot }, { kind: keyword, pattern: "ALERT|CRITICAL" }]
 ```
 
-DB defaults to in-memory (`system.state.control.backend: memory` in `agent.yaml`); set it to `sqlite` (default path `/tmp/pi-chat-runner/state.db`) or `firestore` for persistence. Workdir archival defaults to no-op unless the `WORKDIR_ARCHIVE_DIR` env var is set. See [docs/design/state.md](docs/design/state.md).
+DB defaults to in-memory (`system.state.control.backend: memory` in `agent.yaml`); set it to `sqlite` (default path `/tmp/pi-chat-runner/state.db`) or `firestore` for persistence. Workdir archival defaults to no-op unless `system.state.agent.workdirDir` is set. See [docs/design/state.md](docs/design/state.md).
 
 See [`examples/config/agent.yaml`](examples/config/agent.yaml) for an annotated template. Full schema and semantics: [docs/design/config.md](docs/design/config.md).
 
