@@ -9,12 +9,36 @@ State の実装だけを差し替える。
 | 手段 | Agent | チャット | State | 用途 |
 |---|---|---|---|---|
 | vitest | フェイク | フェイク | memory | ロジックの回帰テスト |
+| `test:e2e` | 本物 | in-memory chat | memory / sqlite | 実 LLM を叩く回帰確認。`E2E_LIVE_LLM` で opt-in、CI では回さない |
 | `dev:local` | 本物 | in-memory chat + TUI | memory / sqlite | 手元での確認 |
 | `dev:socket` | 本物 | Slack (Socket Mode) | sqlite / firestore | 公開前の実機確認 |
 
 vitest はフェイクの Agent で回すため、「本物の Agent と本物の設定で挙動を見る」層が要る。
-`dev:local` がそこを埋める。実際の mrkdwn の見た目、ファイルアップロード、rate limit のように
-実 Slack でしか確認できないものは `dev:socket` で行う。
+`dev:local` と `test:e2e` がそこを埋める。実際の mrkdwn の見た目、ファイルアップロード、
+rate limit のように実 Slack でしか確認できないものは `dev:socket` で行う。
+
+`test:e2e` のスイートは `test/e2e/` に置く。Runner をライブラリとして (`startRunner` を
+直接呼んで) 起動し、in-memory chat の core に post/react して返信・リアクションを待つ。
+TUI も Slack も通さないので、`dev:local` で手で叩いていた確認をそのまま自動化できる —
+mention 起動、実行中 Session への steering、`/new` `/disable` `/enable`、Gate の種別ごとの
+判定、再起動をまたぐ再開、affinity の合流と窓切れ、debounce による連投のまとめと mention に
+よるバイパス、linger 中の継続と満了後の起こし直し、lease による 2 プロセス間の排他が
+1 シナリオ 1 ファイルで並ぶ。実 LLM を叩いて課金が発生するため
+`E2E_LIVE_LLM` が設定されたときだけ走り、それ以外では skip として現れる。認証情報と
+`PI_AGENT_HOME` は `.env.local` から読む。
+
+Dispatcher の判断 (debounce の遅延、合流先の選択、lease が取れなかったこと) は返信本文に
+現れないので、ヘルパー (`test/e2e/helpers/live.ts`) が Runner の pino ログを配列に集め、
+Control State をそのまま公開する。シナリオは「どのスレッドに返ったか」「どのログが出たか」
+「Session レコードがどうなっているか」で確かめ、LLM の文面には依存させない。linger や
+`windowSec` のように待ち時間が支配的なものは、本番既定より短い値を `startLiveRunner` に
+渡して回す。
+
+設定は YAML ではなくテスト専用の `ConfigSource` (`test/e2e/helpers/static-config-source.ts`)
+に TS オブジェクトで渡す。シナリオごとの `channels` をファイルを増やさずに書けるようにする
+ためで、マージ自体は `resolveChannelConfig` をそのまま呼んで `FileConfigSource` と共有する。
+本番のローダー実装は `FileConfigSource` 1 つだけ ([config.md](config.md) §3) という前提は
+変えない。
 
 ```sh
 pnpm run dev:local     # in-memory chat + TUI (.env.local)
@@ -151,6 +175,7 @@ Turn の境界で退避・復元される。未設定なら退避せず、プロ
 | 設計上の名前 | 現在のソース |
 |---|---|
 | `local` サブコマンド | `runLocal` (`src/server.ts`) |
+| 実 LLM e2e スイート | `test/e2e/` (`startLiveRunner` / `StaticConfigSource`) |
 | in-memory chat の契約 | `LocalChat` (`src/chat/local/types.ts`) |
 | in-memory chat の実装 | `createLocalChat` (`src/chat/local/local-chat.ts`) |
 | ChatPlatform への束ね | `createLocalPlatform` (`src/chat/local/platform.ts`) |

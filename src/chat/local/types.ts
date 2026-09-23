@@ -74,6 +74,13 @@ export interface LocalChatOptions {
   defaultChannelId?: string;
   /** bot 投稿の sender.id。既定 "U_BOT"。 */
   botUserId?: string;
+  /** ログ連番 seq (= ts) の開始値。既定 1。
+   *
+   * Inbox はメッセージ ID で dedupe する (state.md §3.1) ため、同じ Control State を
+   * 共有したまま LocalChat を作り直すと ts "1" が既出 ID と衝突し、再投稿が
+   * 重複として黙って捨てられる。プロセス再起動をまたぐ再開の確認では、前の
+   * LocalChat の最終 seq より後ろから採番を続ける。 */
+  startSeq?: number;
 }
 
 export interface LocalChat {

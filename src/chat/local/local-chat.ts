@@ -52,7 +52,11 @@ export function createLocalChat(options?: LocalChatOptions): LocalChat {
     [botUserId]: "bot",
   };
 
+  // seq は startSeq から始める。Inbox の dedupe と衝突しないよう、LocalChat を
+  // 作り直すときに前回の続きから採番できる (types.ts LocalChatOptions.startSeq)。
+  const startSeq = options?.startSeq ?? 1;
   const log: LoggedMessage[] = [];
+  const nextSeq = (): number => startSeq + log.length;
   const reactionsLog: ReactionRecord[] = [];
   const events = new EventEmitter<LocalChatOutputEvents>();
 
@@ -92,7 +96,7 @@ export function createLocalChat(options?: LocalChatOptions): LocalChat {
 
   const poster: ChatPoster = {
     async postMessage(channelId, text, threadTs, files) {
-      const seq = log.length + 1;
+      const seq = nextSeq();
       const ts = String(seq);
       const message: LoggedMessage = {
         seq,
@@ -163,7 +167,7 @@ export function createLocalChat(options?: LocalChatOptions): LocalChat {
     postOptions?: PostOptions,
   ): Promise<LoggedMessage> {
     const channelId = postOptions?.channelId ?? defaultChannelId;
-    const seq = log.length + 1;
+    const seq = nextSeq();
     const ts = String(seq);
     const senderId = postOptions?.sender?.id ?? DEFAULT_SENDER_ID;
     const senderDisplayName = displayNames[senderId];

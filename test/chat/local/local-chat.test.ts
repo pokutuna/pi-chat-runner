@@ -221,6 +221,28 @@ describe("createLocalChat", () => {
     expect(chat.bySeq(99)).toBeUndefined();
   });
 
+  it("startSeq を指定すると seq / ts がその値から続き、bySeq も一致する", async () => {
+    // 同じ Control State を共有したまま LocalChat を作り直すケース
+    // (プロセス再起動をまたぐ再開の確認)。ts が "1" に戻ると Inbox の dedupe に
+    // 既出 ID として捨てられるため、前回の続きから採番する。
+    const chat = createLocalChat({ startSeq: 8 });
+    const first = await chat.post("eighth");
+    await chat.poster.postMessage("local", "ninth");
+    const third = await chat.post("tenth");
+
+    expect(first.seq).toBe(8);
+    expect(first.ts).toBe("8");
+    expect(third.seq).toBe(10);
+    expect(third.ts).toBe("10");
+    expect(chat.bySeq(8)?.text).toBe("eighth");
+    expect(chat.bySeq(9)?.text).toBe("ninth");
+    expect(chat.bySeq(10)?.text).toBe("tenth");
+    expect(chat.bySeq(1)).toBeUndefined();
+    expect(await chat.fetchMessage("local", "10")).toMatchObject({
+      text: "tenth",
+    });
+  });
+
   it("userResolver は固定マップを解決し未知 ID は null を返す", async () => {
     const chat = createLocalChat();
     expect(await chat.userResolver.resolve("U_LOCAL")).toBe("you");
