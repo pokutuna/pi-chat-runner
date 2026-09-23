@@ -80,6 +80,26 @@ export function resolvePiPaths(): {
   return { entrypoint, nodeModulesDir: outermostNodeModules(indexPath) };
 }
 
+/** srt (@anthropic-ai/sandbox-runtime) の CLI エントリポイント (dist/cli.js) を
+ * import.meta.resolve で解決する (runtime.md §5.5)。Runner は srt をライブラリとして
+ * は使わず、pi の起動コマンドを `node <cli.js> --settings <file> -- <pi>` で包む —
+ * srt のネットワーク許可リストはプロセス単位で 1 つしか持てないため、Channel ごとに
+ * 異なる許可リストを与えるには Session ごとに srt プロセスを立てる必要がある。
+ * パッケージが解決できない (依存が入っていない) 場合は undefined を返し、sandbox を
+ * 有効にした Channel の起動時に fail-closed で落とす判断は Session 側に委ねる。 */
+const SRT_PACKAGE_NAME = "@anthropic-ai/sandbox-runtime";
+
+export function resolveSrtPath(): string | undefined {
+  let indexUrl: string;
+  try {
+    indexUrl = import.meta.resolve(SRT_PACKAGE_NAME);
+  } catch {
+    return undefined;
+  }
+  // indexPath = <...>/@anthropic-ai/sandbox-runtime/dist/index.js
+  return join(dirname(fileURLToPath(indexUrl)), "cli.js");
+}
+
 /** path 上で最も外側 (ルート寄り) に現れる `node_modules` セグメントまでのパスを返す。
  * pnpm の仮想ストア (`<root>/.pnpm/<pkg>/node_modules/...`) では複数の node_modules が
  * ネストするが、全依存を張るのは最外殻の `<root>` なのでそれを選ぶ。`node_modules` が
@@ -123,7 +143,7 @@ export interface CreateRuntimeConfigOptions {
 /** System Config から Runtime レイヤの静的設定 (RuntimeConfig) を組み立てる。
  *
  * pi のパス解決 (resolvePiPaths) → Permission Model 設定 (buildPiPermissionConfig)
- * → 子プロセスへ渡す env のコード既定 (collectGcpEnv + PI_EXPORT_ENTRYPOINT) の順。
+ * → srt CLI のパス解決 (resolveSrtPath) → 子プロセスへ渡す env のコード既定 (collectGcpEnv + PI_EXPORT_ENTRYPOINT) の順。
  * PI_EXPORT_ENTRYPOINT は export extension (孫プロセスとして `pi --export` を
  * 起動する) がホストの pi エントリポイントを知るために必要。
  * Channel ごとの Agent Config の env はここでは重ねない — 足し算モデル
@@ -140,8 +160,10 @@ export function createRuntimeConfig(
     PI_EXPORT_ENTRYPOINT: piPaths.entrypoint,
   };
   const piPermission = buildPiPermissionConfig(runtime, piPaths, baseEnv);
+  const srtEntrypoint = resolveSrtPath();
   return {
     piEntrypoint: piPaths.entrypoint,
+    ...(srtEntrypoint !== undefined ? { srtEntrypoint } : {}),
     ...(Object.keys(extraEnv).length > 0 ? { extraEnv } : {}),
     // system.runtime.uid/gid (env PI_AGENT_UID/GID) 未設定なら UID 分離なし
     ...(runtime.uid !== undefined ? { agentUid: runtime.uid } : {}),

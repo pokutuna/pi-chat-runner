@@ -12,6 +12,11 @@ export interface RuntimeConfig {
   piBinary?: string;
   /** 解決済みの pi 本体 entrypoint JS。permission の有無に関わらず使用する */
   piEntrypoint?: string;
+  /** 解決済みの srt (@anthropic-ai/sandbox-runtime) CLI entrypoint JS
+   * (runtime.md §5.5)。agent.sandbox を有効にした Channel の Session は pi の起動
+   * コマンドをこれで包む。未解決 (undefined) のまま sandbox 有効の Session を起動
+   * しようとすると fail-closed で起動を拒む */
+  srtEntrypoint?: string;
   /** allowlist (PATH/HOME) に追加で pi 子プロセスへ渡す env (runtime.md §5.3)。
    * コード既定 (gcpEnv / PI_EXPORT_ENTRYPOINT) 相当で、Channel ごとの Agent Config
    * の env はこの上へ起動時に重ねる (config.md §1.3) */

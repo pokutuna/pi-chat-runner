@@ -37,6 +37,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.77",
     "@earendil-works/pi-coding-agent": "^0.85.1",
     "@google-cloud/firestore": "^9.1.0",
     "@google/genai": "^2.22.0",
