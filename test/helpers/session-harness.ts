@@ -85,7 +85,7 @@ export const THREAD_POLICY: SessionPolicy = {
   sessionMode: "thread",
   replyMode: "thread",
 };
-export function threadKeyOf(event: InboundMessage): string {
+export function derivedSessionKeyOf(event: InboundMessage): string {
   return sessionKeyOf(event, THREAD_POLICY);
 }
 

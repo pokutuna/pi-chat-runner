@@ -52,9 +52,10 @@ export interface SessionStore {
 /** Thread と Session の対応、および Channel の最新 Session へのポインタ
  * (state.md §3.3、message-dispatch.md §3.1/§3.2)。 */
 export interface ThreadStore {
-  /** Thread → 合流先 sessionKey。未登録なら null */
-  resolve(threadKey: string): Promise<string | null>;
-  bind(threadKey: string, sessionKey: string): Promise<void>;
+  /** Thread から導出した sessionKey (derivedSessionKey) → 合流先 sessionKey。
+   * 未登録なら null */
+  resolve(derivedSessionKey: string): Promise<string | null>;
+  bind(derivedSessionKey: string, sessionKey: string): Promise<void>;
   /** Channel の最新 Session (affinity の合流候補)。未登録なら null */
   latest(channelId: string): Promise<ChannelLatestSession | null>;
   /** Session の発生・Turn の進行で呼ぶ。endedAt はクリアされる */

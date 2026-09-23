@@ -12,7 +12,7 @@
 // - inbox: `<rootDoc>/inbox/{sessionKey}/items/{itemId}`。enqueue は create() を使い
 //   ALREADY_EXISTS を false に写像する (dedupe。message-dispatch.md §8)。
 // - sessions: `<rootDoc>/sessions/{sessionKey}`
-// - threads: `<rootDoc>/threads/{threadKey}`
+// - threads: `<rootDoc>/threads/{derivedSessionKey}`
 // - channel latest: `<rootDoc>/channel_latest/{channelId}`
 // - leases: `<rootDoc>/leases/{sessionKey}`
 // - channels: `<rootDoc>/channels/{channelId}`
@@ -220,15 +220,15 @@ class FirestoreThreadStore implements ThreadStore {
     private readonly now: () => number,
   ) {}
 
-  async resolve(threadKey: string): Promise<string | null> {
-    const snap = await this.threads.doc(threadKey).get();
+  async resolve(derivedSessionKey: string): Promise<string | null> {
+    const snap = await this.threads.doc(derivedSessionKey).get();
     if (!snap.exists) return null;
     return (snap.data() as ThreadDocData).sessionKey;
   }
 
-  async bind(threadKey: string, sessionKey: string): Promise<void> {
+  async bind(derivedSessionKey: string, sessionKey: string): Promise<void> {
     const data: ThreadDocData = { sessionKey };
-    await this.threads.doc(threadKey).set(data);
+    await this.threads.doc(derivedSessionKey).set(data);
   }
 
   async latest(channelId: string): Promise<ChannelLatestSession | null> {

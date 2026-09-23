@@ -642,13 +642,16 @@ export class Dispatcher implements SessionObserver {
   /** 合流結果の記録 (message-dispatch.md §3.1)。記録できなくても配達は成立する
    * (このイベント自体は合流先へ届く) ので、失敗はログのみで進行を止めない */
   private async bindThread(
-    threadKey: string,
+    derivedSessionKey: string,
     sessionKey: string,
   ): Promise<void> {
     try {
-      await this.ctx.controlState.threads.bind(threadKey, sessionKey);
+      await this.ctx.controlState.threads.bind(derivedSessionKey, sessionKey);
     } catch (err) {
-      this.logger.warn({ threadKey, sessionKey, err }, "thread binding failed");
+      this.logger.warn(
+        { derivedSessionKey, sessionKey, err },
+        "thread binding failed",
+      );
     }
   }
 

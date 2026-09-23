@@ -31,7 +31,7 @@ import {
   harness,
   message,
   sleep,
-  threadKeyOf,
+  derivedSessionKeyOf,
   waitFor,
 } from "../helpers/session-harness.js";
 
@@ -68,13 +68,13 @@ describe("Session (fake-pi integration)", () => {
     expect(JSON.parse(commands[0] ?? "{}").type).toBe("prompt");
 
     // 終了処理で lease が解放され、inbox は ack 済みで空
-    const threadKey = threadKeyOf(trigger);
-    expect(await h.controlState.inbox.drain(threadKey)).toEqual([]);
+    const derivedSessionKey = derivedSessionKeyOf(trigger);
+    expect(await h.controlState.inbox.drain(derivedSessionKey)).toEqual([]);
     expect(
-      await h.controlState.leases.acquire(threadKey, "probe", 1000),
+      await h.controlState.leases.acquire(derivedSessionKey, "probe", 1000),
     ).not.toBeNull();
     expect(
-      (await h.controlState.sessions.get(threadKey))?.endedAt,
+      (await h.controlState.sessions.get(derivedSessionKey))?.endedAt,
     ).toBeInstanceOf(Date);
   });
 
@@ -780,7 +780,9 @@ describe("Session (fake-pi integration)", () => {
 
     // 起動時に restore、agent_end で flush → ack の順 (message-dispatch.md §7.2)
     expect(calls).toEqual(["restore", "flush", "ack:1"]);
-    expect(await h.controlState.inbox.drain(threadKeyOf(trigger))).toEqual([]);
+    expect(
+      await h.controlState.inbox.drain(derivedSessionKeyOf(trigger)),
+    ).toEqual([]);
   });
 
   it("shared の restore/flush は workdir と同じ境界で走り、flush は ack より前 (docs/design/state.md §5.1)", async () => {
@@ -836,7 +838,7 @@ describe("Session (fake-pi integration)", () => {
   it("cleans up and releases the lease when pi responds with success:false", async () => {
     const h = await harness();
     const trigger = message({ mentionsBot: true, text: "FAIL_PROMPT please" });
-    const threadKey = threadKeyOf(trigger);
+    const derivedSessionKey = derivedSessionKeyOf(trigger);
 
     await h.dispatcher.handle(trigger);
 
@@ -855,7 +857,7 @@ describe("Session (fake-pi integration)", () => {
 
     // lease は解放されている
     expect(
-      await h.controlState.leases.acquire(threadKey, "probe", 1000),
+      await h.controlState.leases.acquire(derivedSessionKey, "probe", 1000),
     ).not.toBeNull();
 
     // エラー通知がスレッドへ投稿されている (router.deliver 経由)
@@ -869,7 +871,9 @@ describe("Session (fake-pi integration)", () => {
     // command failed (認証エラー等) はこのターンの入力を ack して捨てる (retry しない。
     // message-dispatch.md §7.4)。捨てないと未 ack のまま次の新規イベントの drain が巻き込み、
     // 同じ入力で再び失敗するループになりうる。flush はしない (workdir は退避させない)
-    expect((await h.controlState.inbox.drain(threadKey)).length).toBe(0);
+    expect((await h.controlState.inbox.drain(derivedSessionKey)).length).toBe(
+      0,
+    );
 
     // 異常終了はトリガーメッセージへの ❌ で見える化する
     expect(
@@ -880,7 +884,7 @@ describe("Session (fake-pi integration)", () => {
   it("drops the prompted item when pi crashes (process exit while running)", async () => {
     const h = await harness();
     const trigger = message({ mentionsBot: true, text: "CRASH_NOW please" });
-    const threadKey = threadKeyOf(trigger);
+    const derivedSessionKey = derivedSessionKeyOf(trigger);
 
     await h.dispatcher.handle(trigger);
 
@@ -896,13 +900,15 @@ describe("Session (fake-pi integration)", () => {
 
     // lease は解放されている
     expect(
-      await h.controlState.leases.acquire(threadKey, "probe", 1000),
+      await h.controlState.leases.acquire(derivedSessionKey, "probe", 1000),
     ).not.toBeNull();
 
     // クラッシュは workdir/transcript の破損を疑うため、このターンの入力は ack して
     // 捨てる (retry しない。message-dispatch.md §7.4)。捨てないと次の新規イベントの drain が
     // 巻き込んで同じ状態から再 spawn し、決定的に再クラッシュしうる
-    expect((await h.controlState.inbox.drain(threadKey)).length).toBe(0);
+    expect((await h.controlState.inbox.drain(derivedSessionKey)).length).toBe(
+      0,
+    );
 
     // クラッシュはユーザーから見えないので ❌ で見える化する
     expect(
@@ -916,7 +922,7 @@ describe("Session (fake-pi integration)", () => {
     // 異常終了として畳むことを確認する (runtime.md §5.1)
     const h = await harness({}, { turnTimeoutMs: 100 });
     const trigger = message({ mentionsBot: true, text: "HANG_FOREVER please" });
-    const threadKey = threadKeyOf(trigger);
+    const derivedSessionKey = derivedSessionKeyOf(trigger);
 
     await h.dispatcher.handle(trigger);
 
@@ -934,7 +940,7 @@ describe("Session (fake-pi integration)", () => {
 
     // lease は解放されている
     expect(
-      await h.controlState.leases.acquire(threadKey, "probe", 1000),
+      await h.controlState.leases.acquire(derivedSessionKey, "probe", 1000),
     ).not.toBeNull();
 
     // timeout 通知がスレッドへ投稿されている (router.deliver 経由)
@@ -947,7 +953,9 @@ describe("Session (fake-pi integration)", () => {
     // ack して捨てる (retry しない。message-dispatch.md §7.4)。異常終了はコマンド失敗・
     // クラッシュと同じ規則で、残すと同じ重い入力を次 drain が拾って再 timeout する
     // 毒ループになるため。ユーザーには ❌ と通知で伝わる
-    expect((await h.controlState.inbox.drain(threadKey)).length).toBe(0);
+    expect((await h.controlState.inbox.drain(derivedSessionKey)).length).toBe(
+      0,
+    );
   });
 
   it("does not fire the turn timeout when agent_end arrives before turnTimeoutMs", async () => {
@@ -1224,7 +1232,7 @@ describe("Session (fake-pi integration)", () => {
   it("picks up an item enqueued during linger in the same process, then releases the lease", async () => {
     const h = await harness({}, { lingerMs: 300 });
     const trigger = message({ mentionsBot: true, text: "first turn" });
-    const threadKey = threadKeyOf(trigger);
+    const derivedSessionKey = derivedSessionKeyOf(trigger);
 
     await h.dispatcher.handle(trigger);
     await waitFor(() => h.poster.calls.length === 1, "first reply posted");
@@ -1237,7 +1245,7 @@ describe("Session (fake-pi integration)", () => {
       conversation: { channelId: "C01", threadTs: trigger.id },
       text: "late arrival",
     });
-    await h.controlState.inbox.enqueue(threadKey, {
+    await h.controlState.inbox.enqueue(derivedSessionKey, {
       id: inboxItemId(late),
       event: late,
       enqueuedAt: new Date(),
@@ -1260,7 +1268,7 @@ describe("Session (fake-pi integration)", () => {
 
     // linger 後に終了し lease が解放されている
     expect(
-      await h.controlState.leases.acquire(threadKey, "probe", 1000),
+      await h.controlState.leases.acquire(derivedSessionKey, "probe", 1000),
     ).not.toBeNull();
   });
 });

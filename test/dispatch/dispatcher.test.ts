@@ -21,7 +21,7 @@ import {
   harness,
   message,
   sleep,
-  threadKeyOf,
+  derivedSessionKeyOf,
   waitFor,
 } from "../helpers/session-harness.js";
 
@@ -134,7 +134,9 @@ describe("Dispatcher (fake-pi integration)", () => {
     );
 
     // steer 済み item も flush → ack でまとめて確定される
-    expect(await h.controlState.inbox.drain(threadKeyOf(trigger))).toEqual([]);
+    expect(
+      await h.controlState.inbox.drain(derivedSessionKeyOf(trigger)),
+    ).toEqual([]);
   });
 
   it("channel モード (session.mode: channel) では、スレッド外の 2 つ目のメッセージが新セッションでなく同一セッションへの steer になる", async () => {
@@ -289,7 +291,7 @@ describe("Dispatcher (fake-pi integration)", () => {
       ":new: 次のメッセージから新しいセッションを開始します",
     );
 
-    const sessionKey = threadKeyOf(trigger);
+    const sessionKey = derivedSessionKeyOf(trigger);
     const doc = await h.controlState.sessions.get(sessionKey);
     expect(doc?.rotateRequestedAt).toBeInstanceOf(Date);
     expect(doc?.endedAt).toBeInstanceOf(Date);
@@ -313,7 +315,7 @@ describe("Dispatcher (fake-pi integration)", () => {
       "session running",
     );
 
-    const sessionKey = threadKeyOf(trigger);
+    const sessionKey = derivedSessionKeyOf(trigger);
     const newCmd = message({
       id: "1700000001.000200",
       conversation: { channelId: "C01", threadTs: trigger.id },
@@ -360,7 +362,7 @@ describe("Dispatcher (fake-pi integration)", () => {
   it("/new で lease が取れない (事前に別 owner で acquire 済み): 拒否通知", async () => {
     const h = await harness();
     const trigger = message({ mentionsBot: true, text: "/new" });
-    const sessionKey = threadKeyOf(trigger);
+    const sessionKey = derivedSessionKeyOf(trigger);
     const heldLease = await h.controlState.leases.acquire(
       sessionKey,
       "other-owner",
@@ -428,7 +430,7 @@ describe("Dispatcher (fake-pi integration)", () => {
   it("マーカーあり状態で次のメッセージ → dispatch: transcript が rotate される (thread モード)", async () => {
     const h = await harness();
     const trigger = message({ mentionsBot: true, text: "hello again" });
-    const sessionKey = threadKeyOf(trigger);
+    const sessionKey = derivedSessionKeyOf(trigger);
     const workdir = join(h.workdirRoot, "C01", trigger.id);
 
     await mkdir(workdir, { recursive: true });
@@ -477,7 +479,7 @@ describe("Dispatcher (fake-pi integration)", () => {
       "session removed",
     );
 
-    const sessionKey = threadKeyOf(trigger);
+    const sessionKey = derivedSessionKeyOf(trigger);
     // マーカーは書き込まれた後、同じ起動内で消費 (rotate) されクリアされる
     // (session-model.md §5.1)。消費された痕跡は rotate ログで確認する
     expect(
@@ -503,7 +505,7 @@ describe("Dispatcher (fake-pi integration)", () => {
     await sleep(50);
 
     expect(h.poster.calls).toEqual([]);
-    const sessionKey = threadKeyOf(trigger);
+    const sessionKey = derivedSessionKeyOf(trigger);
     expect(await h.controlState.sessions.get(sessionKey)).toBeNull();
     expect(h.dispatcher.activeSessionCount).toBe(0);
   });
@@ -596,7 +598,7 @@ describe("Dispatcher (fake-pi integration)", () => {
     // されていない (rotateRequestedAt が書かれない・ack も出ない)
     expect(h.poster.calls).toEqual([]);
     expect(h.dispatcher.activeSessionCount).toBe(0);
-    const sessionKey = threadKeyOf(trigger);
+    const sessionKey = derivedSessionKeyOf(trigger);
     expect(await h.controlState.sessions.get(sessionKey)).toBeNull();
   });
 
@@ -863,7 +865,7 @@ describe("Dispatcher (fake-pi integration)", () => {
 
     expect(h.poster.calls).toEqual([]);
     expect(h.dispatcher.activeSessionCount).toBe(0);
-    const sessionKey = threadKeyOf(trigger);
+    const sessionKey = derivedSessionKeyOf(trigger);
     expect(await h.controlState.sessions.get(sessionKey)).toBeNull();
     expect(
       h
@@ -931,7 +933,7 @@ describe("Dispatcher (fake-pi integration)", () => {
     }
     const h = await harness({}, { workdirStore: new FailOnceStorage() });
     const trigger = message({ mentionsBot: true, text: "first try" });
-    const threadKey = threadKeyOf(trigger);
+    const derivedSessionKey = derivedSessionKeyOf(trigger);
 
     await h.dispatcher.handle(trigger);
     expect(h.dispatcher.activeSessionCount).toBe(0);
@@ -939,7 +941,9 @@ describe("Dispatcher (fake-pi integration)", () => {
       h.logLines().some((line) => line.msg === "session dispatch failed"),
     ).toBe(true);
     // item は ack されず inbox に残っている
-    expect((await h.controlState.inbox.drain(threadKey)).length).toBe(1);
+    expect((await h.controlState.inbox.drain(derivedSessionKey)).length).toBe(
+      1,
+    );
 
     // 同スレッドの次のイベントで再 dispatch され、両方の item が拾い直される
     const retry = message({
@@ -961,7 +965,7 @@ describe("Dispatcher (fake-pi integration)", () => {
   it("does not dispatch when the lease is held by another owner", async () => {
     const controlState = new InMemoryControlState();
     const trigger = message({ mentionsBot: true, text: "contended" });
-    const sessionKey = threadKeyOf(trigger);
+    const sessionKey = derivedSessionKeyOf(trigger);
     const other = await controlState.leases.acquire(
       sessionKey,
       "other:999",
@@ -992,7 +996,7 @@ describe("Dispatcher (fake-pi integration)", () => {
     // 必要がある (steer してしまうと pi は宙吊りになり、以降その Session が壊れる)
     const h = await harness({}, { lingerMs: 300 });
     const trigger = message({ mentionsBot: true, text: "first turn" });
-    const threadKey = threadKeyOf(trigger);
+    const derivedSessionKey = derivedSessionKeyOf(trigger);
 
     await h.dispatcher.handle(trigger);
     await waitFor(() => h.poster.calls.length === 1, "first reply posted");
@@ -1036,7 +1040,7 @@ describe("Dispatcher (fake-pi integration)", () => {
 
     // lease が解放されている
     expect(
-      await h.controlState.leases.acquire(threadKey, "probe", 1000),
+      await h.controlState.leases.acquire(derivedSessionKey, "probe", 1000),
     ).not.toBeNull();
   });
 
@@ -1050,7 +1054,7 @@ describe("Dispatcher (fake-pi integration)", () => {
       },
     });
     const first = message({ text: "first burst message" });
-    const threadKey = threadKeyOf(first);
+    const derivedSessionKey = derivedSessionKeyOf(first);
 
     await h.dispatcher.handle(first);
     // debounce 中はまだ dispatch されていない
@@ -1081,7 +1085,7 @@ describe("Dispatcher (fake-pi integration)", () => {
     expect(commands.map((c) => c.type)).toEqual(["prompt"]);
     expect(commands[0]?.message).toContain("first burst message");
     expect(commands[0]?.message).toContain("second burst message");
-    expect(await h.controlState.inbox.drain(threadKey)).toEqual([]);
+    expect(await h.controlState.inbox.drain(derivedSessionKey)).toEqual([]);
   });
 
   it("session.affinity.debounceSec: 連投バースト A→B→C の 3 通が 1 回の dispatch にまとめられる", async () => {
@@ -1094,7 +1098,7 @@ describe("Dispatcher (fake-pi integration)", () => {
       },
     });
     const a = message({ text: "message A" });
-    const threadKey = threadKeyOf(a);
+    const derivedSessionKey = derivedSessionKeyOf(a);
 
     await h.dispatcher.handle(a);
     expect(h.dispatcher.activeSessionCount).toBe(0);
@@ -1134,7 +1138,7 @@ describe("Dispatcher (fake-pi integration)", () => {
     expect(commands[0]?.message).toContain("message A");
     expect(commands[0]?.message).toContain("message B");
     expect(commands[0]?.message).toContain("message C");
-    expect(await h.controlState.inbox.drain(threadKey)).toEqual([]);
+    expect(await h.controlState.inbox.drain(derivedSessionKey)).toEqual([]);
   });
 
   it("session.affinity.debounceSec: mentionsBot のメッセージは debounce をバイパスして即 dispatch される", async () => {
@@ -1220,7 +1224,7 @@ describe("Dispatcher (fake-pi integration)", () => {
       "session A finished",
     );
     expect((await h.controlState.threads.latest("C01"))?.sessionKey).toBe(
-      threadKeyOf(a),
+      derivedSessionKeyOf(a),
     );
     expect(
       (await h.controlState.threads.latest("C01"))?.endedAt,
@@ -1229,7 +1233,7 @@ describe("Dispatcher (fake-pi integration)", () => {
     // Session の同一性は sessionKey なので、別トリガーで resume しても
     // startedAt は引き継がれる (session-model.md §6, state.md §3.2)
     const startedAtAfterFirstTurn = (
-      await h.controlState.sessions.get(threadKeyOf(a))
+      await h.controlState.sessions.get(derivedSessionKeyOf(a))
     )?.startedAt;
     expect(startedAtAfterFirstTurn).toBeInstanceOf(Date);
 
@@ -1247,7 +1251,7 @@ describe("Dispatcher (fake-pi integration)", () => {
     );
 
     expect(
-      (await h.controlState.sessions.get(threadKeyOf(a)))?.startedAt,
+      (await h.controlState.sessions.get(derivedSessionKeyOf(a)))?.startedAt,
     ).toEqual(startedAtAfterFirstTurn);
 
     // A の Session (workdir = C01/<A.id>) の commands.jsonl に両方の prompt が
@@ -1490,8 +1494,8 @@ describe("Dispatcher (fake-pi integration)", () => {
     );
 
     // alias が Control State に残っている
-    expect(await controlState.threads.resolve(threadKeyOf(b))).toBe(
-      threadKeyOf(a),
+    expect(await controlState.threads.resolve(derivedSessionKeyOf(b))).toBe(
+      derivedSessionKeyOf(a),
     );
 
     // 再起動を模して、同じ Control State / workdirRoot を共有する別 Dispatcher を作る
@@ -1691,7 +1695,7 @@ describe("Dispatcher (fake-pi integration)", () => {
     );
 
     const latest = await h.controlState.threads.latest("C01");
-    expect(latest?.sessionKey).toBe(threadKeyOf(a));
+    expect(latest?.sessionKey).toBe(derivedSessionKeyOf(a));
     expect(latest?.endedAt).toBeInstanceOf(Date);
     expect(latest?.lastActiveAt).toBeInstanceOf(Date);
   });

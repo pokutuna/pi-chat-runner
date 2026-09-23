@@ -127,9 +127,10 @@ Thread と Session の対応、および Channel の最新 Session へのポイ�
 
 ```typescript
 interface ThreadStore {
-  /** Thread → 合流先 sessionKey。未登録なら null */
-  resolve(threadKey: string): Promise<string | null>;
-  bind(threadKey: string, sessionKey: string): Promise<void>;
+  /** Thread から導出した sessionKey (derivedSessionKey) → 合流先 sessionKey。
+   * 未登録なら null */
+  resolve(derivedSessionKey: string): Promise<string | null>;
+  bind(derivedSessionKey: string, sessionKey: string): Promise<void>;
   /** Channel の最新 Session (affinity の合流候補) */
   latest(channelId: string): Promise<
     { sessionKey: string; lastActiveAt: Date; endedAt?: Date } | null
@@ -140,8 +141,9 @@ interface ThreadStore {
 ```
 
 - `resolve` / `bind` は affinity の結果を永続化する。Session が別 Thread のメッセージを
-  取り込んだとき、その Thread Key を合流先 sessionKey に束ねる。以後その Thread への
-  返信は、Runner の実行インスタンスが入れ替わっても同じ Session へ届く。
+  取り込んだとき、その Thread から導出した sessionKey (derivedSessionKey) を合流先
+  sessionKey に束ねる。以後その Thread への返信は、Runner の実行インスタンスが
+  入れ替わっても同じ Session へ届く。
 - `latest` / `touchLatest` / `markLatestEnded` は Channel ごとに「直近の Session は
   どれか」を保持する。Dispatcher が affinity の合流候補を探すときに読む。
   `touchLatest` は Session の発生と Turn の進行で、`markLatestEnded` は Session の終了で
@@ -214,7 +216,7 @@ Dispatcher 以下には実装の別を漏らさない ([config.md](config.md))�
 |---|---|---|
 | `inbox_items` | `(session_key, item_id)` | `payload`, `enqueued_at`, `acked` |
 | `sessions` | `session_key` | `doc` (JSON) |
-| `threads` | `thread_key` | `session_key` |
+| `threads` | `derived_session_key` | `session_key` |
 | `channel_latest` | `channel_id` | `session_key`, `last_active_at`, `ended_at` |
 | `leases` | `session_key` | `owner`, `token`, `expires_at` |
 | `channel_state` | `channel_id` | `doc` (JSON) |
@@ -235,7 +237,7 @@ Dispatcher 以下には実装の別を漏らさない ([config.md](config.md))�
 |---|---|
 | inbox | `<rootDoc>/inbox/{sessionKey}/items/{itemId}` |
 | sessions | `<rootDoc>/sessions/{sessionKey}` |
-| threads | `<rootDoc>/threads/{threadKey}` |
+| threads | `<rootDoc>/threads/{derivedSessionKey}` |
 | channel latest | `<rootDoc>/channel_latest/{channelId}` |
 | leases | `<rootDoc>/leases/{sessionKey}` |
 | channels | `<rootDoc>/channels/{channelId}` |

@@ -165,20 +165,20 @@ class SqliteThreadStore implements ThreadStore {
     );
   }
 
-  async resolve(threadKey: string): Promise<string | null> {
+  async resolve(derivedSessionKey: string): Promise<string | null> {
     const row = this.db
-      .prepare(`SELECT session_key FROM threads WHERE thread_key = ?`)
-      .get(threadKey) as ThreadRow | undefined;
+      .prepare(`SELECT session_key FROM threads WHERE derived_session_key = ?`)
+      .get(derivedSessionKey) as ThreadRow | undefined;
     return row === undefined ? null : row.session_key;
   }
 
-  async bind(threadKey: string, sessionKey: string): Promise<void> {
+  async bind(derivedSessionKey: string, sessionKey: string): Promise<void> {
     this.db
       .prepare(
-        `INSERT INTO threads (thread_key, session_key) VALUES (?, ?)
-				 ON CONFLICT(thread_key) DO UPDATE SET session_key = excluded.session_key`,
+        `INSERT INTO threads (derived_session_key, session_key) VALUES (?, ?)
+				 ON CONFLICT(derived_session_key) DO UPDATE SET session_key = excluded.session_key`,
       )
-      .run(threadKey, sessionKey);
+      .run(derivedSessionKey, sessionKey);
   }
 
   async latest(channelId: string): Promise<ChannelLatestSession | null> {
@@ -349,7 +349,7 @@ export class SqliteControlState implements ControlState {
 				doc TEXT NOT NULL
 			);
 			CREATE TABLE IF NOT EXISTS threads (
-				thread_key TEXT PRIMARY KEY,
+				derived_session_key TEXT PRIMARY KEY,
 				session_key TEXT NOT NULL
 			);
 			CREATE TABLE IF NOT EXISTS channel_latest (

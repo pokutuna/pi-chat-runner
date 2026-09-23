@@ -237,7 +237,7 @@ export function describeControlStateContract(
     });
 
     describe("ThreadStore", () => {
-      it("resolve: 未登録の threadKey は null", async () => {
+      it("resolve: 未登録の derivedSessionKey は null", async () => {
         expect(await harness.store.threads.resolve("C1:1000.0")).toBeNull();
       });
 
@@ -249,7 +249,7 @@ export function describeControlStateContract(
         );
       });
 
-      it("bind: 同 threadKey への再 bind は上書きする", async () => {
+      it("bind: 同 derivedSessionKey への再 bind は上書きする", async () => {
         await harness.store.threads.bind("C1:1000.0", "C1:900.0");
         await harness.store.threads.bind("C1:1000.0", "C1:800.0");
 

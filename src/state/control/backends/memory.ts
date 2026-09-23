@@ -76,12 +76,12 @@ class InMemoryThreadStore implements ThreadStore {
 
   constructor(private readonly now: () => number) {}
 
-  async resolve(threadKey: string): Promise<string | null> {
-    return this.bindings.get(threadKey) ?? null;
+  async resolve(derivedSessionKey: string): Promise<string | null> {
+    return this.bindings.get(derivedSessionKey) ?? null;
   }
 
-  async bind(threadKey: string, sessionKey: string): Promise<void> {
-    this.bindings.set(threadKey, sessionKey);
+  async bind(derivedSessionKey: string, sessionKey: string): Promise<void> {
+    this.bindings.set(derivedSessionKey, sessionKey);
   }
 
   async latest(channelId: string): Promise<ChannelLatestSession | null> {
