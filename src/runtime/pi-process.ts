@@ -26,6 +26,12 @@ import {
   type RpcResponse,
 } from "./rpc.js";
 
+// graceful stop の 2 段の猶予 (stop() 既定)。compaction 中の書き出しなど、pi 側の
+// 後始末は SIGTERM 後よりも stdin close 後の方が長くかかりうるため、
+// stdin close 待ちを SIGTERM 待ちより長く取る。
+const STOP_STDIN_CLOSE_GRACE_MS = 10_000;
+const STOP_SIGTERM_GRACE_MS = 5_000;
+
 export interface PiProcessOptions {
   /** `--session` に渡す transcript JSONL の絶対パス */
   sessionPath: string;
@@ -194,16 +200,19 @@ export class PiProcess extends EventEmitter<PiProcessEvents> {
   }
 
   /** graceful stop: stdin を閉じ、猶予内に終了しなければ SIGTERM → SIGKILL */
-  async stop(graceMs = 3000): Promise<void> {
+  async stop(
+    stdinCloseGraceMs = STOP_STDIN_CLOSE_GRACE_MS,
+    sigtermGraceMs = STOP_SIGTERM_GRACE_MS,
+  ): Promise<void> {
     const child = this.child;
     if (!child || child.exitCode !== null) return;
     const exited = new Promise<void>((resolve) => {
       child.once("exit", () => resolve());
     });
     child.stdin.end();
-    if (await withTimeout(exited, graceMs)) return;
+    if (await withTimeout(exited, stdinCloseGraceMs)) return;
     child.kill("SIGTERM");
-    if (await withTimeout(exited, graceMs)) return;
+    if (await withTimeout(exited, sigtermGraceMs)) return;
     child.kill("SIGKILL");
     await exited;
   }

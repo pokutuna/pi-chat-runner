@@ -50,9 +50,9 @@ system:
   turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000}
   # 0 disables progress notices outright (unlike turnTimeoutMs, 0 is a valid,
   # meaningful value here, not "unset").
-  progressNoticeIntervalMs: ${env.PROGRESS_NOTICE_INTERVAL_MS:-20000}
+  progressNoticeIntervalMs: ${env.PROGRESS_NOTICE_INTERVAL_MS:-30000}
   leaseTtlMs: ${env.LEASE_TTL_MS:-60000}
-  lingerMs: ${env.LINGER_MS:-30000}
+  lingerMs: ${env.LINGER_MS:-20000}
 
 # --- agent: the default Agent Config, shared by every channel (config.md §1.3) ---
 # Every field here can be overridden per channel under channels[].agent, one
@@ -130,7 +130,7 @@ channels:
       affinity:
         scope: channel
         windowSec: 600
-        debounceSec: 20
+        debounceSec: 15
     reply:
       mode: thread
     agent:

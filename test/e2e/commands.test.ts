@@ -30,7 +30,7 @@ describeLive("live: チャットコマンド", () => {
         defaultChannelId: NEW_CHANNEL_ID,
         config: mentionOnlyChannels(NEW_CHANNEL_ID),
         // /new が受理されるのは Session が畳まれた後なので、本番既定の
-        // linger 30s ではなく短い値で回す。
+        // linger 20s ではなく短い値で回す。
         lingerMs: 3_000,
       });
 

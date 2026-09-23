@@ -102,7 +102,7 @@ describeLive("live: affinity", () => {
       const runner = await startLiveRunner({
         defaultChannelId: WINDOW_CHANNEL_ID,
         config: affinityChannels(WINDOW_CHANNEL_ID, windowSec),
-        // endedAt の記録 (= linger 満了) を待つので、本番既定の 30s ではなく
+        // endedAt の記録 (= linger 満了) を待つので、本番既定の 20s ではなく
         // 短い値で回す。
         lingerMs: 3_000,
       });
@@ -153,7 +153,7 @@ describeLive("live: affinity", () => {
         defaultChannelId: NEW_CHANNEL_ID,
         config: affinityChannels(NEW_CHANNEL_ID, 600),
         // /new が受理されるのは Session が畳まれた後なので、本番既定の
-        // linger 30s ではなく短い値で回す。
+        // linger 20s ではなく短い値で回す。
         lingerMs: 3_000,
       });
 

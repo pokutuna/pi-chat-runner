@@ -76,9 +76,9 @@ export interface DispatcherOptions {
   /** lease の TTL。既定 60_000ms。renew は ttl/3 間隔 */
   leaseTtlMs?: number;
   /** 長時間ターンの進捗通知の間隔 (ingress-egress.md §8)。初回発火までの猶予も同じ値を使う。
-   * 既定 5_000ms。0 を渡すと機能自体を無効化する (負値は指定しない想定) */
+   * 既定 30_000ms。0 を渡すと機能自体を無効化する (負値は指定しない想定) */
   progressNoticeIntervalMs?: number;
-  /** agent_end 後に追いメッセージを待つ時間。既定 30_000ms */
+  /** agent_end 後に追いメッセージを待つ時間。既定 20_000ms */
   lingerMs?: number;
   /** 1 ターン (prompt/steer 送信から agent_end まで) の上限。既定 600_000ms (10 分)。
    * 超過したら pi を kill してセッションを異常終了として畳む
@@ -163,10 +163,10 @@ export class Dispatcher implements SessionObserver {
       workdirStore: options.workdirStore,
       sharedStore: options.sharedStore,
       logger: (options.logger ?? rootLogger).child({ component: "session" }),
-      lingerMs: options.lingerMs ?? 30_000,
+      lingerMs: options.lingerMs ?? 20_000,
       turnTimeoutMs: options.turnTimeoutMs ?? 600_000,
       leaseTtlMs: options.leaseTtlMs ?? 60_000,
-      progressNoticeIntervalMs: options.progressNoticeIntervalMs ?? 5_000,
+      progressNoticeIntervalMs: options.progressNoticeIntervalMs ?? 30_000,
       mentionFormat: options.mentionFormat,
       runtime: options.runtime,
     };

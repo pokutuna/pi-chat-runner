@@ -350,8 +350,8 @@ pi を `--mode rpc` で起動し、stdin / stdout の JSONL で対話する。�
 返すため、whitelist にしないと失敗が ok に紛れ、「成功の印は付くが返信が無い」という
 症状だけが残る。assistant メッセージが無い Turn (沈黙の正常終了) は ok とする。
 
-停止は graceful に行う。stdin を閉じ、猶予内に終わらなければ SIGTERM、それでも終わらなけ
-れば SIGKILL。
+停止は graceful に行う。stdin を閉じ、10s 以内に終わらなければ SIGTERM、そこから 5s
+以内にも終わらなければ SIGKILL。
 
 ## 8. pi に委ねるもの
 

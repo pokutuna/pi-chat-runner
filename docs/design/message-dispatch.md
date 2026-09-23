@@ -205,7 +205,7 @@ flush 前に取ったスナップショットで、flush の待ち時間中に s
 
 ### 7.3 linger
 
-linger は Turn の終了後も Agent プロセスと lease を短時間 (既定 30s) 維持する。続けて届く
+linger は Turn の終了後も Agent プロセスと lease を短時間 (既定 20s) 維持する。続けて届く
 メッセージへの応答を速め、Agent の再起動と Workdir の復元を減らすためにある。
 
 - linger 満了の直前にもう一度 Inbox を確認し、未処理があれば prompt で新しい Turn を始める

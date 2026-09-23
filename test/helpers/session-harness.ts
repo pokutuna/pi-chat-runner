@@ -166,7 +166,7 @@ export interface HarnessOptions {
   controlState?: ControlState;
   workdirStore?: WorkdirStore;
   sharedStore?: SharedStore;
-  /** テストの実待ちを短くするため既定 30ms (本番既定は 30000ms) */
+  /** テストの実待ちを短くするため既定 30ms (本番既定は 20000ms) */
   lingerMs?: number;
   leaseTtlMs?: number;
   owner?: string;

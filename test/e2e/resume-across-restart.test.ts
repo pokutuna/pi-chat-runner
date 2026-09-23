@@ -50,7 +50,7 @@ describeLive("live: 再起動をまたぐ再開", () => {
         workdirDir,
         workdirRoot,
         // Runner 1 の Session が畳まれる (lease 解放) まで待つので、本番既定の
-        // linger 30s ではなく短い値で回す。
+        // linger 20s ではなく短い値で回す。
         lingerMs: 3_000,
       });
 
