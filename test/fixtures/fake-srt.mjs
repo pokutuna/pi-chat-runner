@@ -4,8 +4,9 @@
 // `--` 以降の内側コマンド) を観測するためのもの。実際の遮断は何もしない。
 //
 // 引数の形は本物と同じ: `[--debug] --settings <file> -- <command> <args...>`
-// - 内側コマンドの `--session <path>` から workdir (= dirname) を求め、
+// - 内側コマンドに `--session <path>` があれば workdir (= dirname) を求め、
 //   `<workdir>/srt-seen.json` に { settingsPath, settings, debug, inner } を書く
+//   (無ければ書かない。boot 時の probe は `-- true` だけを包む)
 // - 内側コマンドを stdio 継承で spawn し、終了コードを転送する。SIGTERM は子へ転送する
 
 import { spawn } from "node:child_process";
@@ -28,19 +29,17 @@ if (settingsPath === undefined) {
 }
 const sessionIndex = inner.indexOf("--session");
 const sessionPath = sessionIndex === -1 ? undefined : inner[sessionIndex + 1];
-if (sessionPath === undefined) {
-  console.error("fake-srt: inner command has no --session");
-  process.exit(2);
+if (sessionPath !== undefined) {
+  writeFileSync(
+    join(dirname(sessionPath), "srt-seen.json"),
+    JSON.stringify({
+      settingsPath,
+      settings: JSON.parse(readFileSync(settingsPath, "utf-8")),
+      debug: own.includes("--debug"),
+      inner,
+    }),
+  );
 }
-writeFileSync(
-  join(dirname(sessionPath), "srt-seen.json"),
-  JSON.stringify({
-    settingsPath,
-    settings: JSON.parse(readFileSync(settingsPath, "utf-8")),
-    debug: own.includes("--debug"),
-    inner,
-  }),
-);
 
 const [command, ...args] = inner;
 const child = spawn(command, args, { stdio: "inherit" });

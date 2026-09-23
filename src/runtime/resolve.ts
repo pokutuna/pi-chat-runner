@@ -80,6 +80,12 @@ export function resolvePiPaths(): {
   return { entrypoint, nodeModulesDir: outermostNodeModules(indexPath) };
 }
 
+/** srt が対応する OS (runtime.md §5.5)。 */
+const SRT_PLATFORMS: ReadonlySet<NodeJS.Platform> = new Set([
+  "linux",
+  "darwin",
+]);
+
 /** srt (@anthropic-ai/sandbox-runtime) の CLI エントリポイント (dist/cli.js) を
  * import.meta.resolve で解決する (runtime.md §5.5)。Runner は srt をライブラリとして
  * は使わず、pi の起動コマンドを `node <cli.js> --settings <file> -- <pi>` で包む —
@@ -160,12 +166,13 @@ export function createRuntimeConfig(
     PI_EXPORT_ENTRYPOINT: piPaths.entrypoint,
   };
   const piPermission = buildPiPermissionConfig(runtime, piPaths, baseEnv);
-  // srt は Linux 専用 (bwrap + netns)。他 OS では解決できても使えないので伏せ、
-  // Session 側の fail-closed (srtEntrypoint 未定義 + sandbox 有効 → 起動失敗) に
-  // 一本化する。解決できなくても boot は止めない (全 Channel が sandbox: false の
-  // 構成を許すため。runtime.md §5.5)
-  const srtEntrypoint =
-    process.platform === "linux" ? resolveSrtPath() : undefined;
+  // srt が動くのは Linux (bwrap + netns。本番) と macOS (sandbox-exec。開発用) だけ。
+  // 他 OS では解決できても使えないので伏せ、Session 側の fail-closed (srtEntrypoint
+  // 未定義 + sandbox 有効 → 起動失敗) に一本化する。解決できなくても boot は止めない
+  // (全 Channel が sandbox: false の構成を許すため。runtime.md §5.5)
+  const srtEntrypoint = SRT_PLATFORMS.has(process.platform)
+    ? resolveSrtPath()
+    : undefined;
   return {
     piEntrypoint: piPaths.entrypoint,
     ...(srtEntrypoint !== undefined ? { srtEntrypoint } : {}),

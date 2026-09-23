@@ -3,9 +3,10 @@ import { describe, expect, it } from "vitest";
 import { SandboxRulesSchema } from "../../src/config/sandbox-config.js";
 import {
   buildSandboxSettings,
-  missingSandboxHostCommands,
+  probeSandboxRuntime,
   sandboxSettingsPath,
 } from "../../src/runtime/sandbox.js";
+import { FAKE_SRT } from "../helpers/session-harness.js";
 
 const HOME = "/home/agent";
 const CWD = "/data/work/C01/1700000000.000100";
@@ -114,19 +115,17 @@ describe("buildSandboxSettings", () => {
   });
 });
 
-describe("missingSandboxHostCommands", () => {
-  it("reports every srt dependency missing when PATH has none of them", async () => {
-    expect(await missingSandboxHostCommands({ PATH: "/nonexistent" })).toEqual([
-      "bwrap",
-      "socat",
-      "rg",
-    ]);
+describe("probeSandboxRuntime", () => {
+  it("reports ok when srt wraps a trivial command successfully", async () => {
+    await expect(probeSandboxRuntime(FAKE_SRT)).resolves.toEqual({ ok: true });
   });
 
-  it("finds commands that exist on PATH", async () => {
-    // rg は開発環境に入っている前提 (CLAUDE.md の推奨ツール)。bwrap/socat の有無は
-    // ホスト依存なので rg だけを見る
-    const missing = await missingSandboxHostCommands(process.env);
-    expect(missing).not.toContain("rg");
+  it("reports failure with srt's stderr when srt cannot start", async () => {
+    await expect(
+      probeSandboxRuntime("/nonexistent/srt/cli.js"),
+    ).resolves.toMatchObject({
+      ok: false,
+      stderr: expect.stringMatching(/nonexistent\/srt\/cli\.js/),
+    });
   });
 });

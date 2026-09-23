@@ -938,8 +938,8 @@ export class Session {
     const { srtEntrypoint, workdirRoot } = this.#ctx.runtime;
     if (srtEntrypoint === undefined) {
       throw new Error(
-        "agent.sandbox is enabled but srt is unavailable (requires Linux and " +
-          "@anthropic-ai/sandbox-runtime); set agent.sandbox: false to run without it",
+        "agent.sandbox is enabled but srt is unavailable (requires Linux or macOS " +
+          "and @anthropic-ai/sandbox-runtime); set agent.sandbox: false to run without it",
       );
     }
     const settingsPath = sandboxSettingsPath(workdirRoot, this.sessionKey);

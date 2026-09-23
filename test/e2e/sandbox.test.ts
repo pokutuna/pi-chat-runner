@@ -6,9 +6,9 @@
 // 通ること — を見る。LLM に「このコマンドを実行して出力を `code=<n> out=<stdout>` の形で
 // 返して」と頼むので assertion は緩く、遮断の項目には対照 (positive control) を添える。
 //
-// 前提: Linux + bwrap/socat/rg + ADC (GOOGLE_APPLICATION_CREDENTIALS)。CI では回さない。
-// 例: docker build --target e2e … の image に .env.local と ADC ファイルを mount し
-// `E2E_LIVE_LLM=1 pnpm exec vitest run test/e2e/sandbox.test.ts` を回す。
+// 前提: Linux (bwrap/socat/rg) か macOS (sandbox-exec) + ADC。CI では回さない。
+// `E2E_LIVE_LLM=1 pnpm exec vitest run test/e2e/sandbox.test.ts`。
+// macOS の Seatbelt 経路は開発用で、遮断の保証は Linux 側 (runtime.md §5.5)。
 
 import { mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -28,8 +28,8 @@ import {
   startLiveRunner,
 } from "./helpers/live.js";
 
-// srt は Linux でしか起動しない (RuntimeConfig.srtEntrypoint が Linux 以外で undefined)
-const skip = !isLive || process.platform !== "linux";
+// srt が動くのは Linux と macOS だけ (RuntimeConfig.srtEntrypoint が他 OS では undefined)
+const skip = !isLive || !["linux", "darwin"].includes(process.platform);
 // oxlint-disable-next-line vitest/valid-describe-callback, vitest/valid-title -- describe を呼ばず skipIf の戻り値を束ねるだけ
 const describeLiveSandbox = describe.skipIf(skip);
 

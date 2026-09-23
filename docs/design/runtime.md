@@ -337,11 +337,18 @@ Agent は読めるが書き換えられない (bind mount が read-only)。Sessi
 「別ディレクトリを読みたい」を実際に満たすのは Permission Model 側であり、fs ポリシーの
 書き場所を sandbox ルール 1 箇所にするために両層へ同じ集合を渡す。
 
-**fail-closed**。sandbox が有効な Channel で srt が使えない (Linux でない、パッケージが
-無い、`bwrap` / `socat` / `rg` が PATH に無い) ときは Session の起動を失敗させ、sandbox
-なしで走らせない。Runner は boot 時に全 Channel を解いて sandbox 有効なものがあれば
-srt の所在と依存コマンドを確かめ、欠けていれば exit 1 する — 最初のメッセージが来てから
-気づくより先に落とす。
+**fail-closed**。sandbox が有効な Channel で srt が使えない (対応 OS でない、パッケージが
+無い、srt が要求する OS 側の依存や namespace が無い) ときは Session の起動を失敗させ、
+sandbox なしで走らせない。Runner は boot 時に全 Channel を解いて sandbox 有効なものが
+あれば、srt の所在を確かめた上で最小の settings で trivial なコマンドを 1 回 srt に包ませ、
+失敗すれば srt の stderr を出して exit 1 する — 最初のメッセージが来てから気づくより先に
+落とす。srt が何を要求するか (Linux なら bubblewrap / socat / ripgrep) の一覧は Runner
+には持たせず、srt 自身の検査結果だけを見る。
+
+**対応 OS**。srt は Linux (bubblewrap + network namespace) と macOS (sandbox-exec /
+Seatbelt) で動く。本番は Linux で、上記の遮断特性はそちらで検証している。macOS 経路は
+手元で実 pi + 実 LLM を sandbox 越しに動かす開発用で、pid namespace が無いなど bwrap と
+挙動が違うため、遮断の保証は Linux 側にだけ置く。
 
 **プロセスの後始末**。srt で包むと Runner の直接の子は srt (node) で、その下に `sh -c` →
 bwrap → (pid namespace 内の) pi と続く。srt だけを SIGKILL すると `sh` が生き残り、bwrap の
@@ -451,7 +458,7 @@ Channel や Agent ごとに変えたい項目は Agent Config で宣言し、Run
 | 起動引数の組み立て | `buildPiArgs` / `buildSpawnCommand` (`src/runtime/pi-args.ts`) |
 | Permission Model | `buildPiPermissionOptions` / `ancestorDirs` (`src/runtime/pi-args.ts`)、`PiPermissionConfig` (`src/runtime/config.ts`)、`buildPiPermissionConfig` / `resolvePiPaths` / `outermostNodeModules` (`src/runtime/resolve.ts`) |
 | env allowlist | `buildPiEnv` (`src/runtime/pi-args.ts`)、`collectGcpEnv` (`src/runtime/resolve.ts`) |
-| srt (§5.5) の settings 合成 | `buildSandboxSettings` / `sandboxSettingsPath` / `missingSandboxHostCommands` (`src/runtime/sandbox.ts`)、書き出しと削除は `Session` (`src/session/session.ts`)、boot 時の検査は `checkSandboxPrerequisites` (`src/server.ts`) |
+| srt (§5.5) の settings 合成 | `buildSandboxSettings` / `sandboxSettingsPath` / `probeSandboxRuntime` (`src/runtime/sandbox.ts`)、書き出しと削除は `Session` (`src/session/session.ts`)、boot 時の検査は `checkSandboxPrerequisites` (`src/server.ts`) |
 | srt で包む起動コマンド | `wrapWithSrt` (`src/runtime/pi-args.ts`)、`PiProcess` の `sandbox` オプション、srt の所在は `resolveSrtPath` (`src/runtime/resolve.ts`) |
 | Session 専用 TMPDIR | `sessionTmpDir` / `prepareWorkdir` (`src/runtime/prepare.ts`)、env への配線は `Dispatcher` (`src/dispatch/dispatcher.ts`) |
 | 子プロセスのラッパ | `PiProcess` (`src/runtime/pi-process.ts`) |

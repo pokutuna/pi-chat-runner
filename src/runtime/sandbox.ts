@@ -5,8 +5,10 @@
 // にする。ここは純粋関数だけ — ファイルの書き出しは Session (session/session.ts) が、
 // spawn 引数への展開は pi-args.ts の wrapWithSrt が行う。
 
-import { access, constants } from "node:fs/promises";
-import { delimiter, isAbsolute, join, resolve } from "node:path";
+import { spawn } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, resolve } from "node:path";
 
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 
@@ -103,26 +105,50 @@ function permissionPatterns(
   return [absolute, `${absolute}/*`];
 }
 
-/** srt が Linux で要求する外部コマンド (srt の checkDependencies と同じ 3 つ:
- * bubblewrap、CONNECT proxy の socat、settings 検証の ripgrep)。 */
-export const SRT_HOST_COMMANDS = ["bwrap", "socat", "rg"] as const;
-
-/** PATH 上に無い srt の依存コマンドを返す (boot 時チェック用。runtime.md §5.5)。
- * srt 自身も起動時に検査して失敗するが、それは最初のメッセージが来てから (Session
- * 起動時) なので、本番イメージの取りこぼしは Runner の boot で先に落とす */
-export async function missingSandboxHostCommands(
-  env: NodeJS.ProcessEnv = process.env,
-): Promise<string[]> {
-  const dirs = (env.PATH ?? "").split(delimiter).filter((d) => d.length > 0);
-  const missing: string[] = [];
-  for (const command of SRT_HOST_COMMANDS) {
-    const found = await Promise.any(
-      dirs.map((dir) => access(join(dir, command), constants.X_OK)),
-    ).then(
-      () => true,
-      () => false,
-    );
-    if (!found) missing.push(command);
+/** srt が実際に起動できるかを、最小の settings で trivial なコマンドを 1 回包んで
+ * 確かめる (boot 時チェック用。runtime.md §5.5)。srt は起動時に自分で OS ごとの依存
+ * (Linux なら bwrap / socat / rg、macOS なら sandbox-exec) や namespace の可用性を検査して
+ * stderr に理由を出すので、Runner はその一覧を持たず結果だけを見る。失敗時は srt の
+ * stderr を返す。srt 自身も Session 起動時に同じ検査で失敗するが、それは最初のメッセージ
+ * が来てからなので、イメージや実行環境の取りこぼしは boot で先に落とす */
+export async function probeSandboxRuntime(
+  srtEntrypoint: string,
+  timeoutMs = 30_000,
+): Promise<{ ok: true } | { ok: false; stderr: string }> {
+  const dir = await mkdtemp(join(tmpdir(), "pi-chat-runner-srt-probe-"));
+  const settingsPath = join(dir, "settings.json");
+  const settings: SandboxRuntimeConfig = {
+    network: { allowedDomains: [], deniedDomains: [] },
+    filesystem: { denyRead: [], allowRead: [], allowWrite: [], denyWrite: [] },
+  };
+  try {
+    await writeFile(settingsPath, JSON.stringify(settings));
+    return await new Promise((resolve) => {
+      const child = spawn(
+        process.execPath,
+        [srtEntrypoint, "--settings", settingsPath, "--", "true"],
+        { stdio: ["ignore", "ignore", "pipe"] },
+      );
+      let stderr = "";
+      child.stderr.setEncoding("utf8");
+      child.stderr.on("data", (chunk: string) => {
+        stderr += chunk;
+      });
+      const timer = setTimeout(() => {
+        child.kill("SIGKILL");
+        stderr += `\nsrt probe timed out after ${timeoutMs}ms`;
+      }, timeoutMs);
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        resolve({ ok: false, stderr: `${stderr}\n${err.message}`.trim() });
+      });
+      child.on("exit", (code) => {
+        clearTimeout(timer);
+        if (code === 0) resolve({ ok: true });
+        else resolve({ ok: false, stderr: stderr.trim() });
+      });
+    });
+  } finally {
+    await rm(dir, { recursive: true, force: true });
   }
-  return missing;
 }

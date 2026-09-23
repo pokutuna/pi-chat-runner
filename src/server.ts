@@ -41,7 +41,7 @@ import type { RunnerOptions } from "./runner.js";
 import { startRunner } from "./runner.js";
 import type { RuntimeConfig } from "./runtime/config.js";
 import { createRuntimeConfig } from "./runtime/resolve.js";
-import { missingSandboxHostCommands } from "./runtime/sandbox.js";
+import { probeSandboxRuntime } from "./runtime/sandbox.js";
 import { createSharedStore, createWorkdirStore } from "./state/agent/copy.js";
 import { FirestoreControlState } from "./state/control/backends/firestore.js";
 import { InMemoryControlState } from "./state/control/backends/memory.js";
@@ -310,9 +310,9 @@ function buildCommonRunnerOptions(
 }
 
 /** boot 時の sandbox 前提チェック (runtime.md §5.5)。初回ロードした設定で
- * agent.sandbox が有効な Channel が 1 つでもあれば、srt が使える (Linux + package)
- * ことと、srt の依存コマンド (bwrap / socat / rg) が PATH にあることを確認し、
- * 欠けていれば理由を出して exit(1) する。Session 起動時にも fail-closed で落ちるが、
+ * agent.sandbox が有効な Channel が 1 つでもあれば、srt が解決できることと、srt が
+ * この環境で実際に起動できること (最小 settings で trivial なコマンドを 1 回包む) を
+ * 確認し、駄目なら srt の stderr を出して exit(1) する。Session 起動時にも fail-closed で落ちるが、
  * それは最初のメッセージが来てからなので、イメージの取りこぼしはここで先に拾う。
  * agent / channels はメッセージごとに読み直すため完全ではない (後から sandbox を
  * 足した場合は Session 起動時の fail-closed が受け止める) */
@@ -332,16 +332,16 @@ async function checkSandboxPrerequisites(
   if (runtime.srtEntrypoint === undefined) {
     logger.error(
       { platform: process.platform },
-      "agent.sandbox is enabled but srt is unavailable (requires Linux and " +
-        "@anthropic-ai/sandbox-runtime); set agent.sandbox: false to run without it",
+      "agent.sandbox is enabled but srt is unavailable (requires Linux or macOS " +
+        "and @anthropic-ai/sandbox-runtime); set agent.sandbox: false to run without it",
     );
     process.exit(1);
   }
-  const missing = await missingSandboxHostCommands();
-  if (missing.length > 0) {
+  const probe = await probeSandboxRuntime(runtime.srtEntrypoint);
+  if (!probe.ok) {
     logger.error(
-      { missing },
-      "agent.sandbox is enabled but srt's host dependencies are missing from PATH",
+      { srtEntrypoint: runtime.srtEntrypoint, stderr: probe.stderr },
+      "agent.sandbox is enabled but srt cannot run in this environment",
     );
     process.exit(1);
   }
