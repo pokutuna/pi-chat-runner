@@ -10,6 +10,11 @@
 // Turn は型ではなくこのクラスのフィールド群 (#turnEpoch / #turnMessageIds /
 // #turnTimeoutTimer) として表す (session-model.md §7)。
 
+import { mkdir, rm, writeFile } from "node:fs/promises";
+import { dirname } from "node:path";
+
+import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
+
 import type { ResolvedChannel } from "../config/config-source.js";
 import {
   renderEvent,
@@ -48,6 +53,10 @@ import {
   isToolExecutionEnd,
   isToolExecutionStart,
 } from "../runtime/rpc.js";
+import {
+  type SandboxSpawnConfig,
+  sandboxSettingsPath,
+} from "../runtime/sandbox.js";
 import type { SharedStore, WorkdirStore } from "../state/agent/interfaces.js";
 import { inboxItemId } from "../state/control/inbox-item.js";
 import type { ControlState, Lease } from "../state/control/interfaces.js";
@@ -140,6 +149,9 @@ export interface StartArgs {
   /** allowlist に追加で pi 子プロセスへ渡す env (HOME=agentHomeReal を含む、
    * 起動ごとに合成されたもの) */
   extraEnv: Record<string, string>;
+  /** srt に渡す合成済み settings (buildSpawnOptions の結果。runtime.md §5.5)。
+   * Channel の agent.sandbox が無効なら undefined で、pi は srt なしで起動する */
+  sandbox: SandboxRuntimeConfig | undefined;
 }
 
 /** 1 つの sessionKey に対して実行中の pi プロセスと、その Turn の状態を持つ実体
@@ -203,6 +215,8 @@ export class Session {
   /** レジストリから外れたことを示すフラグ。全終了経路の Map delete の代わりに
    * 立て、stale チェックの主語になる */
   #disposed = false;
+  /** この起動で書いた srt settings ファイル。#dispose で消す (runtime.md §5.5) */
+  #sandboxSettingsPath: string | undefined;
 
   readonly #observer: SessionObserver;
   readonly #sharedStagingDir: string | undefined;
@@ -258,10 +272,20 @@ export class Session {
       freshTranscript,
       model,
       extraEnv,
+      sandbox,
     } = args;
     this.#freshTranscript = freshTranscript;
     const { mentionFormat } = this.#ctx;
     const { piBinary, piEntrypoint, agentUid, agentGid } = this.#ctx.runtime;
+
+    // srt settings の書き出し (runtime.md §5.5)。sandbox が有効なのに srt を使えない
+    // 環境 (Linux 以外、または package 未解決) では起動しない (fail-closed) —
+    // 「sandbox のつもりで sandbox なし」を作らないため。settings は workdir の外
+    // (<workdirRoot>/srt/) に Runner 所有で置き、agent は書き換えられない
+    const sandboxSpawn =
+      sandbox !== undefined
+        ? await this.#writeSandboxSettings(sandbox)
+        : undefined;
 
     const proc = new PiProcess({
       sessionPath,
@@ -288,6 +312,7 @@ export class Session {
       ...(agentUid !== undefined ? { uid: agentUid } : {}),
       ...(agentGid !== undefined ? { gid: agentGid } : {}),
       ...(permission !== undefined ? { permission } : {}),
+      ...(sandboxSpawn !== undefined ? { sandbox: sandboxSpawn } : {}),
       // pi は正常時にも stderr へ出すことがあるため warn ではなく debug
       logger: (line) =>
         this.#ctx.logger.debug({ sessionKey, line }, "pi stderr"),
@@ -891,6 +916,44 @@ export class Session {
   #dispose(): void {
     this.#disposed = true;
     this.#observer.onDisposed(this);
+    // srt settings は Session 1 回分の使い捨て。全終了経路で best-effort に消す
+    // (次の起動は同じパスに書き直すので、消し損ねても害は無い)
+    const path = this.#sandboxSettingsPath;
+    if (path !== undefined) {
+      this.#sandboxSettingsPath = undefined;
+      void rm(path, { force: true }).catch((err) => {
+        this.#ctx.logger.warn(
+          { sessionKey: this.sessionKey, path, err },
+          "sandbox settings cleanup failed",
+        );
+      });
+    }
+  }
+
+  /** srt の `--settings` ファイルを書く (runtime.md §5.5)。srtEntrypoint が無ければ
+   * fail-closed で throw する。パスは #sandboxSettingsPath に控え、#dispose で消す */
+  async #writeSandboxSettings(
+    settings: SandboxRuntimeConfig,
+  ): Promise<SandboxSpawnConfig> {
+    const { srtEntrypoint, workdirRoot } = this.#ctx.runtime;
+    if (srtEntrypoint === undefined) {
+      throw new Error(
+        "agent.sandbox is enabled but srt is unavailable (requires Linux and " +
+          "@anthropic-ai/sandbox-runtime); set agent.sandbox: false to run without it",
+      );
+    }
+    const settingsPath = sandboxSettingsPath(workdirRoot, this.sessionKey);
+    await mkdir(dirname(settingsPath), { recursive: true });
+    // agent uid からも読める必要がある (srt は pi と同じ uid で動く) ので 0644
+    await writeFile(settingsPath, JSON.stringify(settings, null, 2), {
+      mode: 0o644,
+    });
+    this.#sandboxSettingsPath = settingsPath;
+    return {
+      srtEntrypoint,
+      settingsPath,
+      debug: this.#ctx.logger.isLevelEnabled("debug"),
+    };
   }
 
   /** ターンに 1 件の入力メッセージを取り込む共通処理 (start / steerPending /

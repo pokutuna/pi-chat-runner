@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import { SandboxRulesSchema } from "../../src/config/sandbox-config.js";
 import {
   buildSandboxSettings,
+  missingSandboxHostCommands,
   sandboxSettingsPath,
 } from "../../src/runtime/sandbox.js";
 
@@ -110,5 +111,22 @@ describe("buildSandboxSettings", () => {
       cwd: CWD,
     });
     expect(permission).toEqual({ allowRead: [], allowWrite: [] });
+  });
+});
+
+describe("missingSandboxHostCommands", () => {
+  it("reports every srt dependency missing when PATH has none of them", async () => {
+    expect(await missingSandboxHostCommands({ PATH: "/nonexistent" })).toEqual([
+      "bwrap",
+      "socat",
+      "rg",
+    ]);
+  });
+
+  it("finds commands that exist on PATH", async () => {
+    // rg は開発環境に入っている前提 (CLAUDE.md の推奨ツール)。bwrap/socat の有無は
+    // ホスト依存なので rg だけを見る
+    const missing = await missingSandboxHostCommands(process.env);
+    expect(missing).not.toContain("rg");
   });
 });

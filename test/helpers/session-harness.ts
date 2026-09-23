@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import pino from "pino";
 
 import { SLACK_STATE_EMOJI } from "../../src/chat/slack.js";
@@ -36,6 +37,10 @@ import type { ControlState } from "../../src/state/control/interfaces.js";
 
 export const FAKE_PI = fileURLToPath(
   new URL("../fixtures/fake-pi.mjs", import.meta.url),
+);
+/** srt CLI のスタブ (test/fixtures/fake-srt.mjs)。HarnessOptions.srtEntrypoint に渡す */
+export const FAKE_SRT = fileURLToPath(
+  new URL("../fixtures/fake-srt.mjs", import.meta.url),
 );
 
 export class FakePoster implements ChatPoster {
@@ -164,6 +169,15 @@ export interface Harness {
   commandsLog(channelId: string, threadTs: string): Promise<string[]>;
   envSeen(channelId: string, threadTs: string): Promise<Record<string, string>>;
   argvSeen(channelId: string, threadTs: string): Promise<string[]>;
+  /** fake-srt が書く観測結果 (settings の位置と中身、内側コマンド) */
+  srtSeen(channelId: string, threadTs: string): Promise<SrtSeen>;
+}
+
+export interface SrtSeen {
+  settingsPath: string;
+  settings: SandboxRuntimeConfig;
+  debug: boolean;
+  inner: string[];
 }
 
 export interface HarnessOptions {
@@ -179,6 +193,9 @@ export interface HarnessOptions {
   owner?: string;
   piBinary?: string;
   piEntrypoint?: string;
+  /** srt の cli.js のパス (RuntimeConfig.srtEntrypoint)。未指定なら sandbox 有効な
+   * Channel の起動は fail-closed で失敗する */
+  srtEntrypoint?: string;
   agentUid?: number;
   agentGid?: number;
   agentHome?: string;
@@ -234,6 +251,9 @@ export async function harness(
           : {}),
       ...(options.piEntrypoint !== undefined
         ? { piEntrypoint: options.piEntrypoint }
+        : {}),
+      ...(options.srtEntrypoint !== undefined
+        ? { srtEntrypoint: options.srtEntrypoint }
         : {}),
       ...(options.extraEnv !== undefined ? { extraEnv: options.extraEnv } : {}),
       ...(options.agentUid !== undefined ? { agentUid: options.agentUid } : {}),
@@ -293,6 +313,13 @@ export async function harness(
     argvSeen: async (channelId, threadTs) => {
       const raw = await readFile(
         join(workdirRoot, channelId, threadTs, "argv-seen.json"),
+        "utf-8",
+      );
+      return JSON.parse(raw);
+    },
+    srtSeen: async (channelId, threadTs) => {
+      const raw = await readFile(
+        join(workdirRoot, channelId, threadTs, "srt-seen.json"),
         "utf-8",
       );
       return JSON.parse(raw);

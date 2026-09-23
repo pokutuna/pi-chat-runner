@@ -5,7 +5,8 @@
 // にする。ここは純粋関数だけ — ファイルの書き出しは Session (session/session.ts) が、
 // spawn 引数への展開は pi-args.ts の wrapWithSrt が行う。
 
-import { isAbsolute, join, resolve } from "node:path";
+import { access, constants } from "node:fs/promises";
+import { delimiter, isAbsolute, join, resolve } from "node:path";
 
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 
@@ -100,4 +101,28 @@ function permissionPatterns(
   else absolute = resolve(base.cwd, path);
   if (/[*?[\]]/.test(absolute)) return [absolute];
   return [absolute, `${absolute}/*`];
+}
+
+/** srt が Linux で要求する外部コマンド (srt の checkDependencies と同じ 3 つ:
+ * bubblewrap、CONNECT proxy の socat、settings 検証の ripgrep)。 */
+export const SRT_HOST_COMMANDS = ["bwrap", "socat", "rg"] as const;
+
+/** PATH 上に無い srt の依存コマンドを返す (boot 時チェック用。runtime.md §5.5)。
+ * srt 自身も起動時に検査して失敗するが、それは最初のメッセージが来てから (Session
+ * 起動時) なので、本番イメージの取りこぼしは Runner の boot で先に落とす */
+export async function missingSandboxHostCommands(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<string[]> {
+  const dirs = (env.PATH ?? "").split(delimiter).filter((d) => d.length > 0);
+  const missing: string[] = [];
+  for (const command of SRT_HOST_COMMANDS) {
+    const found = await Promise.any(
+      dirs.map((dir) => access(join(dir, command), constants.X_OK)),
+    ).then(
+      () => true,
+      () => false,
+    );
+    if (!found) missing.push(command);
+  }
+  return missing;
 }

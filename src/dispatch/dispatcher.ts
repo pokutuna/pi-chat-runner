@@ -788,7 +788,7 @@ export class Dispatcher implements SessionObserver {
 
       // extension/skill パス解決 + Node Permission Model オプション組み立て
       // (runtime.md §4, §5.2)
-      const { extensionPaths, skillPaths, memoryEnabled, permission } =
+      const { extensionPaths, skillPaths, memoryEnabled, permission, sandbox } =
         await buildSpawnOptions({
           agentHomeReal,
           workdirReal,
@@ -838,6 +838,7 @@ export class Dispatcher implements SessionObserver {
         freshTranscript: transcriptRotated || previousSession === null,
         model,
         extraEnv,
+        sandbox,
       });
 
       // /new マーカーの消費 (session-model.md §5.1: 「マーカーは次の Session 起動時、
