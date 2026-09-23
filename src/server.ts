@@ -78,8 +78,8 @@ function buildControlState(
   }
 }
 
-/** system.chat.slack ブロックの使い方 (新スキーマのブロック名) を stderr に出す。
- * `--help` と、必須項目が欠けたままの起動 (missingChatConfig) で共有する。 */
+/** 設定ファイルの 3 ブロック (System / Channel / Agent Config) の骨格と env 上書きを
+ * stderr に出す。`--help` と、必須項目が欠けたままの起動 (missingChatConfig) で共有する。 */
 function printUsage(configPath: string): void {
   console.error(
     "Usage: node dist/server.mjs [dump <channel> [--json] | local [channelId] | --help]",
@@ -87,7 +87,7 @@ function printUsage(configPath: string): void {
   console.error("");
   console.error(`${configPath} needs a system.chat.slack block to start:`);
   console.error("");
-  console.error("system:");
+  console.error("system:    # System Config");
   console.error("  chat:");
   console.error("    slack:");
   console.error(
@@ -126,7 +126,7 @@ function printUsage(configPath: string): void {
     "  systemPrompt, context, model, tools, excludeTools, skills, extensions, memory, env",
   );
   console.error(
-    "channels:   # per-channel: trigger / session / reply + agent overrides",
+    "channels:   # Channel Config: trigger / session / reply + per-channel Agent Config",
   );
   console.error("");
   console.error(
@@ -342,11 +342,11 @@ async function runLocal(argv: string[]): Promise<void> {
 
   localLogger.child({ component: "server" }).info(
     {
-      storeBackend: system.state.control.backend,
+      controlBackend: system.state.control.backend,
       configPath,
       channelId,
     },
-    "local mode: state store configured",
+    "local mode: runner configured",
   );
 
   await startRunner({
@@ -395,12 +395,12 @@ async function main() {
 
   logger.info(
     {
-      storeBackend: system.state.control.backend,
+      controlBackend: system.state.control.backend,
       workdirArchiveDir: system.state.agent.workdirDir,
       configPath,
       slackMode: system.chat.slack?.mode,
     },
-    "state store configured",
+    "runner configured",
   );
 
   await startRunner({

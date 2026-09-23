@@ -31,8 +31,8 @@ export function extractReply(
 }
 
 /**
- * agent_end の messages から assistant ターンのエラーを取り出す。
- * LLM 呼び出しが失敗しても (例: ADC 不備、ネットワーク遮断) pi はターンを
+ * agent_end の messages から assistant の各 pi turn のエラーを取り出す。
+ * LLM 呼び出しが失敗しても (例: ADC 不備、ネットワーク遮断) pi は当該 pi turn を
  * stopReason: "error" の assistant メッセージとして「正常に」完走させ agent_end を
  * 返すため、ここで拾ってログに出さないと「✅ は付くが返信が無い」という
  * 症状だけが残り、原因が transcript を直接読むまで分からない。

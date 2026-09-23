@@ -232,7 +232,7 @@ export class Dispatcher implements SessionObserver {
     if (event.sender.isBot && !this.gate.allowsBots(channel)) {
       this.logger.debug(
         { channelId, sessionKey: await this.selectSession(event, policy) },
-        "bot message ignored (allowBots not enabled)",
+        "bot message dropped (allowBots not enabled)",
       );
       return;
     }
@@ -445,10 +445,10 @@ export class Dispatcher implements SessionObserver {
           {
             channelId,
             sessionKey: target,
-            naturalKey: sessionKey,
+            derivedSessionKey: sessionKey,
             itemId: item.id,
           },
-          "affinity attach",
+          "affinity joined",
         );
         sessionKey = target;
         // 合流先が生きていれば steer 経路で配達して終わり (running なら即 steer、
@@ -561,7 +561,7 @@ export class Dispatcher implements SessionObserver {
     if (await this.gate.isChannelDisabled(channelId)) {
       this.logger.info(
         { channelId, sessionKey },
-        "debounced dispatch skipped (channel disabled)",
+        "debounced dispatch dropped (channel disabled)",
       );
       return;
     }
@@ -585,22 +585,22 @@ export class Dispatcher implements SessionObserver {
 
   /** affinity 合流先の解決 (message-dispatch.md §3.2)。scope=channel のとき、Gate を
    * 通過したチャンネル直下投稿を Channel の直近 Session へ差し替える。合流しない
-   * 場合は naturalKey をそのまま返す。判定は時間窓ルールのみ (classifier に委ねない) */
+   * 場合は derivedSessionKey をそのまま返す。判定は時間窓ルールのみ (classifier に委ねない) */
   private async resolveAffinityTarget(
-    naturalKey: string,
+    derivedSessionKey: string,
     channelId: string,
     event: InboundMessage,
     channel: ResolvedChannel | null,
   ): Promise<string> {
     const affinity = channel?.session?.affinity;
-    if (affinity?.scope !== "channel") return naturalKey;
+    if (affinity?.scope !== "channel") return derivedSessionKey;
     // スレッド内の発言はそのスレッドの Session に属する (message-dispatch.md §3.1
     // Thread → Session の対応)。合流対象はチャンネル直下投稿のみ
-    if (event.conversation.threadTs !== undefined) return naturalKey;
+    if (event.conversation.threadTs !== undefined) return derivedSessionKey;
 
     const latest = await this.ctx.controlState.threads.latest(channelId);
-    if (latest === null || latest.sessionKey === naturalKey) {
-      return naturalKey;
+    if (latest === null || latest.sessionKey === derivedSessionKey) {
+      return derivedSessionKey;
     }
 
     // 生きている Session (debounce 待機 / starting / running / lingering) へは
@@ -617,19 +617,25 @@ export class Dispatcher implements SessionObserver {
     const windowSec = affinity.windowSec ?? 0;
     const refMs = (latest.endedAt ?? latest.lastActiveAt).getTime();
     if (Date.now() - refMs <= windowSec * 1000) return latest.sessionKey;
-    return naturalKey;
+    return derivedSessionKey;
   }
 
   /** Thread → Session 対応の解決 (message-dispatch.md §3.1)。対応が引けないときは
    * 導出した sessionKey をそのまま使う — 対応の読み出し失敗でイベント処理を止めない */
-  private async resolveBoundSession(naturalKey: string): Promise<string> {
+  private async resolveBoundSession(
+    derivedSessionKey: string,
+  ): Promise<string> {
     try {
       return (
-        (await this.ctx.controlState.threads.resolve(naturalKey)) ?? naturalKey
+        (await this.ctx.controlState.threads.resolve(derivedSessionKey)) ??
+        derivedSessionKey
       );
     } catch (err) {
-      this.logger.warn({ naturalKey, err }, "thread binding resolve failed");
-      return naturalKey;
+      this.logger.warn(
+        { derivedSessionKey, err },
+        "thread binding resolve failed",
+      );
+      return derivedSessionKey;
     }
   }
 

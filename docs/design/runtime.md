@@ -325,12 +325,12 @@ pi を `--mode rpc` で起動し、stdin / stdout の JSONL で対話する。�
 | コマンド | 用途 |
 |---|---|
 | `prompt` | Turn を開始する。`streamingBehavior` で steer / followUp を選べる |
-| `steer` | 実行中の Turn に追加入力する。次のステップ境界 (次の LLM 呼び出し前) で注入される |
+| `steer` | 実行中の Turn に追加入力する。次の pi turn 境界 (次の LLM 呼び出し前) で注入される |
 | `follow_up` | 現 Turn の完了後に処理させる |
 | `abort` | 実行を中断する |
 
-注入のタイミングは pi が管理する。Runner は steer を呼ぶだけで、ステップ境界の検出は
-要らない。
+注入のタイミングは pi が管理する。Runner は steer を呼ぶだけで、pi turn 境界の検出は
+要らない (pi turn の定義は [session-model.md §7](session-model.md#7-turn))。
 
 **読むイベント**
 

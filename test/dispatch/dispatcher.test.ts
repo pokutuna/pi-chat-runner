@@ -220,9 +220,7 @@ describe("Dispatcher (fake-pi integration)", () => {
     expect(entries).not.toContain("session.jsonl");
 
     expect(
-      h
-        .logLines()
-        .some((line) => line.msg === "idle reset: transcript rotated"),
+      h.logLines().some((line) => line.msg === "transcript rotated (idle)"),
     ).toBe(true);
   });
 
@@ -252,9 +250,7 @@ describe("Dispatcher (fake-pi integration)", () => {
     expect(entries).not.toContain("session.jsonl");
 
     expect(
-      h
-        .logLines()
-        .some((line) => line.msg === "size reset: transcript rotated"),
+      h.logLines().some((line) => line.msg === "transcript rotated (size)"),
     ).toBe(true);
   });
 
@@ -417,9 +413,7 @@ describe("Dispatcher (fake-pi integration)", () => {
     );
     expect(entries).not.toContain("session.jsonl");
     expect(
-      h
-        .logLines()
-        .some((line) => line.msg === "manual reset: transcript rotated"),
+      h.logLines().some((line) => line.msg === "transcript rotated (explicit)"),
     ).toBe(true);
     expect(
       (await h.controlState.sessions.get(sessionKey))?.rotateRequestedAt,
@@ -462,9 +456,7 @@ describe("Dispatcher (fake-pi integration)", () => {
     );
     expect(entries).not.toContain("session.jsonl");
     expect(
-      h
-        .logLines()
-        .some((line) => line.msg === "manual reset: transcript rotated"),
+      h.logLines().some((line) => line.msg === "transcript rotated (explicit)"),
     ).toBe(true);
     expect(
       (await h.controlState.sessions.get(sessionKey))?.rotateRequestedAt,
@@ -489,9 +481,7 @@ describe("Dispatcher (fake-pi integration)", () => {
     // マーカーは書き込まれた後、同じ起動内で消費 (rotate) されクリアされる
     // (session-model.md §5.1)。消費された痕跡は rotate ログで確認する
     expect(
-      h
-        .logLines()
-        .some((line) => line.msg === "manual reset: transcript rotated"),
+      h.logLines().some((line) => line.msg === "transcript rotated (explicit)"),
     ).toBe(true);
     expect(
       (await h.controlState.sessions.get(sessionKey))?.rotateRequestedAt,
@@ -540,7 +530,7 @@ describe("Dispatcher (fake-pi integration)", () => {
       h
         .logLines()
         .some(
-          (line) => line.msg === "bot message ignored (allowBots not enabled)",
+          (line) => line.msg === "bot message dropped (allowBots not enabled)",
         ),
     ).toBe(true);
   });
@@ -791,8 +781,10 @@ describe("Dispatcher (fake-pi integration)", () => {
     expect(
       h
         .logLines()
-        .some((line) =>
-          String(line.msg ?? "").includes("reaction trigger skipped"),
+        .some(
+          (line) =>
+            line.msg === "event dropped (channel disabled)" &&
+            line.kind === "reaction",
         ),
     ).toBe(true);
   });
@@ -915,7 +907,7 @@ describe("Dispatcher (fake-pi integration)", () => {
         h
           .logLines()
           .some((line) =>
-            String(line.msg ?? "").includes("debounced dispatch skipped"),
+            String(line.msg ?? "").includes("debounced dispatch dropped"),
           ),
       ).toBe(true);
     } finally {
@@ -1026,10 +1018,10 @@ describe("Dispatcher (fake-pi integration)", () => {
     // 2 件とも prompt (steer ではない) — 新ターンとして開始されたことを示す
     expect(commands.map((c) => c.type)).toEqual(["prompt", "prompt"]);
 
-    expect(h.logLines().some((line) => line.msg === "session continued")).toBe(
-      true,
-    );
-    expect(h.logLines().some((line) => line.msg === "session steered")).toBe(
+    expect(
+      h.logLines().some((line) => line.msg === "turn started (continued)"),
+    ).toBe(true);
+    expect(h.logLines().some((line) => line.msg === "turn steered")).toBe(
       false,
     );
 
@@ -1266,7 +1258,7 @@ describe("Dispatcher (fake-pi integration)", () => {
     expect(commands.filter((cmd) => cmd.type === "prompt")).toHaveLength(2);
     expect(commands[1]?.message).toContain("channel-root follow-up");
 
-    // C 自身の Session (naturalKey) では何も起きていない
+    // C 自身の Session (derivedSessionKey) では何も起きていない
     await expect(stat(join(h.workdirRoot, "C01", c.id))).rejects.toThrow(
       /ENOENT/,
     );

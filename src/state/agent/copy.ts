@@ -52,7 +52,7 @@ export class CopyWorkdirStore implements WorkdirStore {
     const stats: CopyStats = { files: 0, bytes: 0 };
     const entries = await readEntriesOrEmpty(workdir);
     // session.jsonl 以外を先にコピーし、session.jsonl を最後にコピーする
-    // (state.md §5.1: 「アトミック性は transcript を最後に置く順序で担保」)。
+    // (state.md §5.1: 「flush は session.jsonl を最後に書く」)。
     const rest = entries.filter((entry) => entry !== SESSION_FILE);
     for (const entry of rest) {
       await copyRegularEntry(workdir, shelf, entry, stats);
@@ -123,7 +123,7 @@ export class CopySharedStore implements SharedStore {
 
 /** コピー量と所要時間を記録する。どの案 (差分化 / 除外 / まとめて 1 エントリ) が
  * 効くかは files と bytes のどちらが支配的かで変わるため、判断材料として両方残す。
- * info で出す — ターン境界ごとに 1 行で、頻度は turn usage と同程度。 */
+ * info で出す — Turn 境界ごとに 1 行で、頻度は session usage と同程度。 */
 function logCopy(
   logger: Logger | undefined,
   msg: string,

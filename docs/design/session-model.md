@@ -14,7 +14,7 @@ Transcript と Workdir の保存場所は [state.md](state.md) を参照。
 | Channel | メッセージが流れてくる経路。Agent の設定単位 | 恒久 (チャット側の存在) |
 | Thread | Channel 内でのメッセージの流れ。Slack ではチャンネル直下の列と返信スレッド | 恒久 (チャット側の存在) |
 | Session | Agent の会話の単位。Transcript と Workdir を持つ | 1 つ以上の Turn |
-| Turn | Agent に入力を渡してから応答完了の通知を受けるまでの実行上の区切り | 1 回の prompt/steer 〜 agent_end |
+| Turn | Agent に入力を渡してから応答完了の通知を受けるまでの実行上の区切り | 1 回の prompt/steer 〜 willRetry でない agent_end |
 
 Channel と Thread はチャットアプリケーション側の構造、Session と Turn は Runner 側の構造で、
 両者は 1:1 で対応しない。Thread と Session の対応は Dispatcher が決める
@@ -177,6 +177,10 @@ Turn は Agent への prompt または steer の送信で始まり、`willRetry`
 
 1 つの Turn には複数の入力メッセージが載りうる (debounce による束ね、実行中の steer、
 linger 中に届いた分)。逆に 1 つの Session は複数の Turn を持つ。
+
+pi が出す `turn_start` / `turn_end` イベントは LLM 呼び出し 1 回の単位で、これを **pi turn**
+と呼んで Turn と区別する。pi turn は Turn より細かく、1 つの Turn に複数の pi turn が含まれる
+(ツール呼び出しを挟んで LLM を呼び直すため)。
 
 ### 7.1 Turn の成否
 

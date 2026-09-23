@@ -196,7 +196,7 @@ export class EgressRouter {
     if (this.progressClosed.has(threadKey)) {
       this.logger.debug(
         { threadKey },
-        "progress notice dropped (lane closed by reply)",
+        "progress notice dropped (progress path closed by reply)",
       );
       return;
     }

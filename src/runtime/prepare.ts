@@ -315,19 +315,20 @@ export async function prepareWorkdir(args: {
     await mkdir(join(sharedDir, "skills"), { recursive: true });
     await sharedStore.restore(channelId, sharedDir);
   }
-  // 世代交代 (runtime.md §2.1): manual (/new マーカー) → idle 超過 →
+  // 世代交代 (runtime.md §2.1): 明示 (/new マーカー) → idle 超過 →
   // transcript サイズ超過の優先順位で、いずれか 1 回だけ transcript を
   // 世代交代する。previous は idle 判定にも使う。rotate は chown より前
   // (rotate されたファイルの所有権も chown で揃うため)
   const previous = previousSession;
   let rotated = false;
-  // manual は session.mode に依存しない (thread モードでも効く) — idle/size が
-  // channel モード限定なのとは異なる、明示的なユーザー意図のため (runtime.md §2.1)
+  // 明示 (/new マーカー) は session.mode に依存しない (thread モードでも効く) —
+  // idle/size が channel モード限定なのとは異なる、明示的なユーザー意図のため
+  // (runtime.md §2.1)
   if (previous?.rotateRequestedAt !== undefined) {
     const now = Date.now();
     await rotateTranscript(workdir, now);
     rotated = true;
-    logger.info({ sessionKey }, "manual reset: transcript rotated");
+    logger.info({ sessionKey }, "transcript rotated (explicit)");
     // マーカーのクリアはここでは書かない。Runtime の準備は Control State を
     // 書かない (state.md §1) ので、rotateConsumed を返して Dispatcher に消費させる
   }
@@ -346,7 +347,7 @@ export async function prepareWorkdir(args: {
             idleResetMinutes,
             idleMs: now - previous.lastActiveAt.getTime(),
           },
-          "idle reset: transcript rotated",
+          "transcript rotated (idle)",
         );
       }
     }
@@ -362,7 +363,7 @@ export async function prepareWorkdir(args: {
         rotated = true;
         logger.info(
           { sessionKey, maxTranscriptKb, sizeBytes: info.size },
-          "size reset: transcript rotated",
+          "transcript rotated (size)",
         );
       }
     }

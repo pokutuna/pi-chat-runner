@@ -427,7 +427,7 @@ describe("Session (fake-pi integration)", () => {
     expect(systemPrompt).not.toContain("<@USER_ID>");
   });
 
-  it("logs turn usage aggregated from agent_end.messages", async () => {
+  it("logs session usage aggregated from agent_end.messages", async () => {
     const h = await harness();
     const trigger = message({ mentionsBot: true, text: "usage please" });
 
@@ -437,7 +437,9 @@ describe("Session (fake-pi integration)", () => {
       "session removed",
     );
 
-    const usageLogs = h.logLines().filter((line) => line.msg === "turn usage");
+    const usageLogs = h
+      .logLines()
+      .filter((line) => line.msg === "session usage");
     expect(usageLogs).toHaveLength(1);
     expect(usageLogs[0]).toMatchObject({
       input: 100,

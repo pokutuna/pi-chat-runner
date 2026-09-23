@@ -167,10 +167,8 @@ export class GateEvaluator {
       (await this.isChannelDisabled(channelId))
     ) {
       this.#logger.info(
-        { channelId },
-        isReaction
-          ? "reaction trigger skipped (channel disabled)"
-          : "message ignored (channel disabled)",
+        { channelId, kind: event.kind },
+        "event dropped (channel disabled)",
       );
       return { kind: "drop" };
     }

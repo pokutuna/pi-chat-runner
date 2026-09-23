@@ -162,7 +162,7 @@ flowchart TB
     classDef hidden fill:none,stroke:none,color:transparent
 ```
 
-Each stage only knows the interface of its neighbor, not which implementation is behind it. The workdir is restored from Agent State (`WorkdirStore`) before a turn; new vs. resume follows from whether a transcript exists after restore. Control State feeds the `Dispatcher`'s decisions — whether to run at all (channel mute), which instance runs (lease), and which session a message joins (thread → session binding, affinity pointer); the outcome travels down the pipeline as the session part of the turn input.
+Each stage only knows the interface of its neighbor, not which implementation is behind it. The workdir is restored from Agent State (`WorkdirStore`) before a turn; new vs. resume follows from whether a transcript exists after restore. Control State feeds the `Dispatcher`'s decisions — whether to run at all (channel enable/disable), which instance runs (lease), and which session a message joins (thread → session binding, affinity pointer); the outcome travels down the pipeline as the session part of the turn input.
 
 A real deployment (your own Slack App, your own Cloud Run service) lives in a separate repo that extends the base image with `FROM` and fills in the `examples/` templates with real values — see [docs/design/runtime.md](docs/design/runtime.md) §4.3.
 
@@ -170,7 +170,7 @@ A real deployment (your own Slack App, your own Cloud Run service) lives in a se
 
 ### Session
 
-A session is one conversation with the agent, with its own transcript and workdir. `session.mode` picks what counts as one conversation: `thread` (default) — a session grows out of a single message and its thread; `channel` — the channel's whole message stream is one continuous session (the DM default). `/new` cuts a session manually; channel-mode sessions also rotate on idle time (`idleResetMinutes`) or transcript size (`maxTranscriptKb`).
+A session is one conversation with the agent, with its own transcript and workdir. `session.mode` picks what counts as one conversation: `thread` (default) — a session grows out of a single message and its thread; `channel` — the channel's whole message stream is one continuous session (the DM default). `/new` rotates the transcript explicitly; channel-mode sessions also rotate on idle time (`idleResetMinutes`) or transcript size (`maxTranscriptKb`).
 
 ### Turn
 
@@ -194,7 +194,7 @@ There are three ways to use this project, from least to most integration effort.
 
 ### 1. Run the published container image as-is
 
-Deploy the base image directly — published to `ghcr.io/pokutuna/pi-chat-runner` on each tagged release (see `.github/workflows/docker-publish.yaml`) — e.g. to Cloud Run (see `examples/service.yaml`), and only supply config: a single `agent.yaml` (`system`: chat/state/runtime + per-channel triggers/prompts/models), plus a Slack App from one of the `examples/slack-app-manifest.*.yaml` templates. No image build required.
+Deploy the base image directly — published to `ghcr.io/pokutuna/pi-chat-runner` on each tagged release (see `.github/workflows/docker-publish.yaml`) — e.g. to Cloud Run (see `examples/service.yaml`), and only supply config: a single `agent.yaml` (`system`: chat/state/runtime; `agent`: default prompts/models; `channels`: per-channel triggers with prompt/model overrides), plus a Slack App from one of the `examples/slack-app-manifest.*.yaml` templates. No image build required.
 
 This gets you mention/keyword/classifier/reaction triggers, threaded replies, and persistence — but only the CLI tools baked into the base image (`git`/`curl`/`jq`/`ripgrep`/`fd`) and whatever skills/extensions ship in the image's agent home (`$AGENT_HOME/.pi/agent/{skills,extensions}` — empty in the base image beyond the built-in reply/permission-gate/export extensions, which are always injected).
 
@@ -231,9 +231,10 @@ COPY --chown=1001:1001 skills/ /home/agent/.pi/agent/skills/
 COPY --chown=1001:1001 extensions/ /home/agent/.pi/agent/extensions/
 
 # Per-channel skills/extensions: bake them OUTSIDE the auto-discovery paths
-# and reference them from agent.yaml (channels[].skills / .extensions):
+# and reference them from agent.yaml (channels[].agent.skills / .agent.extensions):
 #   - channel: "C0000000001"
-#     skills: [/app/skills/gc-logging]
+#     agent:
+#       skills: [/app/skills/gc-logging]
 COPY --chown=1001:1001 channel-skills/ /app/skills/
 ```
 
@@ -283,7 +284,7 @@ Not published to npm yet (planned). Until then, clone this repo, run `pnpm insta
 Text commands, sent as a chat message, control a channel without touching config:
 
 - `/new` — cut the session: the next trigger starts with clean context. `/new <text>` starts a new session with that text immediately. Rejected while a session is running.
-- `/enable` / `/disable` — per-channel kill switch (default enabled). While disabled, all triggers are silently dropped; `/enable` recovers. State persists in the channel-state store.
+- `/enable` / `/disable` — per-channel kill switch (default enabled). While disabled, all triggers are silently dropped; `/enable` recovers. State persists in Control State.
 
 Commands are exact-match (except `/new <text>`), human-senders only, and normally apply to messages that pass the Gate — in a mention-gated channel send `@bot /new` (which also keeps Slack's client from capturing a bare leading `/` as its own slash command).
 

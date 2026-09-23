@@ -362,19 +362,19 @@ export class Session {
         // リトライ前にセッションを終わらせてしまうので、この中間 agent_end は
         // 何もせず素通しし、成否判定・flush/ack・終了判定は次の agent_end に委ねる
         if (piEvent.willRetry === true) return;
-        // ターン内の LLM 呼び出し失敗は agent_end としては正常終了になるので、
-        // ここで拾わないとログに一切残らない (pi-events.ts extractTurnErrors)
+        // Turn 内のある pi turn の LLM 呼び出し失敗は agent_end としては正常終了に
+        // なるので、ここで拾わないとログに一切残らない (pi-events.ts extractTurnErrors)
         for (const errorMessage of extractTurnErrors(piEvent)) {
           this.#ctx.logger.error(
             { sessionKey, errorMessage },
-            "assistant turn ended with error",
+            "pi turn ended with error",
           );
         }
         // agent_end.messages は毎回全履歴を返すため、この totals はターンの増分では
         // なくセッション累計 (pi-events.ts extractUsageTotals)
         const totals = extractUsageTotals(piEvent);
         this.#usageTotals = totals;
-        this.#ctx.logger.info({ sessionKey, ...totals }, "turn usage");
+        this.#ctx.logger.info({ sessionKey, ...totals }, "session usage");
         // 進捗タイマーは agent_end を受けた時点で即止める。onAgentEnd の
         // teardown まで待つと、その間の await の隙間でタイマー tick がもう一件
         // 発火し、deliver 済みの reply の後に古いツール名で新規投稿してしまう
@@ -568,7 +568,7 @@ export class Session {
       proc.steer(renderItems(pending));
       this.#ctx.logger.info(
         { sessionKey, items: pending.length },
-        "session steered",
+        "turn steered",
       );
     }
   }
@@ -776,7 +776,7 @@ export class Session {
     proc.prompt(renderItems(items));
     this.#ctx.logger.info(
       { sessionKey, items: items.length },
-      "session continued",
+      "turn started (continued)",
     );
     return true;
   }

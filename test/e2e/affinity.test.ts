@@ -71,17 +71,19 @@ describeLive("live: affinity", () => {
       expect(reply.text).toMatch(/りんご/);
 
       // Session は A のものだけ。B の自然キーでは Session レコードが作られない。
-      const naturalKeyB = `${ALIVE_CHANNEL_ID}:${b.ts}`;
-      expect(await runner.controlState.sessions.get(naturalKeyB)).toBeNull();
+      const derivedSessionKeyB = `${ALIVE_CHANNEL_ID}:${b.ts}`;
+      expect(
+        await runner.controlState.sessions.get(derivedSessionKeyB),
+      ).toBeNull();
       const sessionA = await runner.controlState.sessions.get(
         `${ALIVE_CHANNEL_ID}:${a.ts}`,
       );
       expect(sessionA).not.toBeNull();
 
       // B のスレッドは A の Session に束ねられ、Channel の直近 Session も A のまま。
-      expect(await runner.controlState.threads.resolve(naturalKeyB)).toBe(
-        `${ALIVE_CHANNEL_ID}:${a.ts}`,
-      );
+      expect(
+        await runner.controlState.threads.resolve(derivedSessionKeyB),
+      ).toBe(`${ALIVE_CHANNEL_ID}:${a.ts}`);
       const latest = await runner.controlState.threads.latest(ALIVE_CHANNEL_ID);
       expect(latest?.sessionKey).toBe(`${ALIVE_CHANNEL_ID}:${a.ts}`);
 

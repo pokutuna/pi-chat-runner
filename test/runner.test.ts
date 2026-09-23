@@ -279,7 +279,7 @@ describe("startRunner", () => {
     expect(ingress.acked).toBe(1);
     expect(
       lines().some(
-        (line) => line.msg === "event ignored" && line.reason === "self_echo",
+        (line) => line.msg === "event dropped" && line.reason === "self_echo",
       ),
     ).toBe(true);
     expect(web.posted).toHaveLength(0);
@@ -372,7 +372,7 @@ describe("startRunner", () => {
     expect(
       lines().some(
         (line) =>
-          line.msg === "event ignored" &&
+          line.msg === "event dropped" &&
           line.reason === "self_echo" &&
           line.kind === "reaction",
       ),

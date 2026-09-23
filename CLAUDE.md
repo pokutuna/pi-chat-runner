@@ -51,7 +51,7 @@ Inbox              — durable, dedupe'd queue of accepted events (src/state/con
 Dispatcher         — picks the session, acquires the lease, drains the inbox, starts/resumes it (src/dispatch/)
     │  turn input
     ▼
-Session / Runtime  — drives the turn; prepares the workdir and spawns/drives the pi child process via RPC (src/session/, src/runtime/)
+Agent (Session / Runtime) — drives the turn; prepares the workdir and spawns/drives the pi child process via RPC (src/session/, src/runtime/)
     │  reply(thread_key, text, files?)
     ▼
 Egress             — resolves thread_key to destination, formats (mrkdwn for Slack), chunks (src/egress/)

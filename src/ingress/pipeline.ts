@@ -58,7 +58,7 @@ export async function startIngressPipeline(
 
     if (event.kind === "reaction") {
       if (event.sender.isSelf) {
-        logger.info({ reason: "self_echo", kind: event.kind }, "event ignored");
+        logger.info({ reason: "self_echo", kind: event.kind }, "event dropped");
         return;
       }
       try {
@@ -78,13 +78,13 @@ export async function startIngressPipeline(
     if (event.kind !== "message") {
       logger.info(
         { reason: "unsupported_kind", kind: event.kind },
-        "event ignored",
+        "event dropped",
       );
       return;
     }
 
     if (event.sender.isSelf) {
-      logger.info({ reason: "self_echo", eventId: event.id }, "event ignored");
+      logger.info({ reason: "self_echo", eventId: event.id }, "event dropped");
       return;
     }
 

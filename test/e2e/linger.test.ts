@@ -1,7 +1,7 @@
 // Turn 終了後の linger (docs/design/message-dispatch.md §7.3)。
 //
 // linger は agent_end の後も Agent プロセスと lease を短時間維持する。その間に
-// 届いたメッセージは同じプロセスの次の Turn として拾われ ("session continued")、
+// 届いたメッセージは同じプロセスの次の Turn として拾われ ("turn started (continued)")、
 // Agent の再起動も Workdir の復元も起きない。
 //
 // linger が満了してから届いたメッセージは Session を起こし直す
@@ -51,7 +51,7 @@ describeLive("live: linger", () => {
 
       const sessionKey = `${CONTINUE_CHANNEL_ID}:${root.ts}`;
       const continued = await runner.waitForLog(
-        "session continued",
+        "turn started (continued)",
         (r) => r.sessionKey === sessionKey,
         60_000,
       );

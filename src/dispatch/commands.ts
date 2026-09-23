@@ -88,7 +88,7 @@ export async function rejectNewWhileRunning(
 ): Promise<void> {
   const threadKey = registerReplyDestination(deps.router, event, policy);
   await deliverCommandNotice(deps, sessionKey, threadKey, REJECT_NOTICE_TEXT);
-  deps.logger.info({ sessionKey }, "session rotation rejected: running");
+  deps.logger.info({ sessionKey }, "transcript rotation rejected: running");
 }
 
 /** `/new` コマンドの処理 (session-model.md §5.1)。Gate を通過済み、かつこの Session に
@@ -117,7 +117,7 @@ export async function handleNewCommand(
     await deliverCommandNotice(deps, sessionKey, threadKey, REJECT_NOTICE_TEXT);
     deps.logger.info(
       { sessionKey },
-      "session rotation rejected: lease unavailable",
+      "transcript rotation rejected: lease unavailable",
     );
     return null;
   }
@@ -146,7 +146,7 @@ export async function handleNewCommand(
   } finally {
     await deps.controlState.leases.release(lease);
   }
-  deps.logger.info({ sessionKey }, "session rotation requested");
+  deps.logger.info({ sessionKey }, "transcript rotation requested");
 
   if (cmd.rest !== undefined) return { rest: cmd.rest };
 

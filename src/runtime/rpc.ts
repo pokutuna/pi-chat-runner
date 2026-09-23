@@ -60,7 +60,9 @@ export interface AgentEndEvent {
   willRetry?: boolean;
 }
 
-/** その他のイベントは型名だけ識別して素通しする */
+/** その他のイベントは型名だけ識別して素通しする。
+ * 注意: pi の `turn_start` / `turn_end` は pi turn (LLM 呼び出し 1 回) の境界であり、
+ * Design の Turn (agent_end で終端する prompt/steer 単位) とは別物 (session-model.md §7) */
 export interface UnknownPiEvent {
   type: string;
   [key: string]: unknown;

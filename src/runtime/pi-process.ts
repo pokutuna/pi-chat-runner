@@ -189,7 +189,8 @@ export class PiProcess extends EventEmitter<PiProcessEvents> {
     );
   }
 
-  /** 実行中の割り込み。次のステップ境界 (次の LLM 呼び出し前) で注入される */
+  /** 実行中の割り込み。次の pi turn 境界 (次の LLM 呼び出し前) で注入される
+   * (pi turn の定義は session-model.md §7) */
   steer(message: string): void {
     this.send({ type: "steer", message });
   }

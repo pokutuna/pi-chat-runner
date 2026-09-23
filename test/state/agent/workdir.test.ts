@@ -111,7 +111,7 @@ describe("CopyWorkdirStore", () => {
     );
   });
 
-  it("maps the ':' in threadKey to a path separator on the shelf", async () => {
+  it("maps the ':' in sessionKey to a path separator on the shelf", async () => {
     const storage = new CopyWorkdirStore(baseDir);
     await writeWorkdirFiles();
 

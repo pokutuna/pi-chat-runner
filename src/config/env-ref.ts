@@ -1,5 +1,5 @@
-// ${env.X} 参照解決モジュール — agent.yaml / channels.yaml など、今後 connector/store/agent
-// の全スキーマが依存する土台。「A2: parse 後走査」方式を採る: YAML テキストを置換するの
+// ${env.X} 参照解決モジュール — 単一 YAML (system / agent / channels の 3 ブロック) が
+// 依存する土台。「A2: parse 後走査」方式を採る: YAML テキストを置換するの
 // ではなく、yaml.parse() 済みの JS オブジェクトを再帰走査して string 値中の参照だけを
 // 置換する。YAML 構造を壊さない・コメントに影響しない・エラーでフィールドパスを示せる
 // ことがこの方式を選んだ理由。
