@@ -1,0 +1,103 @@
+// srt (sandbox-runtime) 向け settings の組み立て (docs/design/runtime.md §5.5)。
+//
+// 利用者が書いた完全ルール (config/sandbox-config.ts で正規化・Channel 追加分を
+// union 済み) に、Runner が Session ごとに決める書き込み先を足して srt に渡す最終形
+// にする。ここは純粋関数だけ — ファイルの書き出しは Session (session/session.ts) が、
+// spawn 引数への展開は pi-args.ts の wrapWithSrt が行う。
+
+import { isAbsolute, join, resolve } from "node:path";
+
+import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
+
+import type { SandboxRules } from "../config/sandbox-config.js";
+
+/** PiProcess に渡す、srt CLI で pi を包むための起動パラメタ。 */
+export interface SandboxSpawnConfig {
+  /** srt の dist/cli.js の絶対パス (RuntimeConfig.srtEntrypoint) */
+  srtEntrypoint: string;
+  /** `--settings` に渡す、Session 用に合成済みの settings ファイルの絶対パス */
+  settingsPath: string;
+  /** true なら `--debug` を付ける (srt の [SandboxDebug] 行が pi の stderr に混ざる)。
+   * Runner のログレベルが debug のときに立てる */
+  debug: boolean;
+}
+
+/** Session 用 settings ファイルの置き場: `<workdirRoot>/srt/<sessionKey>.json`。
+ * workdir の外に置く — agent が自分のポリシーファイルを書き換えられないように
+ * (workdir は agent 所有、workdirRoot 直下は Runner 所有)。sessionKey は
+ * `<channelId>:<threadTs>` 形で `/` を含まないが、ファイル名として安全な形に
+ * エンコードしておく */
+export function sandboxSettingsPath(
+  workdirRoot: string,
+  sessionKey: string,
+): string {
+  return join(workdirRoot, "srt", `${encodeURIComponent(sessionKey)}.json`);
+}
+
+/** buildSandboxSettings の結果。 */
+export interface SandboxSettings {
+  /** srt に渡す最終形 (`--settings` ファイルの中身) */
+  settings: SandboxRuntimeConfig;
+  /** 利用者ルールの filesystem.allowRead / allowWrite を Node Permission Model の
+   * `--allow-fs-read` / `--allow-fs-write` へ写すためのパターン群 (runtime.md §5.5)。
+   * srt の read は既定で全許可 (deny-then-allow) なので、「別ディレクトリを読みたい」
+   * を実際に満たすのは Permission Model 側 — sandbox ファイルを fs ポリシーの唯一の
+   * 書き場所にするため、両層へ同じ集合を渡す。Runner が足す allowWrite (workdir 等)
+   * は Permission Model 側が既に自前で持っているのでここには含めない */
+  permission: { allowRead: string[]; allowWrite: string[] };
+}
+
+/** 利用者ルール + Runner が足す書き込み先を合成する (runtime.md §5.5)。
+ *
+ * - `filesystem.allowWrite` に allowWrite (Session の workdir・TMPDIR・agentHome・
+ *   shared staging。Permission Model の allowFsWrite と同じ集合) を足す (additive、
+ *   利用者は外せない)。network には何も足さない — provider の到達先も利用者ファイルの
+ *   責任 (config.md §1.3)
+ * - 利用者の allowRead / allowWrite は Permission Model 用パターンにも展開する。
+ *   srt は `~` を HOME で、相対パスを cwd (= workdir) 基準で解くので、同じ規則で
+ *   絶対化してから `dir` と `dir/*` の両方を出す (readdir にディレクトリ自体の許可も
+ *   要る)。グロブを含むエントリはそのまま渡す */
+export function buildSandboxSettings(input: {
+  rules: SandboxRules;
+  allowWrite: string[];
+  /** pi 子プロセスの HOME (agentHomeReal)。`~` の展開先 */
+  home: string;
+  /** pi 子プロセスの cwd (workdirReal)。相対パスの基準 */
+  cwd: string;
+}): SandboxSettings {
+  const { rules, allowWrite, home, cwd } = input;
+  const userAllowRead = rules.filesystem.allowRead ?? [];
+  const userAllowWrite = rules.filesystem.allowWrite;
+  const settings: SandboxRuntimeConfig = {
+    ...rules,
+    filesystem: {
+      ...rules.filesystem,
+      allowWrite: [...new Set([...userAllowWrite, ...allowWrite])],
+    },
+  };
+  const expand = (paths: readonly string[]): string[] => [
+    ...new Set(paths.flatMap((p) => permissionPatterns(p, { home, cwd }))),
+  ];
+  return {
+    settings,
+    permission: {
+      allowRead: expand(userAllowRead),
+      allowWrite: expand(userAllowWrite),
+    },
+  };
+}
+
+/** srt のパス規則 (`~` は HOME、相対は cwd 基準) で絶対化し、Permission Model の
+ * パターンに展開する。 */
+function permissionPatterns(
+  path: string,
+  base: { home: string; cwd: string },
+): string[] {
+  let absolute: string;
+  if (path === "~") absolute = base.home;
+  else if (path.startsWith("~/")) absolute = join(base.home, path.slice(2));
+  else if (isAbsolute(path)) absolute = path;
+  else absolute = resolve(base.cwd, path);
+  if (/[*?[\]]/.test(absolute)) return [absolute];
+  return [absolute, `${absolute}/*`];
+}

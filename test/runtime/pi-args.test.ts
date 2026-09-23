@@ -6,6 +6,8 @@ import {
   buildPiEnv,
   buildPiPermissionOptions,
   buildSpawnCommand,
+  piBashSpillPatterns,
+  wrapWithSrt,
 } from "../../src/runtime/pi-args.js";
 
 describe("buildPiArgs", () => {
@@ -387,5 +389,86 @@ describe("buildPiPermissionOptions (runtime.md §5.2)", () => {
       "/Users/me/.config/gcloud/application_default_credentials.json",
     );
     expect(options.allowFsRead).toContain("/repo/extensions/*");
+  });
+});
+
+describe("piBashSpillPatterns", () => {
+  it("falls back to /tmp/pi-bash-* when no session TMPDIR is given", () => {
+    expect(piBashSpillPatterns()).toContain("/tmp/pi-bash-*");
+  });
+
+  it("allows the session TMPDIR itself and its contents, and nothing under /tmp", () => {
+    expect(piBashSpillPatterns("/data/work/C01/tmp/1700")).toEqual([
+      "/data/work/C01/tmp/1700",
+      "/data/work/C01/tmp/1700/*",
+    ]);
+  });
+});
+
+describe("buildPiPermissionOptions with tmpDir", () => {
+  it("uses the session TMPDIR for the spill patterns in both read and write", () => {
+    const options = buildPiPermissionOptions({
+      entrypoint: "/usr/local/lib/node_modules/pi/dist/cli.js",
+      nodeModulesDir: "/usr/local/lib/node_modules",
+      workdir: "/tmp/workdir",
+      home: "/home/agent",
+      tmpDir: "/data/tmp/s1",
+    });
+    expect(options.allowFsWrite).toContain("/data/tmp/s1/*");
+    expect(options.allowFsRead).toContain("/data/tmp/s1");
+    expect(options.allowFsWrite).not.toContain("/tmp/pi-bash-*");
+    expect(options.allowFsRead).not.toContain("/tmp/pi-bash-*");
+  });
+});
+
+describe("wrapWithSrt", () => {
+  const inner = {
+    command: "/usr/local/bin/node",
+    args: [
+      "--permission",
+      "--allow-fs-read=/x/*",
+      "/pi/cli.js",
+      "--mode",
+      "rpc",
+    ],
+  };
+
+  it("runs srt's cli.js with node and passes the inner command after --", () => {
+    expect(
+      wrapWithSrt(inner, {
+        srtEntrypoint:
+          "/app/node_modules/@anthropic-ai/sandbox-runtime/dist/cli.js",
+        settingsPath: "/data/work/srt/C01.json",
+        debug: false,
+      }),
+    ).toEqual({
+      command: process.execPath,
+      args: [
+        "/app/node_modules/@anthropic-ai/sandbox-runtime/dist/cli.js",
+        "--settings",
+        "/data/work/srt/C01.json",
+        "--",
+        "/usr/local/bin/node",
+        "--permission",
+        "--allow-fs-read=/x/*",
+        "/pi/cli.js",
+        "--mode",
+        "rpc",
+      ],
+    });
+  });
+
+  it("adds --debug before --settings when requested", () => {
+    const { args } = wrapWithSrt(inner, {
+      srtEntrypoint: "/srt/cli.js",
+      settingsPath: "/s.json",
+      debug: true,
+    });
+    expect(args.slice(0, 4)).toEqual([
+      "/srt/cli.js",
+      "--debug",
+      "--settings",
+      "/s.json",
+    ]);
   });
 });

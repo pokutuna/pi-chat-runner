@@ -8,6 +8,7 @@ import { realpathSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 import type { PiProcessOptions } from "./pi-process.js";
+import type { SandboxSpawnConfig } from "./sandbox.js";
 
 /**
  * Node Permission Model 経由での起動設定 (pi-tools-and-sandbox.md
@@ -156,6 +157,33 @@ export function buildSpawnCommand(
 }
 
 /**
+ * buildSpawnCommand の結果を srt CLI で包む (純粋関数、テスト対象。runtime.md §5.5)。
+ * `node <srt cli.js> [--debug] --settings <file> -- <command> <args...>` の形。
+ * srt はライブラリではなく CLI で挟む — srt のネットワーク許可リストはプロセス単位で
+ * 1 つしか持てないため、Channel ごとに違う許可リストを与えるには Session ごとに srt
+ * プロセスを立てる必要がある。Permission Model 込みの `node --permission ...` も
+ * そのまま内側のコマンドとして渡せる (srt → bwrap → node --permission → pi の順に
+ * ネストし、Permission Model が最内殻)。argv は srt がシェル用にクォートして子に渡す。
+ */
+export function wrapWithSrt(
+  inner: { command: string; args: string[] },
+  sandbox: SandboxSpawnConfig,
+): { command: string; args: string[] } {
+  return {
+    command: process.execPath,
+    args: [
+      sandbox.srtEntrypoint,
+      ...(sandbox.debug ? ["--debug"] : []),
+      "--settings",
+      sandbox.settingsPath,
+      "--",
+      inner.command,
+      ...inner.args,
+    ],
+  };
+}
+
+/**
  * pi 起動時に cwd から `/` まで祖先ディレクトリを 1 段ずつ遡って existsSync する
  * ファイル名 (プロジェクト trust 判定・context ファイル探索。pi
  * dist/core/trust-manager.js の TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES と
@@ -232,7 +260,12 @@ export function buildPiPermissionOptions(options: {
   extraRead?: string[];
   /** `--allow-addons` の付与 (PiPermissionOptions.allowAddons へ素通し)。既定 false */
   allowAddons?: boolean;
+  /** pi に TMPDIR として渡す Session 専用ディレクトリ (runtime.md §5.5)。指定時は
+   * bash 出力のスピル先 (tmpdir()/pi-bash-*.log) の許可をここに向け、/tmp 直下の
+   * パターンは出さない。未指定なら従来どおり /tmp/pi-bash-* を許可する */
+  tmpDir?: string;
 }): PiPermissionOptions {
+  const spill = piBashSpillPatterns(options.tmpDir);
   return {
     entrypoint: options.entrypoint,
     ...(options.allowAddons !== undefined
@@ -256,23 +289,28 @@ export function buildPiPermissionOptions(options: {
       // bash tool の出力が 50KB (DEFAULT_MAX_BYTES) を超えると pi は
       // tmpdir()/pi-bash-<id>.log へスピルする (dist/core/bash-executor.js)。
       // 許可しないと WriteStream の unhandled 'error' で pi がツール実行中に即死する。
-      // buildPiEnv は TMPDIR を渡さないため pi から見た tmpdir() は常に /tmp
-      ...piBashSpillPatterns(),
+      // tmpdir() は TMPDIR を見る (Node の os.tmpdir) ので、tmpDir を渡す構成では
+      // そこを、渡さない構成では /tmp を許可する
+      ...spill,
       ...(options.extraRead ?? []),
     ],
     allowFsWrite: [
       `${options.workdir}/*`,
       `${options.home}/*`,
-      ...piBashSpillPatterns(),
+      ...spill,
       ...(options.extraWrite ?? []),
     ],
   };
 }
 
-/** pi の bash 出力スピルファイル (/tmp/pi-bash-*.log) の許可パターン。
- * macOS では /tmp が /private/tmp への symlink で、Permission Model の照合は
- * パスの実体化タイミングで揺れるため realpath 側も併記する */
-function piBashSpillPatterns(): string[] {
+/** pi の bash 出力スピルファイル (tmpdir()/pi-bash-*.log) の許可パターン。
+ * tmpDir (Session 専用の TMPDIR) が与えられればディレクトリ自体と配下を許可する
+ * (srt はグロブをディスク上に展開するため、srt 側 allowWrite にはディレクトリを
+ * 渡す。Permission Model 側も同じディレクトリに揃える)。
+ * 与えられなければ /tmp/pi-bash-*。macOS では /tmp が /private/tmp への symlink で、
+ * Permission Model の照合はパスの実体化タイミングで揺れるため realpath 側も併記する */
+export function piBashSpillPatterns(tmpDir?: string): string[] {
+  if (tmpDir !== undefined) return [tmpDir, `${tmpDir}/*`];
   const patterns = new Set<string>(["/tmp/pi-bash-*"]);
   try {
     patterns.add(join(realpathSync("/tmp"), "pi-bash-*"));

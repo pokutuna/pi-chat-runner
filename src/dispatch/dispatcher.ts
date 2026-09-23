@@ -764,6 +764,7 @@ export class Dispatcher implements SessionObserver {
       const {
         workdirReal,
         agentHomeReal,
+        tmpDirReal,
         sharedDirReal,
         sessionPath,
         resumed,
@@ -791,6 +792,7 @@ export class Dispatcher implements SessionObserver {
         await buildSpawnOptions({
           agentHomeReal,
           workdirReal,
+          tmpDirReal,
           sharedDirReal,
           channel,
           builtinExtensionPaths: this.extensionPaths,
@@ -803,12 +805,15 @@ export class Dispatcher implements SessionObserver {
       // (server.ts の gcpEnv / PI_EXPORT_ENTRYPOINT。ctx.extraEnv) の上に、解決済み
       // Channel の Agent Config の env を Channel ごとに重ねる。後勝ちなのは
       // 「利用者が意図して GOOGLE_CLOUD_PROJECT 等を差し替える」を許すため。
-      // 最後に HOME を agentHome へ上書きする (Runner 自身の HOME は継承しない。
-      // buildPiEnv は extraEnv が PATH/HOME を上書きできる実装になっている)
+      // 最後に HOME を agentHome へ、TMPDIR を Session 専用ディレクトリへ上書きする
+      // (Runner 自身の HOME は継承しない。buildPiEnv は extraEnv が PATH/HOME を
+      // 上書きできる実装になっている)。TMPDIR は Permission Model / srt の
+      // allowWrite と同じ tmpDirReal を向ける (runtime.md §5.5)
       const extraEnv = {
         ...this.ctx.runtime.extraEnv,
         ...channel?.agent.env,
         HOME: agentHomeReal,
+        TMPDIR: tmpDirReal,
       };
       // memory の索引 (MEMORY.md) は skill 発火 (agent の自発的な read) に頼らず
       // system prompt に常時注入する (docs/design/runtime.md §6)。1 行 1 メモリの

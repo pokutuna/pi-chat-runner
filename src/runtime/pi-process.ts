@@ -16,6 +16,7 @@ import {
   buildPiArgs,
   buildPiEnv,
   buildSpawnCommand,
+  wrapWithSrt,
   type PiPermissionOptions,
 } from "./pi-args.js";
 import {
@@ -25,6 +26,7 @@ import {
   type RpcCommand,
   type RpcResponse,
 } from "./rpc.js";
+import type { SandboxSpawnConfig } from "./sandbox.js";
 
 // graceful stop の 2 段の猶予 (stop() 既定)。compaction 中の書き出しなど、pi 側の
 // 後始末は SIGTERM 後よりも stdin close 後の方が長くかかりうるため、
@@ -46,6 +48,9 @@ export interface PiProcessOptions {
   piEntrypoint?: string;
   /** 指定時、`node --permission` 経由で pi を起動する (opt-in)。省略時は現状動作 */
   permission?: PiPermissionOptions;
+  /** 指定時、起動コマンド全体を srt CLI で包む (runtime.md §5.5)。settings ファイルは
+   * 呼び出し側 (Session) が書き終えてから渡す */
+  sandbox?: SandboxSpawnConfig;
   /** `--model` に渡す `provider/model-id[:thinking-level]` (省略時は pi のローカル
    * 設定に従う)。provider の切り替え・thinking level はこの shorthand で表現し、
    * パースは pi の resolveCliModel に委譲する (--provider は渡さない) */
@@ -114,10 +119,11 @@ export class PiProcess extends EventEmitter<PiProcessEvents> {
 
   start(): void {
     if (this.child) throw new Error("PiProcess already started");
-    const { command, args } = buildSpawnCommand(
-      buildPiArgs(this.options),
-      this.options,
-    );
+    const inner = buildSpawnCommand(buildPiArgs(this.options), this.options);
+    const { command, args } =
+      this.options.sandbox !== undefined
+        ? wrapWithSrt(inner, this.options.sandbox)
+        : inner;
     const child = spawn(command, args, {
       cwd: this.options.cwd,
       env: buildPiEnv(process.env, this.options.extraEnv),

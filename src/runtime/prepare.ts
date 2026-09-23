@@ -15,10 +15,13 @@ import {
   readFile,
   realpath,
   rename,
+  rm,
   stat,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 
 import type { ResolvedChannel } from "../config/config-source.js";
 import { isIdleExpired, type SessionPolicy } from "../dispatch/policy.js";
@@ -29,7 +32,19 @@ import {
   buildPiPermissionOptions,
   type PiPermissionOptions,
 } from "./pi-args.js";
+import { buildSandboxSettings } from "./sandbox.js";
 import { rotatedSessionFile, SESSION_FILE } from "./session-file.js";
+
+/** Session 専用の一時ディレクトリ (pi に TMPDIR として渡す。runtime.md §5.5)。
+ * workdir `<root>/<channelId>/<leaf>` に対し `<root>/<channelId>/tmp/<leaf>` —
+ * workdir の外 (archive に巻き込まない) で、Session ごとに分かれる (同 uid の他
+ * Session の書き込み先を /tmp 共有で開けない)。pi の bash 出力スピル
+ * (tmpdir()/pi-bash-*.log) がここに落ちる。srt の allowWrite はグロブをディスク上に
+ * 展開するため、まだ無い `/tmp/pi-bash-*` は許可できない — 実在するディレクトリを
+ * 渡す必要があり、それがこのディレクトリ */
+export function sessionTmpDir(workdir: string): string {
+  return join(dirname(workdir), "tmp", basename(workdir));
+}
 
 /** 組み込み extension のファイル名 (リポジトリ/パッケージ直下の extensions/)。
  * reply は唯一の返信経路、permission-gate は事故防止層 (runtime.md §4.1) で、どの
@@ -243,6 +258,8 @@ export interface PreparedWorkdir {
   workdirReal: string;
   /** realpath 正規化済みの agentHome 絶対パス */
   agentHomeReal: string;
+  /** realpath 正規化済みの Session 専用 TMPDIR (sessionTmpDir)。起動ごとに空で作り直す */
+  tmpDirReal: string;
   /** shared staging の realpath 正規化済み絶対パス (shared 無効なら undefined) */
   sharedDirReal: string | undefined;
   /** workdirReal 直下の session.jsonl 絶対パス */
@@ -383,6 +400,15 @@ export async function prepareWorkdir(args: {
       await chmod(sharedDir, 0o700);
     }
   }
+  // Session 専用の TMPDIR (runtime.md §5.5)。前回起動のスピルファイルを持ち越さない
+  // よう起動ごとに空にして作り直す。workdir と同じく UID 分離時は agent 所有 0700
+  const tmpDir = sessionTmpDir(workdir);
+  await rm(tmpDir, { recursive: true, force: true });
+  await mkdir(tmpDir, { recursive: true });
+  if (agentUid !== undefined && agentGid !== undefined) {
+    await chown(tmpDir, agentUid, agentGid);
+    await chmod(tmpDir, 0o700);
+  }
   // agentHome は常に pi の HOME になるため、存在しなければここで作る
   // (Dockerfile の useradd --create-home + COPY --chown で作成済みならほぼ
   // no-op だが、PI_AGENT_HOME で既定と異なるパスを指定した場合に備える)。
@@ -407,6 +433,7 @@ export async function prepareWorkdir(args: {
   // (Linux では通常 no-op)
   const workdirReal = await realpath(workdir);
   const agentHomeReal = await realpath(agentHome);
+  const tmpDirReal = await realpath(tmpDir);
   const sharedDirReal =
     sharedDir !== undefined ? await realpath(sharedDir) : undefined;
   const sessionPath = join(workdirReal, SESSION_FILE);
@@ -415,6 +442,7 @@ export async function prepareWorkdir(args: {
   return {
     workdirReal,
     agentHomeReal,
+    tmpDirReal,
     sharedDirReal,
     sessionPath,
     resumed,
@@ -429,14 +457,19 @@ export interface SpawnPaths {
   skillPaths: string[];
   memoryEnabled: boolean;
   permission: PiPermissionOptions | undefined;
+  /** srt に渡す合成済み settings (runtime.md §5.5)。Channel の agent.sandbox が
+   * 無効 (省略 / false) なら undefined。ファイルへの書き出しと srt CLI での包み方は
+   * Session 側 */
+  sandbox: SandboxRuntimeConfig | undefined;
 }
 
 /** Session 起動中盤、extension/skill パス解決 (channel resource + builtin) と Node
- * Permission Model オプション組み立てをまとめる (runtime.md §4, §5.2)。
- * record への書き込みは行わない。 */
+ * Permission Model オプション組み立て、srt settings の合成をまとめる
+ * (runtime.md §4, §5.2, §5.5)。record への書き込みは行わない。 */
 export async function buildSpawnOptions(args: {
   agentHomeReal: string;
   workdirReal: string;
+  tmpDirReal: string;
   sharedDirReal: string | undefined;
   channel: ResolvedChannel | null;
   builtinExtensionPaths: string[];
@@ -446,6 +479,7 @@ export async function buildSpawnOptions(args: {
   const {
     agentHomeReal,
     workdirReal,
+    tmpDirReal,
     sharedDirReal,
     channel,
     builtinExtensionPaths,
@@ -517,6 +551,26 @@ export async function buildSpawnOptions(args: {
     sharedDirReal !== undefined ? [`${sharedDirReal}/*`] : [];
   const sharedPermissionRead =
     sharedDirReal !== undefined ? [sharedDirReal, `${sharedDirReal}/*`] : [];
+
+  // srt settings の合成 (runtime.md §5.5)。Runner が足す allowWrite は Permission
+  // Model の allowFsWrite と同じ集合 (workdir / TMPDIR / home / shared staging) を
+  // ディレクトリで渡す。利用者の allowRead / allowWrite は Permission Model 側にも写す
+  const rules = channel?.agent.sandbox;
+  const sandboxSettings =
+    rules !== undefined && rules !== false
+      ? buildSandboxSettings({
+          rules,
+          allowWrite: [
+            workdirReal,
+            tmpDirReal,
+            home,
+            ...(sharedDirReal !== undefined ? [sharedDirReal] : []),
+          ],
+          home,
+          cwd: workdirReal,
+        })
+      : undefined;
+
   const permission =
     piPermission !== undefined
       ? buildPiPermissionOptions({
@@ -524,9 +578,11 @@ export async function buildSpawnOptions(args: {
           nodeModulesDir: piPermission.nodeModulesDir,
           workdir: workdirReal,
           home,
+          tmpDir: tmpDirReal,
           extraWrite: [
             ...(piPermission.extraWrite ?? []),
             ...sharedPermissionWrite,
+            ...(sandboxSettings?.permission.allowWrite ?? []),
           ],
           extraRead: [
             ...extensionReadDirs.map((dir) => `${dir}/*`),
@@ -535,6 +591,7 @@ export async function buildSpawnOptions(args: {
             ...skillPaths.flatMap((dir) => [dir, `${dir}/*`]),
             ...sharedPermissionRead,
             ...(piPermission.extraRead ?? []),
+            ...(sandboxSettings?.permission.allowRead ?? []),
           ],
           ...(piPermission.allowAddons !== undefined
             ? { allowAddons: piPermission.allowAddons }
@@ -542,7 +599,13 @@ export async function buildSpawnOptions(args: {
         })
       : undefined;
 
-  return { extensionPaths, skillPaths, memoryEnabled, permission };
+  return {
+    extensionPaths,
+    skillPaths,
+    memoryEnabled,
+    permission,
+    sandbox: sandboxSettings?.settings,
+  };
 }
 
 /** Session 起動後半、memory index (MEMORY.md) の読み込み (docs/design/runtime.md §6)。
