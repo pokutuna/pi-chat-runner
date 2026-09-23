@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { ChannelsFileSchema } from "../../src/config/channel-config.js";
 import { formatEffectiveConfig, formatWhen } from "../../src/config/dump.js";
+import { SandboxRulesSchema } from "../../src/config/sandbox-config.js";
 
 describe("formatEffectiveConfig", () => {
   it("formats a normal channel in pretty mode with per-field provenance", () => {
@@ -204,6 +205,43 @@ describe("formatEffectiveConfig", () => {
     expect(payload.agentFields.memory.source).toBe("default agent");
     expect(payload.channelFields["reply.mode"].source).toBe("code default");
     expect(payload.when).toEqual([{ kind: "mention" }]);
+  });
+
+  it("shows sandbox as disabled by code default and as merged rules when set", () => {
+    const file = ChannelsFileSchema.parse({
+      channels: [
+        { channel: "default", trigger: { when: [{ kind: "mention" }] } },
+        {
+          channel: "C1",
+          agent: { sandbox: { network: { allowedDomains: ["github.com"] } } },
+        },
+      ],
+    });
+    const off = formatEffectiveConfig(file, "C2", { json: false });
+    expect(off).toMatch(/sandbox:\s+disabled\s+← code default/);
+
+    const defaultAgent = {
+      sandbox: SandboxRulesSchema.parse({
+        network: { allowedDomains: ["api.example.com:443"] },
+      }),
+    };
+    const on = formatEffectiveConfig(file, "C1", { json: false, defaultAgent });
+    expect(on).toMatch(
+      /sandbox:\s+enabled \(allowedDomains: 2,.*← channel agent/,
+    );
+
+    const json = JSON.parse(
+      formatEffectiveConfig(file, "C1", { json: true, defaultAgent }),
+    );
+    expect(json.agentFields.sandbox.value.network.allowedDomains).toEqual([
+      "api.example.com:443",
+      "github.com",
+    ]);
+    expect(json.agentFields.sandbox.source).toBe("channel agent");
+    const jsonOff = JSON.parse(
+      formatEffectiveConfig(file, "C2", { json: true }),
+    );
+    expect(jsonOff.agentFields.sandbox.value).toBe(false);
   });
 
   it("prints agent.env unresolved in json mode too", () => {

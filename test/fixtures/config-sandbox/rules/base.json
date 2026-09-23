@@ -1,0 +1,12 @@
+{
+  "network": {
+    "allowedDomains": [
+      "oauth2.googleapis.com:443",
+      "aiplatform.googleapis.com:443"
+    ],
+    "strictAllowlist": true
+  },
+  "filesystem": {
+    "denyRead": ["~/.ssh"]
+  }
+}

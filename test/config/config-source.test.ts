@@ -15,6 +15,7 @@ import {
   mergeChannelPart,
   resolveChannelConfig,
 } from "../../src/config/config-source.js";
+import { SandboxRulesSchema } from "../../src/config/sandbox-config.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = join(__dirname, "..", "fixtures");
@@ -445,6 +446,210 @@ describe("loadChannelConfigFile", () => {
   });
 });
 
+describe("agent.sandbox", () => {
+  const configPath = join(FIXTURES_DIR, "config-sandbox/agent.yaml");
+  const rulesPath = join(FIXTURES_DIR, "config-sandbox/rules/base.json");
+  let dir: string;
+  let path: string;
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "config-sandbox-test-"));
+    path = join(dir, "agent.yaml");
+  });
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("loads the top-level rule file relative to the config file and normalizes it", async () => {
+    const { defaultAgent } = await loadChannelConfigFile(configPath, {});
+    expect(defaultAgent.sandbox).not.toBe(false);
+    expect(defaultAgent.sandbox).toMatchObject({
+      network: {
+        allowedDomains: [
+          "oauth2.googleapis.com:443",
+          "aiplatform.googleapis.com:443",
+        ],
+        deniedDomains: [],
+        strictAllowlist: true,
+      },
+      filesystem: { denyRead: ["~/.ssh"], allowWrite: [] },
+    });
+  });
+
+  it("unions channel additions onto the top-level rules through all three stages", async () => {
+    const source = new FileConfigSource(configPath);
+    const channel = await source.channel("C0GITHUB01");
+    const sandbox = channel?.agent.sandbox;
+    expect(sandbox).not.toBe(false);
+    if (sandbox === undefined || sandbox === false)
+      throw new Error("unreachable");
+    // default エントリの追加 (deniedDomains) と C0GITHUB01 の追加 (allowedDomains 等) が
+    // 両方入る。既に base にある oauth2 は重複しない
+    expect(sandbox.network.allowedDomains).toEqual([
+      "oauth2.googleapis.com:443",
+      "aiplatform.googleapis.com:443",
+      "github.com",
+      "api.github.com",
+    ]);
+    expect(sandbox.network.deniedDomains).toEqual(["*.example.org"]);
+    expect(sandbox.network.strictAllowlist).toBe(true);
+    expect(sandbox.filesystem.allowRead).toEqual(["/data/knowledge"]);
+    expect(sandbox.credentials?.envVars).toEqual([
+      { name: "GH_TOKEN", mode: "deny" },
+    ]);
+  });
+
+  it("applies only the default entry's additions when the channel has no entry", async () => {
+    const source = new FileConfigSource(configPath);
+    const channel = await source.channel("C0OTHER");
+    const sandbox = channel?.agent.sandbox;
+    if (sandbox === undefined || sandbox === false)
+      throw new Error("unreachable");
+    expect(sandbox.network.allowedDomains).toEqual([
+      "oauth2.googleapis.com:443",
+      "aiplatform.googleapis.com:443",
+    ]);
+    expect(sandbox.network.deniedDomains).toEqual(["*.example.org"]);
+  });
+
+  it("disables the sandbox for a channel that writes sandbox: false", async () => {
+    const source = new FileConfigSource(configPath);
+    const channel = await source.channel("C0NOSANDBOX");
+    expect(channel?.agent.sandbox).toBe(false);
+  });
+
+  it("leaves sandbox undefined when nothing sets it", async () => {
+    const source = new FileConfigSource(
+      join(FIXTURES_DIR, "config/channels.yaml"),
+    );
+    const channel = await source.channel("C0000000001");
+    expect(channel?.agent.sandbox).toBeUndefined();
+  });
+
+  it("throws at load time when the rule file is missing (named)", async () => {
+    await writeFile(
+      path,
+      `agent:\n  sandbox: ./nope.json\nchannels:\n  - channel: default\n`,
+    );
+    await expect(loadChannelConfigFile(path, {})).rejects.toThrow(
+      /agent\.sandbox.*nope\.json/,
+    );
+  });
+
+  it("throws at load time when the rule file has a forbidden key", async () => {
+    await writeFile(
+      path,
+      `agent:\n  sandbox: ${join(FIXTURES_DIR, "config-sandbox-invalid.json")}\nchannels:\n  - channel: default\n`,
+    );
+    await expect(loadChannelConfigFile(path, {})).rejects.toThrow(
+      /filesystem\.disabled/,
+    );
+  });
+
+  it("accepts inline rules at the top level", async () => {
+    await writeFile(
+      path,
+      [
+        "agent:",
+        "  sandbox:",
+        "    network:",
+        "      allowedDomains: [api.example.com:443]",
+        "channels:",
+        "  - channel: default",
+      ].join("\n"),
+    );
+    const { defaultAgent } = await loadChannelConfigFile(path, {});
+    expect(defaultAgent.sandbox).toMatchObject({
+      network: { allowedDomains: ["api.example.com:443"] },
+    });
+  });
+
+  it("rejects non-additive keys in channels[].agent.sandbox (strict, with the channel index)", async () => {
+    await writeFile(
+      path,
+      [
+        `agent:`,
+        `  sandbox: ${rulesPath}`,
+        `channels:`,
+        `  - channel: default`,
+        `  - channel: C1`,
+        `    agent:`,
+        `      sandbox:`,
+        `        network:`,
+        `          strictAllowlist: true`,
+      ].join("\n"),
+    );
+    await expect(loadChannelConfigFile(path, {})).rejects.toThrow(
+      /channels\.1\.agent\.sandbox/,
+    );
+  });
+
+  it("throws when a channel adds rules but the top-level sandbox is disabled", async () => {
+    await writeFile(
+      path,
+      [
+        `channels:`,
+        `  - channel: default`,
+        `  - channel: C1`,
+        `    agent:`,
+        `      sandbox:`,
+        `        network:`,
+        `          allowedDomains: [github.com]`,
+      ].join("\n"),
+    );
+    const source = new FileConfigSource(path);
+    await expect(source.channel("C1")).rejects.toThrow(
+      /channels\[C1\]\.agent\.sandbox adds rules/,
+    );
+    // 追加を書いていない Channel は影響を受けない
+    await expect(source.channel("C2")).resolves.not.toBeNull();
+  });
+
+  it("throws when a channel adds rules after the default entry disabled the sandbox", async () => {
+    await writeFile(
+      path,
+      [
+        `agent:`,
+        `  sandbox: ${rulesPath}`,
+        `channels:`,
+        `  - channel: default`,
+        `    agent:`,
+        `      sandbox: false`,
+        `  - channel: C1`,
+        `    agent:`,
+        `      sandbox:`,
+        `        network:`,
+        `          allowedDomains: [github.com]`,
+      ].join("\n"),
+    );
+    const source = new FileConfigSource(path);
+    await expect(source.channel("C1")).rejects.toThrow(/adds rules/);
+  });
+
+  it("names the channel when a credential entry conflicts", async () => {
+    await writeFile(
+      path,
+      [
+        `agent:`,
+        `  sandbox:`,
+        `    credentials:`,
+        `      envVars: [{ name: GH_TOKEN, mode: deny }]`,
+        `channels:`,
+        `  - channel: default`,
+        `  - channel: C1`,
+        `    agent:`,
+        `      sandbox:`,
+        `        credentials:`,
+        `          envVars: [{ name: GH_TOKEN, mode: deny, extract: x }]`,
+      ].join("\n"),
+    );
+    const source = new FileConfigSource(path);
+    await expect(source.channel("C1")).rejects.toThrow(
+      /channels\[C1\]\.agent\.sandbox: credentials\.envVars.*GH_TOKEN/,
+    );
+  });
+});
+
 // examples/ の設定ファイルが実ローダーを通ることを担保する (README の手順が
 // そのまま動くこと + schema 変更時に examples の更新漏れを検知するため)
 describe("example config files", () => {
@@ -575,12 +780,41 @@ describe("mergeAgentConfig", () => {
       extensions: ["/e.ts"],
       memory: false,
       env: { A: "1" },
+      // Channel 側の sandbox は追加専用の形なので、ここでは無効化 (false) で網羅する
+      sandbox: false,
     };
     const { agent, provenance } = mergeAgentConfig({}, {}, full);
     expect(agent).toEqual(full);
     for (const key of Object.keys(full)) {
       expect(provenance[key as keyof AgentConfig]).toBe("channel agent");
     }
+  });
+
+  it("unions sandbox additions onto the top-level rules instead of replacing", () => {
+    const defaultAgent: AgentConfig = {
+      sandbox: SandboxRulesSchema.parse({
+        network: { allowedDomains: ["api.example.com:443"] },
+      }),
+    };
+    const { agent, provenance } = mergeAgentConfig(
+      defaultAgent,
+      { sandbox: { network: { deniedDomains: ["x.example.com"] } } },
+      { sandbox: { network: { allowedDomains: ["github.com"] } } },
+    );
+    expect(agent.sandbox).toMatchObject({
+      network: {
+        allowedDomains: ["api.example.com:443", "github.com"],
+        deniedDomains: ["x.example.com"],
+      },
+    });
+    expect(provenance.sandbox).toBe("channel agent");
+  });
+
+  it("keeps top-level sandbox rules with 'default agent' provenance when no channel touches them", () => {
+    const defaultAgent: AgentConfig = { sandbox: SandboxRulesSchema.parse({}) };
+    const { agent, provenance } = mergeAgentConfig(defaultAgent, {}, {});
+    expect(agent.sandbox).toEqual(defaultAgent.sandbox);
+    expect(provenance.sandbox).toBe("default agent");
   });
 
   it("returns an empty agent when all three stages are empty", () => {

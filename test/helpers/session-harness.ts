@@ -12,6 +12,7 @@ import pino from "pino";
 
 import { SLACK_STATE_EMOJI } from "../../src/chat/slack.js";
 import type { ClassifierClient } from "../../src/classifier/client.js";
+import type { AgentConfig } from "../../src/config/agent-config.js";
 import type { ChannelConfig } from "../../src/config/channel-config.js";
 import type {
   ConfigSource,
@@ -66,11 +67,17 @@ export class FakePoster implements ChatPoster {
   }
 }
 
+/** テスト用の Channel 設定。YAML と同じ ChannelConfig 形 (agent フィールドが
+ * agent: の下) だが、agent はマージ後の形 (sandbox は完全ルール) で書く。 */
+export type TestChannelConfig = Omit<ChannelConfig, "agent"> & {
+  agent?: AgentConfig;
+};
+
 /** テストは YAML と同じ ChannelConfig 形 (agent フィールドが agent: の下) で
  * 書き、ここで ResolvedChannel (agent 必須) へ均す — 実ローダーの 3 段マージを
  * 通さないぶん、agent は書かれたものをそのまま採用する。 */
 export class FakeConfigSource implements ConfigSource {
-  constructor(private readonly configs: Record<string, ChannelConfig>) {}
+  constructor(private readonly configs: Record<string, TestChannelConfig>) {}
   async channel(id: string): Promise<ResolvedChannel | null> {
     const config = this.configs[id];
     if (config === undefined) return null;
@@ -185,7 +192,7 @@ export interface HarnessOptions {
 }
 
 export async function harness(
-  docs: Record<string, ChannelConfig> = {},
+  docs: Record<string, TestChannelConfig> = {},
   options: HarnessOptions = {},
 ): Promise<Harness> {
   const workdirRoot =

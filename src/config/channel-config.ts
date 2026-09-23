@@ -15,6 +15,21 @@
 import { z } from "zod";
 
 import { AgentConfigSchema } from "./agent-config.js";
+import { SandboxAdditionsSchema } from "./sandbox-config.js";
+
+/** channels[].agent の形。トップレベル `agent` と同じ AgentConfigSchema だが、
+ * `sandbox` だけ `false` | 追加専用オブジェクト (SandboxAdditionsSchema) に差し替える。
+ * Channel はトップレベルの完全ルールに配列を足すだけで、完全ルールを書き直す
+ * 場所ではない (config.md §3.2)。 */
+export const ChannelAgentConfigSchema = AgentConfigSchema.omit({
+  sandbox: true,
+})
+  .extend({
+    sandbox: z.union([z.literal(false), SandboxAdditionsSchema]).optional(),
+  })
+  .strict();
+
+export type ChannelAgentConfig = z.infer<typeof ChannelAgentConfigSchema>;
 
 /** Gate の種別ごとに要るパラメータだけを refinement で強制する (config.md §4.5)。
  * keyword は pattern 必須、classifier は criteria 必須、reaction は emoji 必須
@@ -160,7 +175,7 @@ export const ChannelConfigSchema = z
       .optional(),
     /** この Channel 固有の Agent Config (config.md §1.3)。トップレベル `agent`
      * ブロックを土台に、フィールド単位で上書きする (config.md §3.2)。 */
-    agent: AgentConfigSchema.optional(),
+    agent: ChannelAgentConfigSchema.optional(),
   })
   .strict();
 

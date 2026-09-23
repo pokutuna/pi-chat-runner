@@ -12,9 +12,15 @@ export {
   createSlackWebClient,
   type SlackPlatformOptions,
 } from "./chat/slack.js";
-export { type AgentConfig, AgentConfigSchema } from "./config/agent-config.js";
+export {
+  type AgentConfig,
+  type AgentConfigInput,
+  AgentConfigSchema,
+} from "./config/agent-config.js";
 // 自前 ConfigSource を書く利用者向け: 戻り値の型・検証スキーマ・予約名
 export {
+  type ChannelAgentConfig,
+  ChannelAgentConfigSchema,
   type ChannelConfig,
   ChannelConfigSchema,
   type ChannelEntry,
@@ -40,6 +46,14 @@ export {
   type ResolvedChannel,
   resolveChannelConfig,
 } from "./config/config-source.js";
+export {
+  loadSandboxRuleFile,
+  mergeSandboxAdditions,
+  type SandboxAdditions,
+  SandboxAdditionsSchema,
+  type SandboxRules,
+  SandboxRulesSchema,
+} from "./config/sandbox-config.js";
 export {
   loadSystemConfig,
   type LoadSystemConfigOptions,
