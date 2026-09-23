@@ -108,6 +108,9 @@ src/
 1 つのコンポーネントが複数モジュールに分かれるのは構わないが、別コンポーネントの責務が
 混ざるのは避ける。例えば Runtime は Control State を読み書きせず、Ingress は Session を知らない。
 
+公開 subpath `./state/control/{sqlite,firestore}` は `state/control/backends/` の re-export であり、
+ライブラリ利用者が個別バックエンドだけを import するための入口。
+
 ## 5. Ingress の抽象
 
 Ingress は「イベントがどう届くか」と「どう ACK するか」だけを抽象化する。

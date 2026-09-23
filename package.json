@@ -1,6 +1,6 @@
 {
   "name": "pi-chat-runner",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "private": true,
   "files": [
     "dist",
@@ -16,13 +16,13 @@
       "types": "./dist/index.d.mts",
       "default": "./dist/index.mjs"
     },
-    "./store/firestore": {
-      "types": "./dist/store/firestore.d.mts",
-      "default": "./dist/store/firestore.mjs"
+    "./state/control/firestore": {
+      "types": "./dist/state/control/firestore.d.mts",
+      "default": "./dist/state/control/firestore.mjs"
     },
-    "./store/sqlite": {
-      "types": "./dist/store/sqlite.d.mts",
-      "default": "./dist/store/sqlite.mjs"
+    "./state/control/sqlite": {
+      "types": "./dist/state/control/sqlite.d.mts",
+      "default": "./dist/state/control/sqlite.mjs"
     }
   },
   "scripts": {
