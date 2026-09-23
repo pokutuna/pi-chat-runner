@@ -289,7 +289,7 @@ Node = Gate | { and: Node[] } | { or: Node[] }
 |---|---|---|
 | `mention` | なし | 自分への mention を含むか |
 | `keyword` | `pattern` | 正規表現がテキストに一致するか |
-| `classifier` | `criteria` (`model` は任意) | criteria と本文を LLM に渡して判定。**呼び出し失敗は fail-closed** (起動しない) |
+| `classifier` | `criteria` (`model` は任意) | criteria と本文を LLM に渡して判定。呼び出しには 10 秒のタイムアウトがあり、**タイムアウトを含む呼び出し失敗は fail-closed** (起動しない) |
 | `passthrough` | なし | 常に true |
 | `reaction` | `emoji` (非空配列) | reaction イベントで、付与 (removed でない) かつ emoji が一覧にあるか |
 | `sender` | `is` / `id` / `name` の少なくとも 1 つ | 送信者による判定 (§4.2) |
