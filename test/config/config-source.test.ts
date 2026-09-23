@@ -780,7 +780,7 @@ describe("mergeAgentConfig", () => {
       extensions: ["/e.ts"],
       memory: false,
       env: { A: "1" },
-      // Channel 側の sandbox は追加専用の形なので、ここでは無効化 (false) で網羅する
+      // Channel 側の sandbox は配列に足すだけの形なので、ここでは無効化 (false) で網羅する
       sandbox: false,
     };
     const { agent, provenance } = mergeAgentConfig({}, {}, full);

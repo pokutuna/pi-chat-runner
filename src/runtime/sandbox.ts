@@ -1,6 +1,6 @@
 // srt (sandbox-runtime) 向け settings の組み立て (docs/design/runtime.md §5.5)。
 //
-// 利用者が書いた完全ルール (config/sandbox-config.ts で正規化・Channel 追加分を
+// 利用者が書いた srt の設定 (config/sandbox-config.ts で正規化し、Channel が足す要素を
 // union 済み) に、Runner が Session ごとに決める書き込み先を足して srt に渡す最終形
 // にする。ここは純粋関数だけ — ファイルの書き出しは Session (session/session.ts) が、
 // spawn 引数への展開は pi-args.ts の wrapWithSrt が行う。

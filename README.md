@@ -12,6 +12,7 @@ See [docs/design.md](docs/design.md) for the design.
 - It's a conversation: steer it while it runs, follow up after it answers, come back later — context and files survive
 - Prompts, models, triggers, and skills are per-channel YAML; [chat commands](#chat-commands) (`/new`, `/enable`, `/disable`) control a channel from inside the chat
 - The serverless part: Cloud Run + Firestore + GCS with scale-to-zero — or in-memory / SQLite / local dirs for dev, or embed it as a library
+- Optional egress sandbox: pi runs inside [srt](https://github.com/anthropics/sandbox-runtime) with a per-channel FQDN allowlist, so the agent reaches only the hosts you name and writes only to its own session directory
 
 ## Quickstart
 
@@ -239,6 +240,8 @@ COPY --chown=1001:1001 channel-skills/ /app/skills/
 ```
 
 Runtime user is uid/gid `1001` (`agent`) when UID separation is enabled (`PI_AGENT_UID`/`PI_AGENT_GID`), so `--chown=1001:1001` keeps files writable/readable by the process that actually runs pi.
+
+To restrict what the agent can reach, set `agent.sandbox` in `agent.yaml` to an srt rule file — [`examples/config/sandbox/vertex.json`](examples/config/sandbox/vertex.json) admits only Vertex AI, [`vertex-github.json`](examples/config/sandbox/vertex-github.json) adds GitHub — and let channels append hosts or hide credentials with `channels[].agent.sandbox`. The base image already carries what srt needs (bubblewrap, socat); on Cloud Run the service must run on the gen2 execution environment. See [`docs/design/runtime.md` §5.5](docs/design/runtime.md) for what the sandbox does and does not guarantee.
 
 ### 3. Embed just the runner (no bundled Slack server)
 

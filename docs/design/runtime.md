@@ -315,8 +315,8 @@ netns の外に出られないので、allowlist を迂回できない。自前�
 Channel ごとに違うルールを 1 プロセスで並行に持てない。Session ごとに proxy が 1 つ立つ
 コストは pi 子プロセス 1 つに比べて無視できる。
 
-**Runner が Session ごとに足すもの**。利用者ルールは Channel の追加分を union した完全形で
-届き (config.md §3.2)、Runner はそこへ `filesystem.allowWrite` に書き込み先を足して
+**Runner が Session ごとに足すもの**。利用者ルールは Channel が足した要素を union し終えた
+srt の設定として届き (config.md §3.2)、Runner はそこへ `filesystem.allowWrite` に書き込み先を足して
 settings ファイルにする。
 
 | 足すもの | |

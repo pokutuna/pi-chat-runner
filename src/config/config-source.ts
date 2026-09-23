@@ -10,7 +10,7 @@
 // 「Agent 部分   = agent → channels[default].agent → channels[id].agent の 3 段」を
 // マージした 1 つの ResolvedChannel で動く (config.md §3.2)。マージはフィールド単位の
 // 丸ごと置換のみで、深いマージはしない。唯一の例外が agent.sandbox: Channel 側は
-// 追加専用の形 (sandbox-config.ts) で、トップレベルの完全ルールに配列を union する。
+// 配列に要素を足すだけの形 (sandbox-config.ts) で、トップレベルの srt 設定に union する。
 //
 // env 参照 (${env.X}) の解決は agent.env / channels[].agent.env の値だけに適用する
 // (config.md §2.1)。system ブロックには触れないため、dump (config.md §5) が secrets を
@@ -109,7 +109,7 @@ const AGENT_CONFIG_KEYS = Object.keys({
 } satisfies Record<keyof AgentConfig, true>) as (keyof AgentConfig)[];
 
 /** フィールド単位の置き換え (mergeLayer) で扱う Agent Config のキー。sandbox だけは
- * 追加マージ (mergeSandboxLayer) なので外す。 */
+ * 配列への追加 (mergeSandboxLayer) なので外す。 */
 const AGENT_REPLACE_KEYS = AGENT_CONFIG_KEYS.filter(
   (key): key is keyof AgentConfigReplacePart => key !== "sandbox",
 );
@@ -118,8 +118,8 @@ const AGENT_REPLACE_KEYS = AGENT_CONFIG_KEYS.filter(
  * channels[].agent は sandbox の形だけが違うので、この部分は両者で共通。 */
 type AgentConfigReplacePart = Omit<AgentConfig, "sandbox">;
 
-/** 3 段マージの各段で sandbox がどう書かれているか (トップレベルは完全ルール、
- * Channel は追加分)。 */
+/** 3 段マージの各段で sandbox がどう書かれているか (トップレベルは srt の設定、
+ * Channel は配列に足す要素)。 */
 type SandboxLayer = AgentConfig["sandbox"] | ChannelAgentConfig["sandbox"];
 
 /** ChannelEntry から channel / agent を落とし、Channel 部分だけを取り出す。 */
@@ -182,8 +182,8 @@ export function mergeChannelPart(
  * トップレベル agent ブロック由来は "default agent"、channels[*].agent 由来は
  * "channel agent" (どの channels エントリでも同じラベル)。
  *
- * sandbox 以外はフィールド単位の置き換え。sandbox はトップレベルの完全ルールに
- * Channel の追加分を union する (`false` を書いた段で無効になる)。labels は
+ * sandbox 以外はフィールド単位の置き換え。sandbox はトップレベルの srt 設定の配列に
+ * Channel が足す要素を union する (`false` を書いた段で無効になる)。labels は
  * error メッセージ用に「どの段の sandbox か」を示す。 */
 export function mergeAgentConfig(
   defaultAgent: AgentConfig,
@@ -230,8 +230,8 @@ export function mergeAgentConfig(
 }
 
 /** sandbox の 1 段分のマージ (config.md §3.2)。段が sandbox を書いていなければ
- * そのまま。`false` なら無効化。追加分ならそれまでの完全ルールに union する —
- * 追加先が無い (それまでが省略 / `false`) なら設定ミスとして throw する。 */
+ * そのまま。`false` なら無効化。足す要素が書かれていればそれまでの srt 設定の配列に
+ * union する — 足す先が無い (それまでが省略 / `false`) なら設定ミスとして throw する。 */
 function mergeSandboxLayer(
   current: {
     value: SandboxRules | false | undefined;
@@ -516,8 +516,8 @@ async function resolveFileReferences(
   };
 
   // インライン化後の値が実行時スキーマの形を守っていることの保証として再度 strict 検証する。
-  // sandbox はマージ済みの完全ルール (srt schema で検証済み) で、ChannelConfigSchema 側の
-  // 追加専用の形とは違うため、再検証から外してそのまま付け直す。
+  // sandbox はマージ済みの srt 設定 (srt schema で検証済み) で、ChannelConfigSchema 側の
+  // 「配列に足すだけ」の形とは違うため、再検証から外してそのまま付け直す。
   const { agent: _agent, ...channelPart } = channel;
   const { sandbox, ...agentWithoutSandbox } = resolvedAgent;
   const validatedChannel = ChannelConfigSchema.safeParse({
@@ -532,7 +532,7 @@ async function resolveFileReferences(
   const { agent: validatedAgent = {}, ...validatedPart } =
     validatedChannel.data;
   // sandbox を外して検証したので validatedAgent.sandbox は常に undefined。型上は
-  // 追加専用の形が残るため落としてから付け直す
+  // Channel 側の「配列に足すだけ」の形が残るため落としてから付け直す
   const { sandbox: _unused, ...validatedAgentRest } = validatedAgent;
   return {
     ...validatedPart,

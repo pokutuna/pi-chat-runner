@@ -7,16 +7,18 @@
 // SandboxRuntimeConfigSchema で検証する — Runner 独自の設定形式を作らない。
 //
 // 2 つの形がある:
-//   - トップレベル `agent.sandbox`: `false` | ファイルパス | インラインの完全ルール
-//     (SandboxRulesSchema)。省略 = 無効 (opt-in)
-//   - `channels[].agent.sandbox`: `false` | 追加専用オブジェクト (SandboxAdditionsSchema)。
-//     完全ルールの配列 8 つに union する。他の Agent Config フィールドは Channel で
-//     丸ごと置き換えだが、sandbox だけはこの追加マージ (config.md §3.2)
+//   - トップレベル `agent.sandbox`: `false` | ファイルパス | srt の設定そのものを
+//     インラインで書いたもの (SandboxRulesSchema)。省略 = 無効 (opt-in)
+//   - `channels[].agent.sandbox`: `false` | 配列に要素を足すだけのオブジェクト
+//     (SandboxAdditionsSchema)。トップレベルの設定が持つ 8 つの配列に union する。
+//     他の Agent Config フィールドは Channel で丸ごと置き換えだが、sandbox だけは
+//     この「足すだけ」のマージ (config.md §3.2)
 //
-// 追加専用にしている理由 (PLAN §0-2): 想定ユースケース (API 以外全拒否、read / write
-// 先の追加、Channel 限定のドメイン追加、Channel 限定で env を隠す) は全部 union で
-// 足りる。削除・置換・スカラ上書きは sandbox の緩め方を増やすだけで要求が無い。
-// k8s Strategic Merge Patch で言えば `patchStrategy: merge` の配列だけ書ける部分集合。
+// Channel 側を「足すだけ」にしている理由 (config.md §3.2): 想定ユースケース (API 以外
+// 全拒否、read / write 先の追加、Channel 限定のドメイン追加、Channel 限定で env を隠す)
+// は全部 union で足りる。削除・置換・スカラ上書きは sandbox の緩め方を増やすだけで
+// 要求が無い。k8s Strategic Merge Patch で言えば `patchStrategy: merge` の配列だけ
+// 書ける部分集合。
 
 import { readFile } from "node:fs/promises";
 
@@ -32,7 +34,8 @@ import { z } from "zod";
  * `--settings` ファイルに書き出す (runtime/sandbox.ts)。 */
 export type SandboxRules = SandboxRuntimeConfig;
 
-/** 書くと sandbox が無言で弱まるキー。ロード時に error にする (PLAN §0-2)。 */
+/** 書くとエラーも警告も出ないまま sandbox が弱くなるキー。ロード時に error にする
+ * (config.md §3.2)。 */
 const FORBIDDEN_ROOT_FLAGS = [
   "enableWeakerNestedSandbox",
   "enableWeakerNetworkIsolation",
@@ -113,8 +116,9 @@ function asRecord(
   return {};
 }
 
-/** トップレベル `agent.sandbox` にインラインで書く完全ルール、またはファイルの中身。
- * 入力は srt ネイティブのオブジェクト (省略可のキーあり)、出力は srt の型に正規化済み。 */
+/** トップレベル `agent.sandbox` にインラインで書く srt の設定、またはルールファイルの
+ * 中身。入力は srt ネイティブのオブジェクト (省略可のキーあり)、出力は srt の型に
+ * 正規化済み。 */
 export const SandboxRulesSchema = z
   .record(z.string(), z.unknown())
   .transform(normalizeSandboxRules);
@@ -152,7 +156,7 @@ export const SandboxAdditionsSchema = z
 
 export type SandboxAdditions = z.infer<typeof SandboxAdditionsSchema>;
 
-/** 文字列配列の union: base の順序を保ち、追加分を末尾に、重複は 1 つに。 */
+/** 文字列配列の union: base の順序を保ち、additions を末尾に、重複は 1 つに。 */
 function unionStrings(
   base: readonly string[] | undefined,
   additions: readonly string[] | undefined,
@@ -201,10 +205,10 @@ function sortKeys(value: unknown): unknown {
   return value;
 }
 
-/** Channel の追加分を完全ルールに union する (config.md §3.2)。純粋関数。
- * base の他のキー (strictAllowlist / allowUnixSockets / credentials.awsPairs 等) は
- * スプレッドで素通り。合成結果は srt schema で再検証する — 追加分の credentials 要素の
- * mode 等の妥当性はここで初めて見る。 */
+/** Channel が足す要素 (additions) をトップレベルの srt 設定 (base) の配列に union する
+ * (config.md §3.2)。純粋関数。base の他のキー (strictAllowlist / allowUnixSockets /
+ * credentials.awsPairs 等) はスプレッドでそのまま残す。合成結果は srt schema で再検証
+ * する — additions の credentials 要素の mode 等の妥当性はここで初めて見る。 */
 export function mergeSandboxAdditions(
   base: SandboxRules,
   additions: SandboxAdditions,

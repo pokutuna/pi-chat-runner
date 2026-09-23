@@ -73,7 +73,7 @@ export class FakePoster implements ChatPoster {
 }
 
 /** テスト用の Channel 設定。YAML と同じ ChannelConfig 形 (agent フィールドが
- * agent: の下) だが、agent はマージ後の形 (sandbox は完全ルール) で書く。 */
+ * agent: の下) だが、agent はマージ後の形 (sandbox は srt の設定そのもの) で書く。 */
 export type TestChannelConfig = Omit<ChannelConfig, "agent"> & {
   agent?: AgentConfig;
 };

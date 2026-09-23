@@ -18,9 +18,9 @@ import { AgentConfigSchema } from "./agent-config.js";
 import { SandboxAdditionsSchema } from "./sandbox-config.js";
 
 /** channels[].agent の形。トップレベル `agent` と同じ AgentConfigSchema だが、
- * `sandbox` だけ `false` | 追加専用オブジェクト (SandboxAdditionsSchema) に差し替える。
- * Channel はトップレベルの完全ルールに配列を足すだけで、完全ルールを書き直す
- * 場所ではない (config.md §3.2)。 */
+ * `sandbox` だけ `false` | 配列に要素を足すだけのオブジェクト (SandboxAdditionsSchema)
+ * に差し替える。Channel はトップレベル `agent.sandbox` の配列に足すだけで、srt の設定
+ * を書き直す場所ではない (config.md §3.2)。 */
 export const ChannelAgentConfigSchema = AgentConfigSchema.omit({
   sandbox: true,
 })

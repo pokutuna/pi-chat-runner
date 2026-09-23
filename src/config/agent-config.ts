@@ -81,12 +81,12 @@ export const AgentConfigSchema = z
      * 解決は root-config.ts のロード時に行う。 */
     env: z.record(z.string(), z.string()).optional(),
     /** pi を srt (sandbox-runtime) で包むルール (docs/design/runtime.md §5.5)。
-     * `false` | srt ネイティブ形式のファイルパス (JSON / YAML) | インラインの完全ルール。
-     * 省略 = 無効 (opt-in)。provider の到達先 (allowedDomains) も利用者が書く —
-     * Runner は network に何も足さない。ファイルはロード時に読んで検証・インライン化
-     * する (config-source.ts)。Channel 側 (channels[].agent.sandbox) は形が違い
-     * (追加専用、channel-config.ts)、Channel の追加分を完全ルールに union する
-     * (config.md §3.2) */
+     * `false` | srt ネイティブ形式のファイルパス (JSON / YAML) | srt の設定そのものを
+     * インラインで書いたもの。省略 = 無効 (opt-in)。provider の到達先 (allowedDomains)
+     * も利用者が書く — Runner は network に何も足さない。ファイルはロード時に読んで
+     * 検証・インライン化する (config-source.ts)。Channel 側 (channels[].agent.sandbox)
+     * は形が違い、ここの設定が持つ配列に要素を足すだけ (channel-config.ts、
+     * config.md §3.2) */
     sandbox: z
       .union([z.literal(false), PathRefSchema, SandboxRulesSchema])
       .optional(),
@@ -97,7 +97,7 @@ export const AgentConfigSchema = z
 export type AgentConfigInput = z.infer<typeof AgentConfigSchema>;
 
 /** ロード後の Agent Config。sandbox のファイル参照は読まれてインライン化済みで、
- * `false` か正規化済みの完全ルールしか現れない。 */
+ * `false` か正規化済みの srt 設定しか現れない。 */
 export type AgentConfig = Omit<AgentConfigInput, "sandbox"> & {
   sandbox?: false | SandboxRules | undefined;
 };

@@ -100,11 +100,11 @@ agent:
   # `false`, a path to an srt-format rule file (JSON/YAML), or inline rules.
   # The runner adds nothing to network: the LLM provider's endpoints must be
   # in the allowlist too (./sandbox/vertex.json has the Vertex AI set;
-  # ./sandbox/vertex-github.json adds github.com). Requires Linux with
-  # bubblewrap/socat/ripgrep in the image (Cloud Run gen2, not gen1); the
-  # runner refuses to boot if a channel enables it and srt cannot run.
-  # UNCOMMENT to enable (dev:local on macOS must then set channel-level
-  # `sandbox: false` on every channel, or leave this off):
+  # ./sandbox/vertex-github.json adds github.com). Runs on Linux (the
+  # published image has what srt needs; Cloud Run must be gen2, not gen1) and
+  # on macOS for local dev via sandbox-exec. At boot the runner runs srt once
+  # and refuses to start if srt cannot run in this environment, instead of
+  # failing on the first message. UNCOMMENT to enable:
   # sandbox: ./sandbox/vertex.json
 
 # --- channels: per-channel behavior, re-read on every message ---

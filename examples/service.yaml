@@ -9,7 +9,7 @@ spec:
         autoscaling.knative.dev/minScale: "0"
         autoscaling.knative.dev/maxScale: "3"
         run.googleapis.com/cpu-throttling: "false"
-        run.googleapis.com/execution-environment: gen2
+        run.googleapis.com/execution-environment: gen2 # required for agent.sandbox (srt/bubblewrap needs namespaces gen1's gVisor lacks)
     spec:
       timeoutSeconds: 3600
       containerConcurrency: 10
@@ -38,7 +38,8 @@ spec:
             - name: SHARED_DIR
               value: /data/shared # channel-shared persistent dir (docs/design/state.md §6); unset to disable
             - name: PI_PERMISSION_MODE
-              value: "1" # "0" disables sandboxing; any other value enables it
+              value: "1" # "0" disables Node Permission Model sandboxing; any other value enables it
+            # The srt egress sandbox is not toggled here: set agent.sandbox in agent.yaml (see examples/config/sandbox/)
             - name: PI_AGENT_UID
               value: "1001" # set together with PI_AGENT_GID, or not at all
             - name: PI_AGENT_GID

@@ -252,7 +252,7 @@ function buildAgentFields(
       source: src(true, "env"),
     });
   }
-  // sandbox は Channel の追加分を合成した後の実効ルールを出す (config.md §3.2)。
+  // sandbox は Channel が足した要素を合成した後の実効ルールを出す (config.md §3.2)。
   // pretty では配列の件数だけに畳む — 全文は json モードで見る
   fields.push({
     label: "sandbox",
@@ -423,7 +423,7 @@ function formatJson(
       value: agent.env ?? null,
       source: asrc(agent.env !== undefined, "env"),
     },
-    // Channel の追加分を合成した後の実効ルール (config.md §3.2)。無効なら false
+    // Channel が足した要素を合成した後の実効ルール (config.md §3.2)。無効なら false
     sandbox: {
       value: agent.sandbox ?? false,
       source: asrc(agent.sandbox !== undefined, "sandbox"),

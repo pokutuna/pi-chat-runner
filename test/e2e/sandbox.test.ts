@@ -1,4 +1,4 @@
-// srt sandbox を実 pi + 実 LLM で通す (docs/design/runtime.md §5.5、PLAN §3-2)。
+// srt sandbox を実 pi + 実 LLM で通す (docs/design/runtime.md §5.5)。
 //
 // test/e2e-sandbox/ (probe-pi) は Runner の spawn 経路と srt の遮断を決定的に検証する。
 // こちらは pi 本体の挙動 — pi の bash tool が sandbox 内で動くこと、pi 自身の LLM 呼び出し
