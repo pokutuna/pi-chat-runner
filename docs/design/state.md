@@ -319,14 +319,20 @@ Agent が触るのは archive そのものではなく、tmpfs 上に置いた�
 archive との往復は Runner の仕事で、Agent は archive の存在を知らない。
 
 ```
-/tmp/pi-chat-runner/sessions/<channelId>/
-  <threadTs>/          … Workdir (Thread ごとに Session を作る場合の cwd)
-  channel/             … Workdir (Channel 全体を 1 つの Session にする場合の cwd)
-    session.jsonl      … Transcript。pi に --session で渡す
-  shared/              … Shared の staging。Agent からは cwd 相対 ../shared/
-    skills/            … Agent が書ける skill 置き場。常に mkdir する
-    memory/            … 組み込み memory skill の書き先
+/tmp/pi-chat-runner/sessions/
+  srt/                 … Session ごとの srt settings (Runner 所有、Agent は読むだけ。runtime.md §5.5)
+  <channelId>/
+    <threadTs>/        … Workdir (Thread ごとに Session を作る場合の cwd)
+    channel/           … Workdir (Channel 全体を 1 つの Session にする場合の cwd)
+      session.jsonl    … Transcript。pi に --session で渡す
+    tmp/<threadTs>/    … Session 専用の TMPDIR (起動ごとに作り直す。runtime.md §5.5)
+    shared/            … Shared の staging。Agent からは cwd 相対 ../shared/
+      skills/          … Agent が書ける skill 置き場。常に mkdir する
+      memory/          … 組み込み memory skill の書き先
 ```
+
+`tmp/` と `srt/` は archive の対象外で、Workdir の flush / restore とは無関係に Runner が
+作って消す。
 
 staging を Workdir の**中**ではなく**隣**に置く。中に置くと Workdir の flush / restore
 から除外する処理が要り、除外漏れは「Session の archive の汚染」「古い Shared の復活」

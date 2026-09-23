@@ -70,6 +70,7 @@ System Config は全 Channel 共通で、Channel ごとの上書きを持たな�
 | `extensions` | 追加ロードする Extension のファイルパス (`--extension`)。additive |
 | `memory` | 組み込み memory skill の配線。Shared 有効時の既定 true、false で opt-out |
 | `env` | Agent プロセスへ渡す env の名前=値マップ (足し算モデル)。値に `${env.X}` を書ける唯一の Agent Config フィールド (§2.1) |
+| `sandbox` | Agent を srt (sandbox-runtime) で包むルール ([runtime.md](runtime.md) §5.5)。トップレベルでは `false` / srt ネイティブ形式のファイルパス / インラインの完全ルール、省略で無効。Channel 側は追加専用 (§3.2)。provider の到達先も含め、network に何を許すかは全部このルールに書く |
 
 すべて Runtime が消費する ([runtime.md](runtime.md))。`model` の provider prefix は必須で、bare id は pi 側の fuzzy match で provider が非決定になるため schema で弾く。認証は pi に委譲し、API キー系 provider は `env` に env 名を列挙して渡す。google-vertex だけは Runtime が ADC marker を付ける。
 
@@ -122,6 +123,7 @@ agent:
   systemPrompt: ./prompts/ask-ai.md            # ./ 始まりはファイル参照 (§3)
   env:
     GH_TOKEN: ${env.GH_TOKEN:-}                # Agent へ渡す env の名前=値 (§2.1)
+  sandbox: ./sandbox/vertex.json               # srt のルール (§3.2)。省略で無効
 
 # --- channels: Channel ごとの設定 (メッセージごとに読み直す) ---
 channels:
@@ -159,6 +161,9 @@ channels:
       systemPrompt: ./prompts/alerts.md
       skills:
         - /app/skills/gc-logging
+      sandbox:                                 # Channel 側は追加だけ (§3.2)
+        network:
+          allowedDomains: [api.github.com]
 ```
 
 ### 2.1 ブロックごとの読み方
@@ -247,6 +252,16 @@ deep merge は一切しない。`session` や `reply` の内側キー、`trigger
 
 マージ対象のフィールド一覧は型から網羅を強制する (`Record<keyof AgentConfig, true>` を書かせる) ため、フィールドを足してマージから漏れることがない。
 
+**`sandbox` だけは追加マージ**。トップレベル `agent.sandbox` が完全ルール (srt ネイティブ形式。ファイル参照はロード時にインライン化、§3.5) を持ち、`channels[].agent.sandbox` はそこへ足す配列だけを書く形 (追加専用) にしている。丸ごと置換だと Channel ごとに provider の到達先まで書き直すことになり、Channel の 1 行が sandbox 全体を弱める経路になるため。想定する変更 (ドメインの追加、読み書き先の追加、Channel 限定で env を隠す) は全部 union で足りるので、削除・置換・スカラの上書きは持たない。
+
+| 追加できる配列 | |
+|---|---|
+| `network.allowedDomains` / `network.deniedDomains` | 末尾に追加、重複は 1 つに |
+| `filesystem.allowRead` / `allowWrite` / `denyRead` / `denyWrite` | 同上 |
+| `credentials.envVars` / `credentials.files` | `name` / `path` で同一視。同じキーで内容が違えば error |
+
+これ以外のキー (`strictAllowlist` や `filesystem.disabled` 等のスカラ) は Channel 側では strict に弾く。`channels[].agent.sandbox: false` は「この Channel は sandbox なし」で、これだけは置換。トップレベルが無効 (省略か `false`) のまま Channel が追加を書くのは error にする — 足す土台が無いのに書かれたルールは、書いた人の意図 (この Channel を守りたい) と実際 (何も守られない) が食い違うため。合成後の完全ルールは srt の schema で再検証し、`dump` (§5) に出す。`enableWeakerNestedSandbox` / `enableWeakerNetworkIsolation` / `filesystem.disabled` は sandbox を無言で弱めるので、どの段でもロード時に error。
+
 ### 3.3 provenance
 
 マージと同時に、各フィールドがどのエントリ由来かを記録する。`default` / `channel` / `dm` / `default agent` / `channel agent` の 5 ラベルで、どの段からも値が来なかったフィールドは記録しない (読む側でコード既定に落ちる)。`dump` (§5) がこれを表示する。
@@ -263,6 +278,7 @@ deep merge は一切しない。`session` や `reply` の内側キー、`trigger
 |---|---|
 | `systemPrompt` / `context` | `./` `../` 始まりならファイルを読んでインライン化する。読めなければ fail-loud |
 | `skills` / `extensions` | 内容は読まず、絶対パス化だけする。裸の相対パス (`skills/foo`) は基準が曖昧なので schema で拒否する |
+| `sandbox` (トップレベル `agent` のみ) | パスならファイル (JSON / YAML、srt ネイティブ形式) を読んで正規化・検証し、ルールをインライン化する。読めない・不正なら fail-loud。パスの規則は `skills` と同じ |
 
 インライン化した結果をディスクへ書き戻す処理は持たない。インライン化後の値が実行時スキーマの形を守っていることを、もう一度 strict 検証で確かめる。
 
@@ -384,6 +400,7 @@ Config は「静的な宣言」、Control State は「実行中に変わる事�
 | Agent Config | `src/config/agent-config.ts` (`AgentConfigSchema`)。YAML ではトップレベル `agent` ブロックと `channels[].agent` の両方に同じスキーマが使われる |
 | Channel Config | `src/config/channel-config.ts` (`ChannelConfigSchema`, `ChannelEntrySchema`, `ChannelsFileSchema`) |
 | Agent Config の `env` | `AgentConfigSchema` の `env` (`agent.env` / `channels[].agent.env`)。`${env.X}` を解決する唯一の Agent Config フィールド |
+| Agent Config の `sandbox` | `src/config/sandbox-config.ts` (`SandboxRulesSchema` / `SandboxAdditionsSchema` / `mergeSandboxAdditions` / `loadSandboxRuleFile`)。Channel 側の形は `src/config/channel-config.ts` (`ChannelAgentConfigSchema`)、追加マージは `mergeSandboxLayer` (`src/config/config-source.ts`) |
 | ファイルのロードと Channel の解決 | `src/config/config-source.ts` (`ConfigSource`, `ResolvedChannel`, `FileConfigSource`, `loadChannelConfigFile`, `resolveChannelConfig`, `mergeChannelPart`, `mergeAgentConfig`) |
 | ブロックごとの独立ロード | `src/config/root-config.ts` (`readRootConfig`) |
 | `${env.X}` 参照 | `src/config/env-ref.ts` (`resolveEnvRefs`) |

@@ -94,6 +94,19 @@ agent:
   env:
     GH_TOKEN: ${env.GH_TOKEN:-}
 
+  # sandbox wraps pi in srt (@anthropic-ai/sandbox-runtime): a network
+  # namespace whose only way out is srt's proxy, which admits CONNECTs by FQDN
+  # allowlist (docs/design/runtime.md §5.5). Off unless set. The value is
+  # `false`, a path to an srt-format rule file (JSON/YAML), or inline rules.
+  # The runner adds nothing to network: the LLM provider's endpoints must be
+  # in the allowlist too (./sandbox/vertex.json has the Vertex AI set;
+  # ./sandbox/vertex-github.json adds github.com). Requires Linux with
+  # bubblewrap/socat/ripgrep in the image (Cloud Run gen2, not gen1); the
+  # runner refuses to boot if a channel enables it and srt cannot run.
+  # UNCOMMENT to enable (dev:local on macOS must then set channel-level
+  # `sandbox: false` on every channel, or leave this off):
+  # sandbox: ./sandbox/vertex.json
+
 # --- channels: per-channel behavior, re-read on every message ---
 # One array of channel configs. "default" is required as the fallback base;
 # every other entry replaces default's fields wholesale (no deep-merge).
@@ -143,6 +156,17 @@ channels:
     #     - /app/skills/gc-logging
     #   extensions:
     #     - /app/extensions/bq-runner.ts
+    # Per-channel sandbox entries are ADDITIVE to the top-level agent.sandbox
+    # rules (only allowedDomains/deniedDomains, filesystem allow*/deny*, and
+    # credentials envVars/files may appear; `sandbox: false` turns it off for
+    # this channel). Requires agent.sandbox above to be enabled.
+    # UNCOMMENT to enable:
+    # agent:
+    #   sandbox:
+    #     network:
+    #       allowedDomains: [api.github.com]
+    #     credentials:
+    #       envVars: [{ name: GH_TOKEN, mode: deny }]
 
   - channel: "C0000000003" # REPLACE: your channel ID
     # Classifier demo: judges every message, no mention needed. Only

@@ -10,6 +10,7 @@ State の実装だけを差し替える。
 |---|---|---|---|---|
 | vitest | フェイク | フェイク | memory | ロジックの回帰テスト |
 | `test:e2e` | 本物 | in-memory chat | memory / sqlite | 実 LLM を叩く回帰確認。`E2E_LIVE_LLM` で opt-in、CI では回さない |
+| `test:e2e:sandbox` | probe (シェルを実行する pi のスタブ) | in-memory chat | memory | srt sandbox ([runtime.md](runtime.md) §5.5) の遮断を Docker (Linux + bubblewrap) で決定的に確認。CI でも回す |
 | `dev:local` | 本物 | in-memory chat + TUI | memory / sqlite | 手元での確認 |
 | `dev:socket` | 本物 | Slack (Socket Mode) | sqlite / firestore | 公開前の実機確認 |
 
@@ -33,6 +34,18 @@ Control State をそのまま公開する。シナリオは「どのスレッド
 「Session レコードがどうなっているか」で確かめ、LLM の文面には依存させない。linger や
 `windowSec` のように待ち時間が支配的なものは、本番既定より短い値を `startLiveRunner` に
 渡して回す。
+
+`test:e2e:sandbox` のスイートは `test/e2e-sandbox/` に置く。LLM は使わず、Runner の本物の
+spawn 経路 (settings ファイル → `srt --settings` → bubblewrap → Permission Model → 子) を
+通して、子に pi のスタブ (`test/fixtures/probe-pi.mjs`) を起動する。スタブは最初の prompt に
+書かれたシェルコマンド列を実行して exit code と出力を reply で返すだけなので、allowlist の
+通過・拒否、他 Session の Workdir への EROFS、env の隠蔽、turn timeout 後にプロセスが
+残らないことを厳密に assert できる。遮断の項目には必ず対照 (同じコマンドが許可側で通る) を
+添える — 「全部 blocked」は設定ミスでも出るため。bubblewrap が要るので Docker の `e2e`
+ステージで回し、`--cap-add SYS_ADMIN --security-opt seccomp=unconfined
+--security-opt apparmor=unconfined --security-opt systempaths=unconfined` を渡す
+(user namespace と `/proc` の mount のため)。ホストに bubblewrap が無ければ skip する。
+srt を実 pi + 実 LLM で通す確認は `test/e2e/sandbox.test.ts` (`test:e2e` 側、Linux のみ)。
 
 設定は YAML ではなくテスト専用の `ConfigSource` (`test/e2e/helpers/static-config-source.ts`)
 に TS オブジェクトで渡す。シナリオごとの `channels` をファイルを増やさずに書けるようにする
@@ -176,6 +189,7 @@ Turn の境界で退避・復元される。未設定なら退避せず、プロ
 |---|---|
 | `local` サブコマンド | `runLocal` (`src/server.ts`) |
 | 実 LLM e2e スイート | `test/e2e/` (`startLiveRunner` / `StaticConfigSource`) |
+| srt sandbox e2e スイート | `test/e2e-sandbox/` (`startSandboxRunner`)、pi スタブは `test/fixtures/probe-pi.mjs`、Docker の `e2e` ステージ (`Dockerfile`) |
 | in-memory chat の契約 | `LocalChat` (`src/chat/local/types.ts`) |
 | in-memory chat の実装 | `createLocalChat` (`src/chat/local/local-chat.ts`) |
 | ChatPlatform への束ね | `createLocalPlatform` (`src/chat/local/platform.ts`) |
