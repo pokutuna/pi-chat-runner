@@ -328,7 +328,10 @@ settings ファイルにする。
 
 srt は sandbox 内の `TMPDIR` を自分の env の `CLAUDE_CODE_TMPDIR` (既定 `/tmp/claude`) で
 上書きするので、Runner は `TMPDIR` と `CLAUDE_CODE_TMPDIR` の両方に同じディレクトリを渡す。
-両方が揃っていないと pi のスピルが Permission Model の allow 外へ向いて落ちる。
+両方が揃っていないと pi のスピルが Permission Model の allow 外へ向いて落ちる。srt は
+host 側の Unix socket (`srt-mux-*.sock`) もこの TMPDIR に置くため、パス長が Unix socket の
+上限 (Linux 108 byte、macOS 104 byte) を超えると srt が `listen EINVAL` で起動できない。
+workdirRoot は既定の `/tmp/pi-chat-runner/sessions` のように短く保つ。
 
 settings ファイルは `<workdirRoot>/srt/<sessionKey>.json` — Workdir の外、Runner 所有で、
 Agent は読めるが書き換えられない (bind mount が read-only)。Session 終了時に消す。

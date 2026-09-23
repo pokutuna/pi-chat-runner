@@ -10,8 +10,7 @@
 // `E2E_LIVE_LLM=1 pnpm exec vitest run test/e2e/sandbox.test.ts`。
 // macOS の Seatbelt 経路は開発用で、遮断の保証は Linux 側 (runtime.md §5.5)。
 
-import { mkdtemp, realpath } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdtemp, realpath } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -165,7 +164,8 @@ describeLiveSandbox("live: srt sandbox (実 pi の bash tool 経由)", () => {
     "自分の workdir には書け、他 Session の workdir には書けない",
     async () => {
       const workdirRoot = await realpath(
-        await mkdtemp(join(tmpdir(), "pi-chat-runner-e2e-sandbox-")),
+        // /tmp 直下: srt の Unix socket パス長の上限 (live.ts と同じ理由)
+        await mkdtemp(join("/tmp", "pcr-e2e-sb-")),
       );
       const runner = await startLiveRunner({
         defaultChannelId: ALLOWED,
@@ -191,7 +191,8 @@ describeLiveSandbox("live: srt sandbox (実 pi の bash tool 経由)", () => {
       expect(replyA.text).toMatch(/code=0/);
       const workdirA = join(workdirRoot, ALLOWED, a.ts);
 
-      // #3: 他 Session の workdir は read-only (EROFS)
+      // #3: 他 Session の workdir には書けない。errno は OS で違う (bwrap は EROFS、
+      // Seatbelt は EPERM) のでメッセージは見ず、失敗したことと実際に作られていないことを見る
       const b = await runner.chat.post(
         runAndReport(`touch ${workdirA}/cross-write-probe 2>&1`),
         { channelId: DENIED, mentionsBot: true },
@@ -200,7 +201,9 @@ describeLiveSandbox("live: srt sandbox (実 pi の bash tool 経由)", () => {
         /code=/.test(m.text),
       );
       expect(replyB.text).not.toMatch(/code=0\b/);
-      expect(replyB.text).toMatch(/Read-only file system|Permission denied/);
+      await expect(
+        access(join(workdirA, "cross-write-probe")),
+      ).rejects.toMatchObject({ code: "ENOENT" });
     },
     LIVE_TEST_TIMEOUT_MS,
   );

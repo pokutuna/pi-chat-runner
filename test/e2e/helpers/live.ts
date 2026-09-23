@@ -9,7 +9,6 @@
 // 一時的な env 指定が勝つ。
 
 import { mkdtemp } from "node:fs/promises";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 
@@ -157,9 +156,10 @@ export async function startLiveRunner(
     }),
     process.env,
   );
+  // os.tmpdir() ではなく /tmp 直下に作る: srt が Session の TMPDIR に置く Unix socket の
+  // パスは macOS で 104 byte が上限で、/var/folders/... 配下だと超える (runtime.md §5.5)
   const workdirRoot =
-    opts.workdirRoot ??
-    (await mkdtemp(join(tmpdir(), "pi-chat-runner-e2e-wd-")));
+    opts.workdirRoot ?? (await mkdtemp(join("/tmp", "pcr-e2e-wd-")));
 
   // Dispatcher / Session のログを配列に溜める。LOG_LEVEL が指定されていれば
   // 併せて stdout にも流す (デバッグ時の従来どおりの見え方を残す)。
