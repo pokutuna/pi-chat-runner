@@ -370,6 +370,16 @@ describe("loadSystemConfig", () => {
     await expect(loadSystemConfig(path, {})).rejects.toThrow(/agent\.yaml/);
   });
 
+  it("omitChat drops system.chat before env resolution (local mode)", async () => {
+    await writeFile(
+      path,
+      "system:\n  chat:\n    slack:\n      botToken: ${env.TEST_UNSET_TOKEN}\n      botUserId: U1\n  state:\n    control:\n      backend: sqlite\n",
+    );
+    const config = await loadSystemConfig(path, {}, { omitChat: true });
+    expect(config.chat.slack).toBeUndefined();
+    expect(config.state.control.backend).toBe("sqlite");
+  });
+
   it("throws with the file path for malformed YAML", async () => {
     await writeFile(path, "system:\n  - broken: [\n");
     await expect(loadSystemConfig(path, {})).rejects.toThrow(/agent\.yaml/);

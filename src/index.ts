@@ -42,6 +42,7 @@ export {
 } from "./config/config-source.js";
 export {
   loadSystemConfig,
+  type LoadSystemConfigOptions,
   type ResolvedRuntimeConfig,
   type ResolvedSystemConfig,
   resolveSystemConfig,

@@ -324,8 +324,10 @@ async function runLocal(argv: string[]): Promise<void> {
   const channelId = argv[3] ?? DEFAULT_LOCAL_CHANNEL_ID;
   const configPath = process.env.CONFIG_PATH ?? DEFAULT_CONFIG_PATH;
 
+  // system.chat は読まない (omitChat): local は Slack を使わないので、chat.slack の
+  // `${env.SLACK_BOT_TOKEN}` 等が未設定でも起動できる必要がある
   const system = resolveSystemConfig(
-    await loadSystemConfig(configPath),
+    await loadSystemConfig(configPath, process.env, { omitChat: true }),
     process.env,
   );
   const options = buildCommonRunnerOptions(system);

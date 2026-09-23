@@ -183,6 +183,13 @@ export const SystemConfigSchema = z
 export type SystemConfig = z.infer<typeof SystemConfigSchema>;
 export type SlackChatConfig = z.infer<typeof SlackChatSchema>;
 
+export interface LoadSystemConfigOptions {
+  /** `system.chat` を読まずに捨てる。local モード (local-dev.md §1) は Slack を
+   * 使わないので、chat.slack の `${env.SLACK_BOT_TOKEN}` 等が未設定でも起動できる
+   * 必要がある。env 参照の解決前に落とすため、chat 配下の必須 env は要求されない。 */
+  omitChat?: boolean;
+}
+
 /** 設定ファイル (単一 YAML) から `system` ブロックだけを読む。ファイル自体が無い・
  * system ブロックが省略されている場合も SystemConfigSchema.parse({}) を通した
  * default 済みの値 (state.control.backend: memory 等) を返す。env 参照解決は
@@ -190,6 +197,7 @@ export type SlackChatConfig = z.infer<typeof SlackChatSchema>;
 export async function loadSystemConfig(
   configPath: string,
   env: NodeJS.ProcessEnv = process.env,
+  options: LoadSystemConfigOptions = {},
 ): Promise<SystemConfig> {
   const filePath = configPath;
   const parsed = await readRootConfig(filePath);
@@ -197,9 +205,13 @@ export async function loadSystemConfig(
     return SystemConfigSchema.parse({});
   }
 
-  const systemRaw = parsed.system;
+  let systemRaw = parsed.system;
   if (systemRaw === undefined) {
     return SystemConfigSchema.parse({});
+  }
+  if (options.omitChat && typeof systemRaw === "object" && systemRaw !== null) {
+    const { chat: _chat, ...rest } = systemRaw as Record<string, unknown>;
+    systemRaw = rest;
   }
 
   let resolved: unknown;
