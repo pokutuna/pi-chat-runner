@@ -51,8 +51,10 @@ if (isLive) {
 }
 
 /** 実 LLM テストの describe。gate off のときは skip として現れる (fail にしない)。 */
+// 型を明示するのは、tsdown の d.ts 生成が vitest 内部の型名を参照できず TS4023 で落ちるため。
+type LiveDescribe = ReturnType<typeof describe.skipIf>;
 // oxlint-disable-next-line vitest/valid-describe-callback, vitest/valid-title -- describe を呼ばず skipIf の戻り値を再 export するだけ
-export const describeLive = describe.skipIf(!isLive);
+export const describeLive: LiveDescribe = describe.skipIf(!isLive);
 
 /** 1 ケースの上限。実 LLM + 実 pi は数十秒かかることがあり、
  * vitest.config.ts の既定 15s では足りない。 */
