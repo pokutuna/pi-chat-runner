@@ -1,12 +1,14 @@
 channels:
   - channel: "default"
-    systemPrompt: default fallback prompt
-    model: google/gemini-default
     trigger:
       when:
         - kind: mention
+    agent:
+      systemPrompt: default fallback prompt
+      model: google/gemini-default
   - channel: "C0000000001"
-    systemPrompt: specific channel prompt
     trigger:
       when:
         - kind: mention
+    agent:
+      systemPrompt: specific channel prompt

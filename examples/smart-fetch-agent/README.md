@@ -13,11 +13,11 @@ Extends the pi-chat-runner base image with a single `FROM` step, adding the
 
 pi auto-discovers anything placed under `$AGENT_HOME/.pi/agent/extensions/`
 and applies it to **every** channel (see
-[docs/design/session-runtime.md §5](../../docs/design/session-runtime.md)
+[docs/design/runtime.md §4.2](../../docs/design/runtime.md)
 and `gc-logging-agent`'s `extensions/init-gcloud.ts` for that pattern).
 
 This example deliberately does the opposite: `pi-smart-fetch` is listed in
-`config/agent.yaml`'s `channels[].extensions` for one specific channel
+`config/agent.yaml`'s `channels[].agent.extensions` for one specific channel
 (`C0000000001`), and the `default` channel has no `extensions:` entry at all.
 The extension's file lives at `/app/node_modules/pi-smart-fetch/dist/index.js`
 — outside `$AGENT_HOME/.pi/agent/extensions/` — precisely so it is *not*
@@ -26,9 +26,9 @@ This is the right shape when a capability (and its cost — see below) should
 only apply to a channel that actually needs it, rather than to every channel
 the bot is in.
 
-The runner (`src/session/runner.ts`) automatically adds each `extensions:`
-path's dirname to `--allow-fs-read` at kick time, so no extra filesystem
-permission wiring is needed here. `/app/node_modules/pi-smart-fetch/dist/`
+The Dispatcher (`src/dispatch/dispatcher.ts`) automatically adds each `extensions:`
+path's dirname to `--allow-fs-read` when it dispatches the session, so no extra
+filesystem permission wiring is needed here. `/app/node_modules/pi-smart-fetch/dist/`
 is also already covered by the base image's own Permission Model config
 (the whole `/app/node_modules` tree is readable), so nothing has to be added
 for this example either.
@@ -56,21 +56,21 @@ base `Dockerfile`) before running `pi install`, so the package lands owned by
 `agent:agent` under `$AGENT_HOME/.pi/agent/npm/node_modules/` with no `chown`
 step needed, and gets registered in `$AGENT_HOME/.pi/agent/settings.json`'s
 `packages` list — the same mechanism `pi install` uses outside this runner.
-Because this path *is* pi's auto-discovery path, no `channels[].extensions`
+Because this path *is* pi's auto-discovery path, no `channels[].agent.extensions`
 entry is needed at all; every channel picks it up automatically. This trades
 away the per-channel scoping (and its cost containment) this example
 otherwise demonstrates — use it only when every channel the bot serves should
 have the capability (and its `allowAddons` cost — see below).
 
-## Why `agent.runtime.allowAddons` is needed
+## Why `system.runtime.allowAddons` is needed
 
 `pi-smart-fetch` depends on a native addon (`wreq-js`, a Rust N-API binary).
 Node's Permission Model (`--permission`, on by default for the pi child
-process — see `docs/design/config.md` §6) rejects loading native addons
+process — see `docs/design/runtime.md` §5.2) rejects loading native addons
 (`.node` files) unless `--allow-addons` is passed. `pi-smart-fetch` would
 otherwise fail to load under this runner.
 
-`agent.runtime.allowAddons` (default `false` across the repo) is the opt-in
+`system.runtime.allowAddons` (default `false` across the repo) is the opt-in
 for this: setting it `true` adds `--allow-addons` to the pi child process's
 flags (env override: `PI_ALLOW_ADDONS`). This example sets its default to
 `true` in `config/agent.yaml`, since enabling `pi-smart-fetch` is the whole

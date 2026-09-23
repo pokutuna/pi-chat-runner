@@ -4,10 +4,11 @@ channels:
       when:
         - kind: mention
   - channel: "C0000000TOOLS"
-    tools: [read, grep]
-    excludeTools: [write, edit]
     session:
       mode: channel
       idleResetMinutes: 30
     reply:
       mode: flat
+    agent:
+      tools: [read, grep]
+      excludeTools: [write, edit]

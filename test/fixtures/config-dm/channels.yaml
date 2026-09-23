@@ -4,4 +4,5 @@ channels:
       when:
         - kind: mention
   - channel: "dm"
-    systemPrompt: dm prompt
+    agent:
+      systemPrompt: dm prompt

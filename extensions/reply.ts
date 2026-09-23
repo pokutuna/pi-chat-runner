@@ -4,7 +4,7 @@
  * pi の extension API で `reply(thread_key, text)` ツールを登録する。
  * execute は Slack を叩かず、引数をそのまま result (details) に詰めて返すだけ。
  * 実際のチャットへの投稿は、ホスト (Runner) が RPC の `tool_execution_end`
- * イベントを拾って行う (docs/design/session-runtime.md §2)。
+ * イベントを拾って行う (docs/design/runtime.md §4.1)。
  * この設計により pi 子プロセスには接続設定も秘匿値も一切要らない。
  *
  * pi が `--extension` でソースのまま直接ロードするため、ビルド対象外。

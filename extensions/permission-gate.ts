@@ -37,7 +37,7 @@ interface DenylistRule {
 }
 
 // パッケージ・システム変更: イメージは固定の調査ツールセットで完結させる方針
-// (session-runtime.md §5)。実行時のインストールは「そのセッションだけ入って
+// (runtime.md §4.1)。実行時のインストールは「そのセッションだけ入って
 // 次のセッションには無い」再現性の無い状態を生むため、事故として弾く
 const PACKAGE_MANAGEMENT_RULES: DenylistRule[] = [
   {
@@ -91,7 +91,7 @@ const DESTRUCTIVE_RULES: DenylistRule[] = [
 ];
 
 // 権限・所有: workdir 外の絶対パスに対する chmod/chown は雑判定でよいので、
-// 主要な非 workdir ディレクトリを列挙して弾く (session-runtime.md §6 の
+// 主要な非 workdir ディレクトリを列挙して弾く (runtime.md §5.1 の
 // UID 分離・0700 権限を bash から崩されないようにする事故防止)
 const PERMISSION_RULES: DenylistRule[] = [
   {

@@ -1,7 +1,8 @@
 // SlackUserResolver — Slack users.info を使った UserResolver 実装。
 //
 // WebClient には直接依存せず最小 IF (UsersInfoClient) を受け取る
-// (テストでフェイク注入しやすくするため)。
+// (テストでフェイク注入しやすくするため)。本文中の mention の記法 (`@U123`) も
+// Slack 固有なので、mentionPattern をここに持つ (ingress-egress.md §3)。
 
 import type { UserResolver } from "../user-resolver.js";
 
@@ -16,11 +17,15 @@ export interface UsersInfoClient {
   }>;
 }
 
+/** slack/adapter.ts の stripMentions が生成する `@U123ABC` 形式の mention パターン */
+const STRIPPED_MENTION_PATTERN = /@(U[A-Z0-9]+)/g;
+
 /** Slack users.info を使った UserResolver 実装。
  * 解決順: profile.display_name (空文字は無視) -> real_name -> name -> null。
  * 結果は Map に無期限キャッシュする (失敗時の null も含む)。 */
 export class SlackUserResolver implements UserResolver {
   private readonly cache = new Map<string, string | null>();
+  readonly mentionPattern = STRIPPED_MENTION_PATTERN;
 
   constructor(private readonly client: UsersInfoClient) {}
 

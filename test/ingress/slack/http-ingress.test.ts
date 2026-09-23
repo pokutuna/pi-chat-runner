@@ -238,7 +238,7 @@ describe("HttpIngress", () => {
 
     expect(res.status).toBe(200);
     expect(ackCalled).toBe(true);
-    // レスポンスはここで返るが、ハンドラの残処理は継続してよい (architecture.md §1)
+    // レスポンスはここで返るが、ハンドラの残処理は継続してよい (architecture.md §5)
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(finished).toBe(true);
 

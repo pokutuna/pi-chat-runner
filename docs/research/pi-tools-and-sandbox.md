@@ -23,8 +23,8 @@
 | 要素 | 実現手段 | 備考 |
 |---|---|---|
 | Cloud Logging / Monitoring の読み取り | 拡張イメージに `google-cloud-cli` を追加し bash から `gcloud logging read` 等 | [examples/gc-logging-agent](../../examples/gc-logging-agent) に実装済みの拡張イメージ例がある。認証は ADC がそのまま通る — SA に viewer 系ロール (logging.viewer, monitoring.viewer) を追加するだけ |
-| ソースコード | workdir に git clone。`GH_TOKEN` を `PI_ENV_PASSTHROUGH` で pi に渡す | [session-runtime.md](../design/session-runtime.md) §2 の機構がそのまま使える。読み取り専用 token にする |
-| アプリ・GCP の知識 | skill (`/app/skills/`) に調査手順を書く | Logging クエリのレシピ、アラートポリシー→メトリクス→ログ→コードの手順など。ChannelDoc の systemPrompt / context でチャンネル固有の前提を足す |
+| ソースコード | workdir に git clone。`GH_TOKEN` を `PI_ENV_PASSTHROUGH` で pi に渡す | [runtime.md](../design/runtime.md) §5.3 の機構がそのまま使える。読み取り専用 token にする |
+| アプリ・GCP の知識 | skill (`/app/skills/`) に調査手順を書く | Logging クエリのレシピ、アラートポリシー→メトリクス→ログ→コードの手順など。ChannelConfig の agent 設定 (systemPrompt / context) でチャンネル固有の前提を足す |
 | jq / ripgrep / fd | base image に同梱済み | |
 
 extra の WebFetch / WebSearch:
@@ -38,7 +38,7 @@ extra の WebFetch / WebSearch:
 pi 公式の隔離パターンは 2 系統 (`docs/containerization.md`):
 
 1. **pi プロセス全体を隔離環境で走らせる** — Plain Docker / OpenShell。
-   本設計が採っているのはこの系統 (Cloud Run コンテナ + UID 分離、[session-runtime.md](../design/session-runtime.md) §6)
+   本設計が採っているのはこの系統 (Cloud Run コンテナ + UID 分離、[runtime.md](../design/runtime.md) §5.1)
 2. **pi はホストに置き、ツール実行だけ隔離環境へルーティング** — Gondolin extension
    (`examples/extensions/gondolin/`)。read/write/edit/bash/grep/find/ls を micro-VM に委譲し、
    ホスト cwd を /workspace としてマウント。**§6 の将来パス (b) はこの extension が
@@ -118,8 +118,8 @@ Node Permission Model + アプリ層の網。Landlock は Step 6 で検証し、
 ただし in-process 化は隔離にならない: Node の vm / ShadowRealm は安全境界でなく、
 Permission Model はプロセス全体に効くため「pi のコードだけ絞る」ことは不可。
 bash はどのみち OS サブプロセスなので、境界はプロセスレベルに置くしかない
-(bridge の spawn 維持の判断は [design/README.md](../design/README.md) の
-Alternatives Considered を参照)。SDK はテストと将来の
+(bridge の spawn 維持の判断は [design overview](../design.md) の
+Agent Runtime を参照)。SDK はテストと将来の
 「SDK ループ + リモート Operations」構成の部品として有用。
 
 ## 設計への含意

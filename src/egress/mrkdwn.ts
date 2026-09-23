@@ -1,4 +1,4 @@
-// GFM → Slack mrkdwn 変換 (chat-model.md §3.2 renderMarkdown(md) → mrkdwn 相当)
+// GFM → Slack mrkdwn 変換 (ingress-egress.md §6 renderMarkdown(md) → mrkdwn 相当)
 //
 // 手順: code span/fenced code block をプレースホルダに退避 → 残りをエスケープ
 // → 行単位変換 (見出し/リスト) → インライン変換 (bold/italic/strike/link) → 復元。

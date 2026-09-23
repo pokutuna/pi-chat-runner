@@ -9,7 +9,7 @@ trigger/session/tooling shape:
 |----------|---------------------------------------|----------------------|
 | `local`  | mention                               | the plain `@bot` assistant (REPL default channel) |
 | `notes`  | passthrough (every post)              | `session.mode: channel` (one ongoing session), flat replies |
-| `alerts` | mention (human) / keyword (bot) / reaction | gate composition + `allowBots`, debounce + channel affinity, `memory: false`, read-only `tools` |
+| `alerts` | mention (human) / keyword (bot) / reaction | gate composition + `allowBots`, debounce + channel affinity, `agent.memory: false`, read-only `agent.tools` |
 | `links`  | URL keyword or mention                | per-channel extension (`pi-smart-fetch`) |
 | `dm`     | passthrough                           | DM opt-in (`!dm on`) |
 
@@ -36,14 +36,14 @@ GOOGLE_APPLICATION_CREDENTIALS=<absolute path to application_default_credentials
 PI_AGENT_HOME=<writable dir, e.g. /private/tmp/pi-chat-runner/home>
 ```
 
-To use another provider instead, change `default.model` in `agent.yaml` (pi's
+To use another provider instead, change `agent.model` in `agent.yaml` (pi's
 canonical `provider/model-id[:thinking-level]` form) and forward its API key
 via `agent.env` — see the commented block in `agent.yaml` and the
 [Configuration](../../README.md#configuration) section of the main README.
 
 Then run the demo — env vars on the command line take precedence over
 `.env.local`, so an existing `CONFIG_PATH` there doesn't interfere.
-`SHARED_DIR` backs the memory skill ([docs/design/shared.md](../../docs/design/shared.md));
+`SHARED_DIR` backs the memory skill ([docs/design/state.md §9](../../docs/design/state.md));
 point it at any writable directory:
 
 ```sh
@@ -67,7 +67,7 @@ what a channel's merged config resolves to without starting the REPL:
 ```
 
 The bare message is dropped by the gate (watch the log pane for the gate
-decision); the mention kicks a session and the reply arrives as a thread
+decision); the mention starts a session and the reply arrives as a thread
 (`[N]↳M`). Follow up in the thread with `>N more text` — it resumes the same
 session with context intact.
 
@@ -142,7 +142,7 @@ opted in. Channel config is re-read every message, so no restart is needed.
 ### 6. Memory across sessions
 
 With `SHARED_DIR` set, the memory skill is wired into every channel except
-`alerts` (`memory: false`):
+`alerts` (`agent.memory: false`):
 
 ```
 #local you> @bot remember this: my favorite deploy window is Friday 4pm
@@ -158,5 +158,5 @@ agent to remember something has no memory skill to land in.
 
 Anywhere along the way: `/disable` mutes a channel (triggers silently
 dropped), `/enable` recovers, `/new <text>` cuts the session and immediately
-kicks a fresh one with that text. In mention-gated channels prefix them:
+dispatches a fresh one with that text. In mention-gated channels prefix them:
 `@bot /new`.

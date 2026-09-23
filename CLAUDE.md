@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 A low-cost, serverless runner for running the [pi](https://github.com/earendil-works/pi) coding agent from chat. Currently Slack + Google Cloud (Cloud Run + Firestore + GCS) only.
 
-Full design docs live in `docs/design/` (start at `docs/design/README.md`). Code comments reference doc sections (e.g. `session-model.md §4`) — for non-trivial changes, check the referenced section so the implementation matches the documented contract.
+The design overview is `docs/design.md`; detailed design docs live in `docs/design/`. Code comments reference doc sections (e.g. `session-model.md §4`) — for non-trivial changes, check the referenced section so the implementation matches the documented contract.
 
 ## Tech Stack
 
@@ -19,7 +19,7 @@ Full design docs live in `docs/design/` (start at `docs/design/README.md`). Code
 
 ```sh
 pnpm test                                          # vitest run (all tests)
-pnpm exec vitest run test/session/runner.test.ts   # single file
+pnpm exec vitest run test/dispatch/dispatcher.test.ts # single file
 pnpm exec vitest run -t "some test name"           # single test by name
 pnpm run typecheck                                 # tsc --noEmit
 pnpm run lint                                      # oxlint . && oxfmt --check .
@@ -29,37 +29,39 @@ pnpm run dev:local                                 # local dev, stdin/stdout REP
 
 After editing a file, run `pnpm exec oxfmt --write <file>` — oxfmt enforces 2-space indentation and import order, and a plain edit commonly leaves unsorted exports.
 
-`STORE_BACKEND=firestore` tests need a live emulator (`FIRESTORE_EMULATOR_HOST`) and skip otherwise. `test/store/state/contract.ts` is a shared contract suite parameterized across backends — add new backend behavior there, not per-backend.
+The Firestore backend's tests need a live emulator (`FIRESTORE_EMULATOR_HOST`) and skip otherwise. `test/state/control/contract.ts` is a shared contract suite parameterized across backends — add new backend behavior there, not per-backend.
 
 ## Architecture
 
 One pipeline, top to bottom; each stage only knows the interface of its neighbor, not which implementation is behind it:
 
 ```
-Chat (e.g. Slack)
-    │  ChatEvent
+Chat (Slack / local)
+    │  raw event
     ▼
-EventSource        — receives raw events, normalizes to ChatEvent (src/ingress/)
+Ingress            — receives, normalizes to ChatEvent, absorbs duplicates, resolves users (src/ingress/)
     │  ChatEvent
     ▼
 Gate               — decides whether to trigger a session (src/gate/)
     │  ChatEvent (accepted only)
     ▼
-InboxStore         — durable, dedupe'd queue of accepted events (src/store/state/)
+Inbox              — durable, dedupe'd queue of accepted events (src/state/control/)
     │  InboxItem
     ▼
-SessionRunner      — acquires lease, drains inbox, kicks a turn (src/session/runner.ts)
+Dispatcher         — picks the session, acquires the lease, drains the inbox, starts/resumes it (src/dispatch/)
     │  turn input
     ▼
-SessionRuntime     — spawns and drives the pi child process via RPC (src/session/runtime.ts)
+Agent (Session / Runtime) — drives the turn; prepares the workdir and spawns/drives the pi child process via RPC (src/session/, src/runtime/)
     │  reply(thread_key, text, files?)
     ▼
-Egress             — resolves thread_key to destination, formats to mrkdwn, chunks (src/egress/)
+Egress             — resolves thread_key to destination, formats (mrkdwn for Slack), chunks (src/egress/)
     │  outgoing message
     ▼
-Chat (e.g. Slack)
+Chat
 ```
 
-`src/server.ts` + `src/bridge.ts` form the composition root: they read env vars, pick concrete backends (EventSource mode, store backend, workdir archival), and wire everything together. Concrete backend selection happens only there — `SessionRunner` and below receive interfaces only. See `docs/design/architecture.md` and `docs/design/components.md` for the full rationale.
+`src/runner.ts` + `src/server.ts` form the composition root. `server.ts` is the CLI entry: it reads System Config and picks the implementations (chat platform, Control State backend, Agent State archives, `RuntimeConfig`); `startRunner` wires the pipeline and knows nothing about which chat it is wiring. Concrete implementation selection happens only in `server.ts` — `Dispatcher` and below receive interfaces only. See `docs/design.md`, `docs/design/architecture.md`, and `docs/design/session-model.md` for the full rationale.
 
-Several directories split a platform-neutral interface from its implementation on purpose (`src/ingress/` vs `src/ingress/slack/`, `src/store/state/` vs `src/store/workdir.ts`, `src/gate/gate.ts` vs `src/gate/gates/`). Match that granularity when extending them — see `docs/design/persistence.md §0` for how the store split was decided.
+Chat-specific code lives behind `ChatPlatform` (`src/chat/platform.ts`) — a bundle of ingress + poster + reactor + userResolver + fetchMessage + mentionFormat + formatter. `createSlackPlatform` (`src/chat/slack.ts`) and `createLocalPlatform` (`src/chat/local/`) are the two implementations; nothing outside `src/chat/slack.ts` and `src/ingress/slack/` may import `@slack/*`.
+
+Several directories split a platform-neutral interface from its implementation on purpose (`src/ingress/` vs `src/ingress/slack/`, `src/egress/turn-reactor.ts` vs `src/egress/emoji-turn-reactor.ts`, `src/state/control/` vs `src/state/agent/`, `src/gate/gate.ts` vs `src/gate/gates/`). Match that granularity when extending them — see `docs/design/architecture.md §4` for how the store split was decided.

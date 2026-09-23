@@ -1,249 +1,84 @@
-// AgentConfig スキーマ + ローダー — docs/design/config.md §6「agent.yaml — 設定ファイル」
+// Agent Config スキーマ — docs/design/config.md §1.3
 //
-// 設定は単一の YAML (慣例名 agent.yaml, パスは自由) に全ブロックが同居し、この
-// モジュールは agent ブロックだけを担当する (root-config.ts のコメント参照)。
-// zod strict + fail-loud は channel-doc.ts / config-source.ts と同じ流儀。
+// Agent の振る舞いと Runtime への引き渡し (プロンプト、モデル、Tool、Skill、
+// Extension、memory、env) だけを持つ。System Config (system-config.ts) とは
+// 読むタイミングが違い (Agent Config はメッセージごと)、Channel Config
+// (channel-config.ts) の `agent` フィールドとしても同じスキーマが使われる。
 //
-// 優先順位は env > agent.yaml > コード既定 (config.md §6)。コード既定 (turnTimeoutMs
-// 600_000 等) はこのモジュールでは埋めない — 既定値の二重管理をしない
-// (旧 server.ts parseTurnTimeoutMs と同じ理由)。SessionRunner 側の既定に委ねる。
+// YAML 上は 2 箇所に現れる:
+//   - トップレベル `agent` ブロック (全 Channel 共通の default)
+//   - `channels[].agent` (Channel 固有の上書き)
+// どちらも同じ AgentConfigSchema で検証し、config-source.ts が 3 段でマージする
+// (config.md §3.2)。
 //
-// agent.env は足し算モデル: pi に渡る env は「コード既定 (gcpEnv 等) + agent.env に
-// 明示列挙したものだけ」。旧 envPassthrough (process.env から allowlist で選ぶ引き算
-// モデル) は廃止した。値には ${env.X} / ${env.X:-default} 参照を書ける
-// (resolveEnvRefs で yaml.parse 後・zod 前に解決する)。
+// env 参照 (${env.X}) は `env` フィールドの値だけが解決される (config.md §2.1)。
+// それ以外のフィールドは解決しないため、dump (config.md §5) が secret を
+// 解決済みで出すことが構造上ありえない。
+
+import { isAbsolute } from "node:path";
 
 import { z } from "zod";
 
-import { resolveEnvRefs } from "./env-ref.js";
-import { readRootConfig } from "./root-config.js";
+/** skills / extensions に書けるパス。絶対パス、または設定ファイルの場所からの
+ * 相対 (./ か ../ 始まり) のみ (config.md §3.5)。裸の相対パス ("foo/bar") は
+ * 基準ディレクトリが曖昧になるため schema で弾く。相対パスの絶対化は
+ * ConfigSource (config-source.ts resolveFileReferences) が行う。 */
+const PathRefSchema = z
+  .string()
+  .refine(
+    (value) =>
+      isAbsolute(value) || value.startsWith("./") || value.startsWith("../"),
+    {
+      message:
+        'path must be absolute or start with "./" (relative to the config file)',
+    },
+  );
 
-/** ${env.X} 解決後の permissionMode を boolean に解釈する。env-ref は string しか
- * 返さないため、YAML に native boolean で書いた場合 (boolean のまま来る) と ${env.X}
- * 参照で書いた場合 ("true"/"false"/"0"/"1"/"" の文字列で来る) の両方を受ける。
- * z.coerce.boolean() は "false" や "0" も truthy にしてしまい sandbox を OFF に
- * できない罠があるため使わない — 文字列は "0"/"false"/"" (大小無視) を false、
- * それ以外を true と解釈する (env 直読み経路 parseBooleanFlagEnv とは "false" の扱いが
- * 異なる点に注意)。 */
-const PermissionModeSchema = z.preprocess((value) => {
-  if (typeof value === "string") {
-    const v = value.trim().toLowerCase();
-    return v !== "" && v !== "0" && v !== "false";
-  }
-  return value;
-}, z.boolean().optional());
-
-/** pi 子プロセスの実行環境設定 (session-runtime.md §6)。${env.X} 解決後に zod で
- * 型を確定する — uid/gid は文字列でも number に coerce する。permissionMode は
- * coerce の罠を避けるため専用の PermissionModeSchema で解釈する。 */
-const AgentRuntimeSchema = z
-  .object({
-    uid: z.coerce.number().int().optional(),
-    gid: z.coerce.number().int().optional(),
-    permissionMode: PermissionModeSchema,
-    /** native addon (.node) を含む extension 用の `--allow-addons` opt-in
-     * (session-runtime.md §6)。boolean 解釈は permissionMode と同じ罠があるため
-     * PermissionModeSchema を共用する。 */
-    allowAddons: PermissionModeSchema,
-    home: z.string().optional(),
-  })
-  .strict();
-
-const AgentAgentSchema = z
-  .object({
-    /** ${env.X} 解決後は文字列で来る可能性があるため coerce する (uid/gid 等と同じ理由)。 */
-    turnTimeoutMs: z.coerce.number().int().positive().optional(),
-    /** 長時間ターンの進捗通知の間隔 (progress-notice.md)。0 で機能自体を無効化する。 */
-    progressNoticeIntervalMs: z.coerce.number().int().nonnegative().optional(),
-    /** pi 子プロセスへ渡す env の名前=値マップ (足し算モデル)。値は ${env.X} 参照可。 */
-    env: z.record(z.string(), z.string()).optional(),
-    runtime: AgentRuntimeSchema.optional(),
-  })
-  .strict();
-
+/** Agent Config (config.md §1.3)。全フィールド optional で、マージの各段が
+ * 「書いたフィールドだけ上書き」する (config.md §3.2)。 */
 export const AgentConfigSchema = z
   .object({
-    agent: AgentAgentSchema.optional(),
+    /** 役割・口調・運用ルール。共通プロンプトへ追記する。"./" / "../" 始まりは
+     * 設定ファイル基準のファイル参照としてインライン化される (config.md §3.5)。 */
+    systemPrompt: z.string().optional(),
+    /** 短い参照テキストの配列。初回 Turn の入力先頭に足す。systemPrompt と同じく
+     * "./" / "../" 始まりはファイル参照。 */
+    context: z.array(z.string()).optional(),
+    /** pi の --model にそのまま渡す。`provider/model-id[:thinking-level]` の
+     * canonical 形式を必須とする (pi の shorthand)。provider prefix が無い bare id は
+     * pi 側の fuzzy match で解決先 provider が非決定になり、ADC marker の判定
+     * (runtime.ts buildPiArgs) もできないため fail-loud で弾く。
+     * model-id 側の解釈 (thinking suffix・fuzzy match) は pi に委譲する。 */
+    model: z
+      .string()
+      .refine((v) => v.includes("/"), {
+        message:
+          'model must be in canonical "provider/model-id" form (e.g. "google-vertex/gemini-3.5-flash")',
+      })
+      .optional(),
+    /** pi の --tools に渡す allowlist。--tools は extension ツール (reply 含む) にも
+     * 適用されるため、runtime が reply を自動補完する (runtime.ts buildPiArgs) */
+    tools: z.array(z.string()).optional(),
+    /** pi の --exclude-tools に渡す denylist。reply を書いても無視する */
+    excludeTools: z.array(z.string()).optional(),
+    /** 追加ロードする skill。pi の --skill にそのまま渡す (SKILL.md を直接含む
+     * 単体 skill dir でも、複数 skill を束ねた親 dir でもよい — pi が再帰発見する)。
+     * $AGENT_HOME/.pi/agent/skills/ の自動発見分への追加 (additive) であり、
+     * 共通分を外す手段ではない (config.md §1.3) */
+    skills: z.array(PathRefSchema).optional(),
+    /** 追加ロードする extension (.ts/.js のファイルパス。pi の --extension は
+     * ディレクトリを受けない)。常時注入の組み込み (reply/permission-gate/export) と
+     * $AGENT_HOME/.pi/agent/extensions/ の自動列挙分への追加 (additive) */
+    extensions: z.array(PathRefSchema).optional(),
+    /** 組み込み memory skill の配線 (docs/design/runtime.md §4.4)。shared 有効
+     * (system.state.agent.sharedDir 設定時) の既定は true で、false で Channel 単位に
+     * 外せる (opt-out)。shared 無効時はこの値に関わらず配線されない */
+    memory: z.boolean().optional(),
+    /** pi 子プロセスへ渡す env の名前=値マップ (足し算モデル)。値に ${env.X} /
+     * ${env.X:-default} 参照を書ける唯一の Agent Config フィールド (config.md §2.1)。
+     * 解決は root-config.ts のロード時に行う。 */
+    env: z.record(z.string(), z.string()).optional(),
   })
   .strict();
 
 export type AgentConfig = z.infer<typeof AgentConfigSchema>;
-
-/** 設定ファイル (単一 YAML) から pi / agent ブロックを読む。ファイル自体が無ければ
- * 全項目省略として `{}` を返す (config.md §6: 「ファイル自体が無ければ全項目コード既定」)。
- * YAML parse 後・zod 検証前に resolveEnvRefs で ${env.X} 参照を解決する (env-ref.ts の
- * 「A2: parse 後走査」方式)。スキーマ違反・YAML 破損・未解決の env 参照は fail-loud で
- * throw する (config-source.ts と同じ形式)。 */
-export async function loadAgentConfig(
-  configPath: string,
-): Promise<AgentConfig> {
-  const parsed = await readRootConfig(configPath);
-  if (parsed === undefined) {
-    return {};
-  }
-  const filePath = configPath;
-
-  // 設定ファイルには connector / store / channels ブロックも同居する (それぞれ
-  // 別モジュールが並行して読む)。AgentConfigSchema は agent しか知らない
-  // .strict() スキーマなので、ここで agent キーだけを取り出してから検証する
-  // (parsed をそのまま渡すと他ブロックが unrecognized keys で弾かれる)。
-  const { agent: agentRaw } = parsed;
-  const extracted: Record<string, unknown> = {};
-  if (agentRaw !== undefined) extracted.agent = agentRaw;
-
-  let resolved: unknown;
-  try {
-    resolved = resolveEnvRefs(extracted, process.env);
-  } catch (err) {
-    throw new Error(
-      `failed to resolve \${env.*} references in agent config file: ${filePath}`,
-      { cause: err },
-    );
-  }
-
-  const result = AgentConfigSchema.safeParse(resolved);
-  if (!result.success) {
-    const issues = result.error.issues
-      .map((issue) => `  - ${issue.path.join(".")}: ${issue.message}`)
-      .join("\n");
-    throw new Error(`invalid agent config schema in ${filePath}:\n${issues}`);
-  }
-  return result.data;
-}
-
-/** loadAgentConfig / resolveAgentConfig を通した後の平坦な設定。省略されたフィールドは
- * undefined のまま (SessionRunner の既定に委ねる)。env / runtime は「値を渡さない」が
- * この項目の既定挙動そのものであり、上位で undefined 分岐を増やす必要が無いため
- * 常に埋めて返す (env は既定 {}、runtime.permissionMode は既定 true、
- * runtime.home は既定 "/home/agent")。 */
-export interface ResolvedAgentConfig {
-  turnTimeoutMs?: number;
-  progressNoticeIntervalMs?: number;
-  /** pi 子プロセスへ明示的に渡す env (agent.env の解決結果)。コード既定 (gcpEnv 等)
-   * と合流させるかどうかは呼び出し側の責務。 */
-  env: Record<string, string>;
-  runtime: ResolvedAgentRuntime;
-}
-
-export interface ResolvedAgentRuntime {
-  uid?: number;
-  gid?: number;
-  /** Node Permission Model 起動の有効/無効。コード既定は ON (true) — 書かなければ
-   * 隔離が効く。env PI_PERMISSION_MODE=0 または agent.yaml の
-   * agent.runtime.permissionMode: false で切れる。 */
-  permissionMode: boolean;
-  /** Permission Model 下で native addon (.node) のロードを許可するか
-   * (`--allow-addons`)。native code は fs チェックを素通りできるため既定は OFF
-   * (false) — env PI_ALLOW_ADDONS=1 または agent.yaml の
-   * agent.runtime.allowAddons: true で opt-in する。 */
-  allowAddons: boolean;
-  /** pi 子プロセスへ常に HOME として渡すディレクトリ。既定 "/home/agent"。 */
-  home: string;
-}
-
-/** env TURN_TIMEOUT_MS をパースする (旧 server.ts の parseTurnTimeoutMs をここへ移動)。
- * 未設定/空文字は undefined。0 や負数・非整数は setTimeout の即時発火や無意味な
- * タイムアウトに繋がるため fail-loud で弾く。 */
-function parseTurnTimeoutMsEnv(raw: string | undefined): number | undefined {
-  if (raw === undefined || raw === "") return undefined;
-  const value = Number.parseInt(raw, 10);
-  if (Number.isNaN(value) || value <= 0 || !Number.isInteger(value)) {
-    throw new Error(
-      "TURN_TIMEOUT_MS must be a positive integer (milliseconds)",
-    );
-  }
-  return value;
-}
-
-/** env PROGRESS_NOTICE_INTERVAL_MS をパースする (parseTurnTimeoutMsEnv と同形)。
- * 未設定/空文字は undefined。0 は機能自体の無効化として許容する (turnTimeoutMs と
- * 異なり positive を要求しない)。負数・非整数は fail-loud で弾く。 */
-function parseProgressNoticeIntervalMsEnv(
-  raw: string | undefined,
-): number | undefined {
-  if (raw === undefined || raw === "") return undefined;
-  const value = Number.parseInt(raw, 10);
-  if (Number.isNaN(value) || value < 0 || !Number.isInteger(value)) {
-    throw new Error(
-      "PROGRESS_NOTICE_INTERVAL_MS must be a non-negative integer (milliseconds)",
-    );
-  }
-  return value;
-}
-
-/** env PI_AGENT_UID / PI_AGENT_GID (session-runtime.md §6: UID 分離) を数値として
- * パースする。どちらも省略時は undefined (file の値を使う分岐に委ねる)。片方だけ
- * 設定されているのは誤設定なので fail-loud にする。 */
-function parseAgentIdsEnv(env: NodeJS.ProcessEnv): {
-  uid?: number;
-  gid?: number;
-} {
-  const uidRaw = env.PI_AGENT_UID;
-  const gidRaw = env.PI_AGENT_GID;
-  if (uidRaw === undefined && gidRaw === undefined) return {};
-  if (uidRaw === undefined || gidRaw === undefined) {
-    throw new Error(
-      "PI_AGENT_UID and PI_AGENT_GID must be set together (or both omitted)",
-    );
-  }
-  const uid = Number.parseInt(uidRaw, 10);
-  const gid = Number.parseInt(gidRaw, 10);
-  if (Number.isNaN(uid) || Number.isNaN(gid)) {
-    throw new Error("PI_AGENT_UID and PI_AGENT_GID must be integers");
-  }
-  return { uid, gid };
-}
-
-/** env のブールフラグ (PI_PERMISSION_MODE / PI_ALLOW_ADDONS) をパースする。
- * 未設定/空文字なら undefined (file/コード既定に委ねる)。"0" は明示的に無効化、
- * それ以外の値は有効化として扱う。 */
-function parseBooleanFlagEnv(raw: string | undefined): boolean | undefined {
-  if (raw === undefined || raw === "") return undefined;
-  return raw !== "0";
-}
-
-/** agent.yaml の内容と env を合わせて解決する。優先順位は env > agent.yaml
- * (config.md §6)。コード既定はここでは埋めない (turnTimeoutMs 等は undefined のまま
- * 返し、SessionRunner の既定に委ねる) が、env / runtime はこのモジュールが
- * コード既定 (env: {} / permissionMode: true / home: "/home/agent") を埋めて返す
- * (「値を渡さない」「隔離する」がそれぞれの既定挙動そのものであるため)。 */
-export function resolveAgentConfig(
-  file: AgentConfig,
-  env: NodeJS.ProcessEnv,
-): ResolvedAgentConfig {
-  const turnTimeoutMs =
-    parseTurnTimeoutMsEnv(env.TURN_TIMEOUT_MS) ?? file.agent?.turnTimeoutMs;
-  const progressNoticeIntervalMs =
-    parseProgressNoticeIntervalMsEnv(env.PROGRESS_NOTICE_INTERVAL_MS) ??
-    file.agent?.progressNoticeIntervalMs;
-
-  const agentEnv = file.agent?.env ?? {};
-
-  const agentIdsFromEnv = parseAgentIdsEnv(env);
-  const uid = agentIdsFromEnv.uid ?? file.agent?.runtime?.uid;
-  const gid = agentIdsFromEnv.gid ?? file.agent?.runtime?.gid;
-  const permissionMode =
-    parseBooleanFlagEnv(env.PI_PERMISSION_MODE) ??
-    file.agent?.runtime?.permissionMode ??
-    true;
-  const allowAddons =
-    parseBooleanFlagEnv(env.PI_ALLOW_ADDONS) ??
-    file.agent?.runtime?.allowAddons ??
-    false;
-  const home = env.PI_AGENT_HOME ?? file.agent?.runtime?.home ?? "/home/agent";
-
-  return {
-    ...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),
-    ...(progressNoticeIntervalMs !== undefined
-      ? { progressNoticeIntervalMs }
-      : {}),
-    env: agentEnv,
-    runtime: {
-      ...(uid !== undefined ? { uid } : {}),
-      ...(gid !== undefined ? { gid } : {}),
-      permissionMode,
-      allowAddons,
-      home,
-    },
-  };
-}

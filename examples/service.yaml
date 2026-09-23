@@ -24,7 +24,7 @@ spec:
           env:
             - name: SLACK_MODE
               value: events # production uses events (HTTP push), not socket
-            - name: STORE_BACKEND
+            - name: CONTROL_STATE_BACKEND
               value: firestore # production needs a durable backend
             # To share a Firestore in an existing project, set these (see agent.yaml):
             # - name: FIRESTORE_PROJECT_ID
@@ -34,9 +34,9 @@ spec:
             # - name: FIRESTORE_ROOT_DOC
             #   value: pi-chat-runner/prod # parent doc; all collections nest under it
             - name: WORKDIR_ARCHIVE_DIR
-              value: /data/channels # read directly by the bridge, not via agent.yaml; sub-dir keeps /data shared with SHARED_DIR
+              value: /data/channels # referenced from system.state.agent.workdirDir in agent.yaml; sub-dir keeps /data shared with SHARED_DIR
             - name: SHARED_DIR
-              value: /data/shared # channel-shared persistent dir (docs/design/shared.md); unset to disable
+              value: /data/shared # channel-shared persistent dir (docs/design/state.md §6); unset to disable
             - name: PI_PERMISSION_MODE
               value: "1" # "0" disables sandboxing; any other value enables it
             - name: PI_AGENT_UID

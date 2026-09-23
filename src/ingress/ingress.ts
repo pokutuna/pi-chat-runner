@@ -1,4 +1,4 @@
-// Ingress IF — docs/design/architecture.md §1
+// Ingress IF — docs/design/architecture.md §5
 //
 // 「イベントの届き方 + ACK の仕方」を抽象化する Trigger 層。Socket Mode と
 // Events API (Step 5) で実装を差し替え、後段 (dedupe/起動判定/inbox) は共通化する。

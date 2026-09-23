@@ -1,6 +1,6 @@
 # pi-chat-runner base image
 #
-# Design docs: session-runtime.md §5 (minimal image), architecture.md §1/§4.
+# Design docs: runtime.md §4.3 (image layering), architecture.md §1/§4.
 #
 # Runtime ships only the basic investigation CLIs used from pi's bash tool —
 # no language runtimes or build tools (§5). Smaller image, faster cold start
@@ -60,7 +60,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   &&  rm -rf /var/lib/apt/lists/* \
   &&  ln -s "$(command -v fdfind)" /usr/local/bin/fd
 
-# agent user for UID separation (session-runtime.md §6). The container keeps
+# agent user for UID separation (runtime.md §5.1). The container keeps
 # running as root (the Runner); the Runner drops to { uid, gid } when spawning
 # pi. /home/agent is agent-owned so pi can create ~/.pi etc. /app stays
 # root-owned with no agent write access — the agent must not be able to
@@ -68,7 +68,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 RUN groupadd --gid 1001 agent \
   && useradd --uid 1001 --gid 1001 --create-home --shell /usr/sbin/nologin agent
 
-# Baked default settings.json (session-runtime.md §2): pins only the behavior
+# Baked default settings.json (runtime.md §3): pins only the behavior
 # the runner depends on (steeringMode/followUpMode/compaction.enabled/
 # enableInstallTelemetry). Downstream images can overwrite it with a single
 # COPY --chown=1001:1001 <own settings.json> /home/agent/.pi/agent/settings.json
@@ -85,12 +85,12 @@ COPY package.json ./
 COPY extensions ./extensions
 
 # Built-in skills (memory). Wired by the Runner via --skill when SHARED_DIR is
-# enabled (docs/design/memory.md). Distinct from skills/ below — that one is
-# always loaded for all channels, this one is opt-out via ChannelDoc.memory.
+# enabled (docs/design/runtime.md §4.4). Distinct from skills/ below — that one is
+# always loaded for all channels, this one is opt-out via the Agent Config's memory field.
 COPY builtin-skills ./builtin-skills
 
 # Skills under pi's default search path $AGENT_HOME/.pi/agent/skills/ are
-# auto-discovered (no --skill wiring needed, config.md §6). Currently empty
+# auto-discovered (no --skill wiring needed, runtime.md §4.3). Currently empty
 # (.gitkeep only); downstream images can overwrite with a single
 # COPY --chown=1001:1001 skills/ /home/agent/.pi/agent/skills/
 COPY --chown=1001:1001 skills/ /home/agent/.pi/agent/skills/

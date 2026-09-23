@@ -1,4 +1,4 @@
-// SlackIngressAdapter (codec) — docs/design/chat-model.md §3.2
+// SlackIngressAdapter (codec) — docs/design/ingress-egress.md §2
 //
 // 「届いた生 payload を ChatEvent に正規化する」変換器。transport (Socket Mode /
 // Events API) には依存しない純関数的な codec。Ingress 実装がこれを内部で使う。
@@ -72,20 +72,46 @@ function stripMentions(
   return { text: stripped, mentionsBot };
 }
 
-/** SlackIngressAdapter: Slack raw event -> ChatEvent の正規化を担う codec。
- * transport 非依存 (Socket Mode / Events API の両方から使う想定, chat-model.md §3.2)。 */
+/** 同一メッセージの二重配送を覚えておく上限。超えたら丸ごと捨てる
+ * (取りこぼしても Inbox の event_id dedupe と同じ結果にはならないが、
+ * 二重配送は数秒以内に届くため実害がない)。 */
+export const SEEN_MESSAGES_LIMIT = 1000;
+
+/** SlackIngressAdapter: Slack raw event -> ChatEvent の正規化と、Slack 固有の
+ * 二重配送の吸収を担う codec。transport 非依存 (Socket Mode / Events API の
+ * 両方から使う想定, ingress-egress.md §2)。
+ *
+ * 二重配送の吸収 (ingress-egress.md §2): bot への mention は app_mention と
+ * message の 2 イベントで届き、event_id が別なので Inbox の dedupe では防げない。
+ * メッセージ ts (channelId 付き) で 1 つ目だけを通す。これは Slack の配送仕様
+ * そのものなので、汎用の Ingress ステージ (src/ingress/pipeline.ts) ではなく
+ * codec 側に置く。 */
 export class SlackIngressAdapter {
+  private readonly seenMessages = new Set<string>();
+
   constructor(private readonly botUserId: string) {}
 
-  /** raw event payload -> ChatEvent。対象外の type は null を返す。 */
+  /** raw event payload -> ChatEvent。対象外の type と、既に配送済みの
+   * 同一メッセージは null を返す。 */
   normalize(rawEvent: SlackRawEvent, eventId?: string): ChatEvent | null {
     switch (rawEvent.type) {
       case "app_mention":
-      case "message":
-        return this.normalizeMessage(
+      case "message": {
+        const message = this.normalizeMessage(
           rawEvent as SlackMessageLikeEvent,
           eventId,
         );
+        if (message === null) return null;
+        const messageKey = `${message.conversation.channelId}:${message.id}`;
+        if (this.seenMessages.has(messageKey)) return null;
+        // 上限チェックは add の前に行う。後にすると、上限に達した回の追加分が
+        // そのまま clear で消え、直後の再配送を取りこぼす
+        if (this.seenMessages.size >= SEEN_MESSAGES_LIMIT) {
+          this.seenMessages.clear();
+        }
+        this.seenMessages.add(messageKey);
+        return message;
+      }
       case "reaction_added":
       case "reaction_removed":
         return this.normalizeReaction(rawEvent as SlackReactionAddedEvent);
@@ -101,7 +127,7 @@ export class SlackIngressAdapter {
     // subtype 付きイベントは原則対象外だが、bot_message だけは通す。webhook 系
     // アラート (Cloud Monitoring / Mackerel / Security Command Center 等) は
     // Slack 連携で subtype: "bot_message" として届くため、allowBots 経路 (この
-    // 機能の主目的) の入口になる (session-model.md §5)。message_changed /
+    // 機能の主目的) の入口になる (config.md §4.3)。message_changed /
     // message_deleted / thread_broadcast 等、それ以外の subtype は従来どおり drop する。
     if (event.subtype !== undefined && event.subtype !== "bot_message") {
       return null;
@@ -172,7 +198,7 @@ export class SlackIngressAdapter {
     };
   }
 
-  /** 再配送 dedupe 用のイベント ID。Slack の event_id を返す (chat-model.md §3.2)。 */
+  /** 再配送 dedupe 用のイベント ID。Slack の event_id を返す (ingress-egress.md §2)。 */
   dedupeKey(envelope: SlackEventEnvelope): string | undefined {
     return envelope.event_id;
   }

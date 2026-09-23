@@ -4,7 +4,10 @@ import type {
   InboundMessage,
   ReactionEvent,
 } from "../../../src/ingress/chat-event.js";
-import { SlackIngressAdapter } from "../../../src/ingress/slack/adapter.js";
+import {
+  SEEN_MESSAGES_LIMIT,
+  SlackIngressAdapter,
+} from "../../../src/ingress/slack/adapter.js";
 
 const BOT_USER_ID = "UBOT123";
 
@@ -216,5 +219,103 @@ describe("SlackIngressAdapter.normalize", () => {
     expect(result).not.toBeNull();
     const msg = result as InboundMessage;
     expect(msg.conversation.isDm).toBeUndefined();
+  });
+});
+
+// bot への mention は app_mention と message の 2 イベントで届き、event_id は
+// 別なので Inbox の dedupe では防げない。Slack の配送仕様そのものなので、
+// 汎用の Ingress ステージではなく codec 側で吸収する (ingress-egress.md §2)。
+describe("SlackIngressAdapter duplicate delivery", () => {
+  it("drops the second delivery of the same message ts", () => {
+    const adapter = new SlackIngressAdapter(BOT_USER_ID);
+    const first = adapter.normalize(
+      {
+        type: "app_mention",
+        text: `<@${BOT_USER_ID}> hello`,
+        user: "U123",
+        channel: "C123",
+        ts: "1720000100.000100",
+      },
+      "Ev-app-mention",
+    );
+    const second = adapter.normalize(
+      {
+        type: "message",
+        text: `<@${BOT_USER_ID}> hello`,
+        user: "U123",
+        channel: "C123",
+        ts: "1720000100.000100",
+      },
+      "Ev-message",
+    );
+
+    expect(first).not.toBeNull();
+    expect(second).toBeNull();
+  });
+
+  it("keeps the same ts in a different channel", () => {
+    const adapter = new SlackIngressAdapter(BOT_USER_ID);
+    const first = adapter.normalize({
+      type: "message",
+      text: "hello",
+      user: "U123",
+      channel: "C123",
+      ts: "1720000101.000100",
+    });
+    const other = adapter.normalize({
+      type: "message",
+      text: "hello",
+      user: "U123",
+      channel: "C456",
+      ts: "1720000101.000100",
+    });
+
+    expect(first).not.toBeNull();
+    expect(other).not.toBeNull();
+  });
+
+  it("drops the re-delivery of the newest message even when the seen set has just been cleared at its bound", () => {
+    // 記憶の上限に達した回の追加分が clear で消えると、その直後の再配送を
+    // 取りこぼす。上限を跨いだ直後のメッセージでも dedupe が効くことを見る
+    const adapter = new SlackIngressAdapter(BOT_USER_ID);
+    let last = "";
+    for (let i = 0; i <= SEEN_MESSAGES_LIMIT; i += 1) {
+      last = `1720001000.${String(i).padStart(6, "0")}`;
+      expect(
+        adapter.normalize({
+          type: "message",
+          text: "hello",
+          user: "U123",
+          channel: "C123",
+          ts: last,
+        }),
+      ).not.toBeNull();
+    }
+
+    expect(
+      adapter.normalize({
+        type: "app_mention",
+        text: "hello",
+        user: "U123",
+        channel: "C123",
+        ts: last,
+      }),
+    ).toBeNull();
+  });
+
+  it("does not dedupe reactions (they carry no message ts of their own)", () => {
+    const adapter = new SlackIngressAdapter(BOT_USER_ID);
+    const args = {
+      type: "reaction_added" as const,
+      user: "U123",
+      reaction: "eyes",
+      item: {
+        type: "message" as const,
+        channel: "C123",
+        ts: "1720000102.0001",
+      },
+    };
+    expect(adapter.normalize(args)).not.toBeNull();
+    expect(adapter.normalize(args)).not.toBeNull();
   });
 });

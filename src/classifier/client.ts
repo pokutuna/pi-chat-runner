@@ -1,14 +1,17 @@
-// ClassifierClient — session-model.md §5 Layer 2 (LLM classifier) の LLM 呼び出し部。
+// ClassifierClient — config.md §4.1 の `kind: classifier` Gate の LLM 呼び出し部。
 //
 // gate (src/gate/gates/classifier.ts) から criteria + 対象メッセージを渡し、
-// {result: boolean, reason: string} を得る薄いトランスポート。gate/bridge/runner が
+// {result: boolean, reason: string} を得る薄いトランスポート。gate / Runner が
 // LLM SDK に直接依存しないよう、この境界にまとめる (src/gate/gates/ には置かない)。
 //
 // 実装は Vertex AI + ADC (pi の google-vertex と同じ認証)。project/location は
-// bridge から注入する。モデルは既定 (defaultModel) を per-call で上書きできる
+// Runner (src/runner.ts) から注入する。モデルは既定 (defaultModel) を per-call で上書きできる
 // (per-gate の model 切替のため)。
 
 import { GoogleGenAI, type Schema, Type } from "@google/genai";
+
+// Vertex AI 呼び出しが無応答のまま Gate 判定をブロックしないためのデフォルト上限。
+const DEFAULT_TIMEOUT_MS = 10_000;
 
 export interface ClassificationResult {
   result: boolean;
@@ -67,11 +70,13 @@ function isClassificationResult(value: unknown): value is ClassificationResult {
 export class GeminiClassifierClient implements ClassifierClient {
   private readonly ai: GoogleGenAI;
   private readonly defaultModel: string;
+  private readonly timeoutMs: number;
 
   constructor(opts: {
     project: string;
     location: string;
     defaultModel: string;
+    timeoutMs?: number;
   }) {
     // vertexai: true + project/location で ADC を使う (API キー不要)。
     this.ai = new GoogleGenAI({
@@ -80,6 +85,7 @@ export class GeminiClassifierClient implements ClassifierClient {
       location: opts.location,
     });
     this.defaultModel = opts.defaultModel;
+    this.timeoutMs = opts.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   }
 
   async classify(input: {
@@ -88,15 +94,28 @@ export class GeminiClassifierClient implements ClassifierClient {
     model?: string;
   }): Promise<ClassificationResult> {
     const model = input.model ?? this.defaultModel;
-    const response = await this.ai.models.generateContent({
-      model,
-      contents: buildPrompt(input.criteria, input.text),
-      config: {
-        temperature: 0,
-        responseMimeType: "application/json",
-        responseSchema: RESPONSE_SCHEMA,
-      },
-    });
+    // @google/genai は abortSignal を自前の AbortController に中継するだけで、
+    // fetch が投げる abort 由来のエラーは reason を保持しない (undici は AbortError
+    // に丸める)。timeout かどうかは自前の signal.aborted で判定する。
+    const timeoutSignal = AbortSignal.timeout(this.timeoutMs);
+    let response;
+    try {
+      response = await this.ai.models.generateContent({
+        model,
+        contents: buildPrompt(input.criteria, input.text),
+        config: {
+          temperature: 0,
+          responseMimeType: "application/json",
+          responseSchema: RESPONSE_SCHEMA,
+          abortSignal: timeoutSignal,
+        },
+      });
+    } catch (err) {
+      if (timeoutSignal.aborted) {
+        throw new Error(`classifier: timed out after ${this.timeoutMs}ms`);
+      }
+      throw err;
+    }
 
     const text = response.text;
     if (text === undefined) {

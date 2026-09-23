@@ -7,9 +7,10 @@ channels:
         - kind: mention
 
   - channel: "C0000000PATHS"
-    skills:
-      - ./skills/local-skill
-      - /app/skills/baked-skill
-    extensions:
-      - ./extensions/local-ext.ts
-      - /app/extensions/baked-ext.ts
+    agent:
+      skills:
+        - ./skills/local-skill
+        - /app/skills/baked-skill
+      extensions:
+        - ./extensions/local-ext.ts
+        - /app/extensions/baked-ext.ts

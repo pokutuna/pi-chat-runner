@@ -1,10 +1,9 @@
-// Gate IF + registry + trigger.when ブール木の評価 — docs/design/session-model.md §5,
-// docs/design/config.md §7 (「trigger と gate の役割分担」「trigger.when — Gate の合成木」)
+// Gate IF + registry + trigger.when ブール木の評価 — docs/design/config.md §4
 //
-// 起動判定を差し替え可能な部品 (Gate) にし、config.md §7 のブール木 (配列 = OR,
+// 起動判定を差し替え可能な部品 (Gate) にし、config.md §4 のブール木 (配列 = OR,
 // {and:[]}/{or:[]} で明示合成、ネスト可、negate なし) で合成する。channel 設定
 // (criteria/pattern 等) は各 Gate のコンストラクタ引数で渡すため、GateContext には
-// event のみを持たせる (ChannelDoc.trigger.when の葉が GateConfig で、それを
+// event のみを持たせる (ChannelConfig.trigger.when の葉が GateConfig で、それを
 // ここで Gate インスタンスへ組み立てる)。
 //
 // classifier は LLM 呼び出しを要するため ClassifierClient を deps で注入する
@@ -12,7 +11,7 @@
 // 初期スコープ外のため registry 未登録 (createGate はエラーを投げる)。
 
 import type { ClassifierClient } from "../classifier/client.js";
-import type { GateConfig, WhenNode } from "../config/channel-doc.js";
+import type { GateConfig, WhenNode } from "../config/channel-config.js";
 import type { ChatEvent } from "../ingress/chat-event.js";
 import type { Logger } from "../logger.js";
 import { ClassifierGate } from "./gates/classifier.js";
@@ -37,7 +36,7 @@ export interface Gate {
   decide(ctx: GateContext): Promise<TriggerDecision> | TriggerDecision;
 }
 
-/** ChannelDoc.trigger.when の葉 (YAML 由来)。kind ごとに要るパラメータだけ持つ。
+/** ChannelConfig.trigger.when の葉 (YAML 由来)。kind ごとに要るパラメータだけ持つ。
  * classifier は criteria 必須 + model 任意 (per-gate モデル上書き)。 */
 export type GateSpec =
   | { kind: "mention" }
@@ -92,13 +91,13 @@ export function createGate(spec: GateSpec, deps: GateDeps = {}): Gate {
 /** trigger 設定が無いチャンネルの既定 = mention のみ。DM は 1:1 のため
  * mention という操作が意味を持たず、明示的な `dm` エントリで trigger.when を
  * 指定しない限り起動しない (vacuously false — evaluateWhen は空配列を
- * false として扱う。session-model.md §5, docs/design/config.md §1)。 */
+ * false として扱う。config.md §4, §3.1)。 */
 export function defaultWhen(isDm: boolean): WhenNode[] {
   return isDm ? [] : [{ kind: "mention" }];
 }
 
 /** GateConfig (WhenNode の葉) → GateSpec への narrowing。criteria/pattern は
- * schema (channel-doc.ts) で kind ごとに必須が担保済みなので、ここでの欠落は
+ * schema (channel-config.ts) で kind ごとに必須が担保済みなので、ここでの欠落は
  * schema 通過後のバグとして fail-loud にする — 黙って無視すると起動判定が
  * 静かに変わってしまうため。 */
 function gateConfigToSpec(gate: GateConfig): GateSpec {
@@ -150,7 +149,7 @@ function gateConfigToSpec(gate: GateConfig): GateSpec {
 }
 
 /** trigger.when の木 (config 由来、未評価) を Gate 木 (評価可能) に組み立てたもの。
- * 葉は createGate 済みの Gate インスタンスを持つ (config.md §7)。 */
+ * 葉は createGate 済みの Gate インスタンスを持つ (config.md §4)。 */
 export type EvaluableNode =
   | { gate: Gate }
   | { and: EvaluableNode[] }
@@ -175,7 +174,7 @@ function buildWhenNode(node: WhenNode, deps: GateDeps): EvaluableNode {
   return { gate: createGate(gateConfigToSpec(node), deps) };
 }
 
-/** EvaluableNode[] (トップレベル = OR、config.md §7) を評価する。短絡評価する。
+/** EvaluableNode[] (トップレベル = OR、config.md §4) を評価する。短絡評価する。
  * reason には発火/非発火を決めた葉の gate 名と reason を、木構造は OR[...]/AND[...]
  * の簡易表記で含める。 */
 export async function evaluateWhen(

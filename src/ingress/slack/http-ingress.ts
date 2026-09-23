@@ -1,8 +1,8 @@
 // HttpIngress — Slack Events API (HTTP push) 経由の Ingress
-// (docs/design/architecture.md §1, §6)
+// (docs/design/architecture.md §5, §6)
 //
 // Events API では「3 秒 ACK」は「200 レスポンスを返す」ことそのもの。Cloud Run の
-// CPU always-allocated 前提 (§1) なので、ack() が呼ばれた時点で 200 を返し、
+// CPU always-allocated 前提 (§5) なので、ack() が呼ばれた時点で 200 を返し、
 // ハンドラの残り処理はレスポンス後も CPU 上で継続してよい。onEvent が ack を呼ばずに
 // 完了/例外を投げても 200 を返す (Slack の無用な再送を防ぐため。エラーは pino に残す)。
 
@@ -32,7 +32,7 @@ export interface HttpIngressOptions {
   logger?: Logger;
 }
 
-/** Slack Events API 経由の Ingress。Cloud Run 本番用途 (architecture.md §1)。
+/** Slack Events API 経由の Ingress。Cloud Run 本番用途 (architecture.md §3)。
  * 署名検証 → url_verification / event_callback の分岐 → SlackIngressAdapter で正規化。 */
 export class HttpIngress implements Ingress {
   private readonly app: Hono;
@@ -126,7 +126,7 @@ export class HttpIngress implements Ingress {
       }
 
       if (body.type !== "event_callback") {
-        // 未知の envelope type。3 秒 ACK の責務だけ果たす (architecture.md §6)
+        // 未知の envelope type。3 秒 ACK の責務だけ果たす (architecture.md §5)
         return c.text("ok", 200);
       }
 
@@ -138,12 +138,12 @@ export class HttpIngress implements Ingress {
       const chatEvent = this.adapter.normalize(rawEvent, eventId);
 
       if (chatEvent === null) {
-        // 対象外イベント。inbox に積む前段で弾いてよい (architecture.md §6 フロー 1-2)
+        // 対象外イベント。inbox に積む前段で弾いてよい (architecture.md §2)
         return c.text("ok", 200);
       }
 
       // ack() = 200 を返すこと。onEvent の残処理はレスポンス後も継続する
-      // (always-allocated 前提。architecture.md §1)。deferred で ack 呼び出しを待つ。
+      // (always-allocated 前提。architecture.md §5)。deferred で ack 呼び出しを待つ。
       let resolveAck: () => void;
       const acked = new Promise<void>((resolve) => {
         resolveAck = resolve;

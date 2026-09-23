@@ -4,8 +4,8 @@ export default defineConfig({
   entry: [
     "src/server.ts",
     "src/index.ts",
-    "src/store/state/backends/firestore.ts",
-    "src/store/state/backends/sqlite.ts",
+    "src/state/control/firestore.ts",
+    "src/state/control/sqlite.ts",
   ],
   outDir: "dist",
   format: "esm",

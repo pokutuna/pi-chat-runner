@@ -26,11 +26,14 @@ function baseMessage(overrides: Partial<InboundMessage> = {}): InboundMessage {
 }
 
 describe("enrichEvent", () => {
+  /** mentionPattern は UserResolver 実装が持つ (Slack なら `@U...`)。
+   * enrichEvent の mention 展開はこのパターンに従うため、スタブも同じ形を渡す。 */
   function stubResolver(names: Record<string, string>): UserResolver {
     return {
       async resolve(userId: string) {
         return names[userId] ?? null;
       },
+      mentionPattern: /@(U[A-Z0-9]+)/g,
     };
   }
 
@@ -109,6 +112,15 @@ describe("enrichEvent", () => {
     const resolver = stubResolver({ U123: "たなか" });
     const result = await enrichEvent(event, resolver);
     expect(result).toBe(event);
+  });
+
+  it("leaves text untouched when the resolver has no mentionPattern", async () => {
+    const event = baseMessage({ text: "@U111 さんへ" });
+    const result = (await enrichEvent(event, {
+      resolve: async () => "たなか",
+    })) as InboundMessage;
+    expect(result.text).toBe("@U111 さんへ");
+    expect(result.sender.displayName).toBe("たなか");
   });
 
   it("does not mutate the original event object", async () => {

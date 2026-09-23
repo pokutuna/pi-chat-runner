@@ -4,14 +4,15 @@ channels:
       when:
         - kind: mention
   - channel: "C0000000001"
-    systemPrompt: ./prompts/greeting.md
-    context:
-      - ./prompts/context-note.md
-      - inline text without file reference
-    model: google/gemini-3-pro
     trigger:
       when:
         - kind: mention
+    agent:
+      systemPrompt: ./prompts/greeting.md
+      context:
+        - ./prompts/context-note.md
+        - inline text without file reference
+      model: google/gemini-3-pro
   - channel: "#keyword-demo"
     trigger:
       when:

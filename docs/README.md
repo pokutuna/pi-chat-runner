@@ -1,31 +1,31 @@
 # チャット駆動エージェント設計ドキュメント
 
-hermes-agent (NousResearch) と pi (earendil-works) の実装調査をもとにした、
-Slack から pi を駆動するエージェントブリッジの設計一式である。実装は新規リポジトリで行い、
-このディレクトリを設計入力として渡す。
+Slack などのチャットから pi を駆動するエージェントランナーの設計一式である。
+全体像は [design.md](design.md)、領域ごとの詳細は `design/` 配下にまとめる。
 
 ## 構成
 
-- **design/** — この agent 実行環境の設計。[design/README.md](design/README.md) がメインの Design Doc で、
-  詳細スペック 6 本 (chat-model / session-model / architecture / components / config / session-runtime) がぶら下がる
+- **design.md** — 設計全体の概要。Runner / Session / Runtime / State / Config と、メッセージ処理の流れを説明する
+- **design/** — 領域ごとの詳細設計 (architecture / session-model / message-dispatch / state / runtime / config / ingress-egress / local-dev)
 - **research/** — hermes-agent / pi の実装調査 (コード参照付き。実装時のリファレンス)
-- 直下 — 運用ガイドと初期版スコープの決定事項
+- 直下 — 運用ガイド
 
 ## ドキュメント一覧
 
 | ドキュメント | 内容 |
 |---|---|
-| [design/README.md](design/README.md) | メインの Design Doc: Objective/Goals/Scenarios/Security/Timeline |
-| [design/chat-model.md](design/chat-model.md) | ConversationRef/ChatEvent/アダプタ (Ingress/Egress)/プロンプト化/出力 Sink |
-| [design/session-model.md](design/session-model.md) | sessionKey・エントリ列・lease/steering・起動 3 段ゲート・再開・隔離・成果物・クロスセッション |
-| [design/architecture.md](design/architecture.md) | Slack × GCP の最終案 (単一組織向け簡素版): channels 軸 Firestore、GCS FUSE、実装順序 |
-| [design/components.md](design/components.md) | コンポーネント README: Trigger/Gate/Inbox/Session/Runner/Reply の全体像 (Mermaid 図付き) |
-| [design/config.md](design/config.md) | Config 設計: ユースケース→置き場所の判断基準、ChannelDoc スキーマ、pi 起動設定への実体化、記述形式 (YAML + apply)、カスタマイズポイント全体地図 |
-| [design/session-runtime.md](design/session-runtime.md) | セッション実行の仕様: pi の kick シーケンス、env allowlist、tmpfs/GCS flush と再開、steering の RPC 配達、最小イメージ、同居コンテナ内の隔離 |
+| [design.md](design.md) | メインの設計概要: Core Components / Pipeline / Session Model / Runtime / Config |
+| [design/architecture.md](design/architecture.md) | Core Components と Pipeline、起動時の実装選択、モジュール配置、event と session の分離 |
+| [design/session-model.md](design/session-model.md) | Channel / Thread / Session / Turn、session.mode と reply.mode、Thread Key、コマンド、終了条件 |
+| [design/message-dispatch.md](design/message-dispatch.md) | Session の選択と affinity、debounce、steering、lease、起動と Turn 境界、Inbox の dedupe |
+| [design/state.md](design/state.md) | Control State の Store と backend、Agent State の archive、Workdir / Shared のパスと復元・保存 |
+| [design/runtime.md](design/runtime.md) | pi の起動準備と引数、Extension と Skill、Agent の隔離 (UID / Permission Model / env)、システムプロンプト、RPC |
+| [design/config.md](design/config.md) | Config の 3 分類、YAML の形、ロードと Channel の解決、Gate の合成規則、dump |
+| [design/ingress-egress.md](design/ingress-egress.md) | ChatEvent と Slack の正規化、Thread Key から送信先への解決、整形と分割、リアクション、進捗通知 |
+| [design/local-dev.md](design/local-dev.md) | Slack なしで全パイプラインを動かす local mode |
+| [proposals/model-access-broker.md](proposals/model-access-broker.md) | Model Broker の設計 (Draft) |
+| [proposals/pi-model-broker-extension.md](proposals/pi-model-broker-extension.md) | Model Broker package / pi extension の設計 (Draft) |
 | [forward-proxy.md](forward-proxy.md) | sandbox を使わず、派生コンテナ内の forward proxy で pi の通信先を絞る英語レシピ |
-| [initial-scope.md](initial-scope.md) | 初期版スコープの決定事項: Gate セット、受付/エラーの合図、timeout、DM、既定モデル、観測性、「後で」の一覧 |
 | [research/hermes-chat-modeling.md](research/hermes-chat-modeling.md) | hermes のメッセージ/アダプタ/束ね/プロンプト化/ストリーム出力 |
 | [research/hermes-session-model.md](research/hermes-session-model.md) | hermes のセッションキー/永続化/再開/steering/scale-to-zero/起動フィルタ |
 | [research/pi-session-model.md](research/pi-session-model.md) | pi の JSONL ツリー永続化/導出コンテキスト/compaction/RPC/orchestrator |
-
-旧版は tmp/chat-agent-design/ にそのまま残している (履歴として維持)。
