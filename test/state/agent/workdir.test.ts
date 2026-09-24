@@ -1,4 +1,11 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readdir,
+  readFile,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -108,6 +115,25 @@ describe("CopyWorkdirStore", () => {
     );
     expect(await readFile(join(workdir, "workspace", "note.txt"), "utf8")).toBe(
       "updated",
+    );
+  });
+
+  it("skips empty files without write permission (srt mount points) but keeps other empty files", async () => {
+    await writeWorkdirFiles();
+    await writeFile(join(workdir, ".bashrc"), "", { mode: 0o444 });
+    await writeFile(join(workdir, "__init__.py"), "");
+    await writeFile(join(workdir, "readonly.txt"), "content", { mode: 0o444 });
+    const store = new CopyWorkdirStore(baseDir);
+
+    await store.flush(SESSION_KEY, workdir);
+
+    const archive = join(baseDir, "C123ABC", "1720000000.123456");
+    expect(await readdir(archive)).toEqual(
+      expect.not.arrayContaining([".bashrc"]),
+    );
+    expect(await readFile(join(archive, "__init__.py"), "utf8")).toBe("");
+    expect(await readFile(join(archive, "readonly.txt"), "utf8")).toBe(
+      "content",
     );
   });
 
