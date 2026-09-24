@@ -40,7 +40,7 @@
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.77",
     "@earendil-works/pi-coding-agent": "^0.85.1",
-    "@google-cloud/firestore": "^9.1.0",
+    "@google-cloud/firestore": "^9.2.0",
     "@google/genai": "^2.22.0",
     "@slack/socket-mode": "^3.0.1",
     "@slack/web-api": "^8.1.1",
