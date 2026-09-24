@@ -337,6 +337,19 @@ settings ファイルにする。
 | agentHome | `~/.pi` の読み書き |
 | Shared staging | 有効なとき |
 
+読み取りは Channel 単位で分ける。全 Session が同じ Agent uid で動くので、UID 分離ではこの
+境界を作れない。Runner は `filesystem.denyRead` に workdirRoot を足し、同じ Channel の他
+Session の workdir を `filesystem.allowRead` で読めるように戻す。srt の read は allowRead が
+denyRead より優先される。この結果、他 Channel の workdir・TMPDIR・Shared staging と
+settings ファイルは読めず、同じ Channel の過去の Session の workdir は読める。DM は相手ごとに
+別の Channel なので、DM 同士も、DM と公開チャンネルの間も分かれる。
+
+Channel のディレクトリをまとめて allowRead にはしない。srt (Linux) は denyRead の中にある
+書き込み先を書き込み可で戻した後、allowRead を読み取り専用で重ねる。書き込み先を含む
+ディレクトリを allowRead にすると、書き込み先まで読み取り専用になり pi が起動できない。
+そのため Session 起動時に Channel 直下を列挙し、書き込み先を含まないエントリ (他 Session の
+workdir) だけを戻す。起動後に作られた同じ Channel の Session の workdir は見えない。
+
 srt は sandbox 内の `TMPDIR` を自分の env の `CLAUDE_CODE_TMPDIR` (既定 `/tmp/claude`) で
 上書きするので、Runner は `TMPDIR` と `CLAUDE_CODE_TMPDIR` の両方に同じディレクトリを渡す。
 両方が揃っていないと pi のスピルが Permission Model の allow 外へ向いて落ちる。srt は
@@ -345,7 +358,8 @@ host 側の Unix socket (`srt-mux-*.sock`) もこの TMPDIR に置くため、�
 workdirRoot は既定の `/tmp/pi-chat-runner/sessions` のように短く保つ。
 
 settings ファイルは `<workdirRoot>/srt/<sessionKey>.json` — Workdir の外、Runner 所有で、
-Agent は読めるが書き換えられない (bind mount が read-only)。Session 終了時に消す。
+sandbox の中からは読めない (workdirRoot の denyRead に含まれる)。srt 自身は sandbox を作る前に
+Agent uid で読むので 0644 にする。Session 終了時に消す。
 利用者ルールの `filesystem.allowRead` / `allowWrite` は Permission Model の allow 集合にも
 同じ規則 (`~` は HOME、相対は cwd 基準) で写す。srt の read は既定で全許可なので、
 「別ディレクトリを読みたい」を実際に満たすのは Permission Model 側であり、fs ポリシーの

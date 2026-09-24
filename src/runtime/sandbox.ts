@@ -50,12 +50,23 @@ export interface SandboxSettings {
   permission: { allowRead: string[]; allowWrite: string[] };
 }
 
-/** 利用者ルール + Runner が足す書き込み先を合成する (runtime.md §5.5)。
+/** 利用者ルール + Runner が足す読み書きの範囲を合成する (runtime.md §5.5)。
  *
  * - `filesystem.allowWrite` に allowWrite (Session の workdir・TMPDIR・agentHome・
  *   shared staging。Permission Model の allowFsWrite と同じ集合) を足す (additive、
  *   利用者は外せない)。network には何も足さない — provider の到達先も利用者ファイルの
  *   責任 (config.md §1.3)
+ * - 読み取りは Channel 単位で分ける。`filesystem.denyRead` に workdirRoot を足し、
+ *   同じ Channel の他 Session の workdir を `filesystem.allowRead` で読めるように戻す。
+ *   srt の read は allowRead が denyRead より優先されるので、他 Channel の workdir・
+ *   TMPDIR・shared staging と `<workdirRoot>/srt/` の settings ファイルは読めない。
+ *   全 Session が同じ agent uid で動くため、UID 分離ではこの境界を作れない
+ * - Channel のディレクトリごと allowRead にはしない。srt (Linux) は denyRead の中の
+ *   書き込み先を書き込み可で戻した後に allowRead を読み取り専用で重ねるので、
+ *   書き込み先を含むディレクトリを allowRead にすると書き込み先まで読み取り専用になる。
+ *   そのため Channel 直下のエントリのうち、書き込み先を含まないもの (他 Session の
+ *   workdir) だけを戻す。一覧は Session 起動時のもので、後から作られた同じ Channel の
+ *   Session の workdir は見えない
  * - 利用者の allowRead / allowWrite は Permission Model 用パターンにも展開する。
  *   srt は `~` を HOME で、相対パスを cwd (= workdir) 基準で解くので、同じ規則で
  *   絶対化してから `dir` と `dir/*` の両方を出す (readdir にディレクトリ自体の許可も
@@ -63,18 +74,29 @@ export interface SandboxSettings {
 export function buildSandboxSettings(input: {
   rules: SandboxRules;
   allowWrite: string[];
+  /** Session 群のルート (realpath 済み)。丸ごと denyRead にする */
+  workdirRoot: string;
+  /** 自分の Channel のディレクトリ `<workdirRoot>/<channelId>` 直下にあるディレクトリ
+   * (realpath 済みの絶対パス)。allowWrite のどれかを含むものを除いて allowRead に足す */
+  channelEntries: string[];
   /** pi 子プロセスの HOME (agentHomeReal)。`~` の展開先 */
   home: string;
   /** pi 子プロセスの cwd (workdirReal)。相対パスの基準 */
   cwd: string;
 }): SandboxSettings {
-  const { rules, allowWrite, home, cwd } = input;
+  const { rules, allowWrite, workdirRoot, channelEntries, home, cwd } = input;
+  const readableEntries = channelEntries.filter(
+    (entry) =>
+      !allowWrite.some((w) => w === entry || w.startsWith(`${entry}/`)),
+  );
   const userAllowRead = rules.filesystem.allowRead ?? [];
   const userAllowWrite = rules.filesystem.allowWrite;
   const settings: SandboxRuntimeConfig = {
     ...rules,
     filesystem: {
       ...rules.filesystem,
+      denyRead: [...new Set([...rules.filesystem.denyRead, workdirRoot])],
+      allowRead: [...new Set([...userAllowRead, ...readableEntries])],
       allowWrite: [...new Set([...userAllowWrite, ...allowWrite])],
     },
   };

@@ -556,10 +556,22 @@ export async function buildSpawnOptions(args: {
   // Model の allowFsWrite と同じ集合 (workdir / TMPDIR / home / shared staging) を
   // ディレクトリで渡す。利用者の allowRead / allowWrite は Permission Model 側にも写す
   const rules = channel?.agent.sandbox;
+  // workdir は `<workdirRoot>/<channelId>/<leaf>` (RuntimeConfig.workdirRoot) なので、
+  // Channel のディレクトリと workdirRoot は workdir の親と祖父。realpath 済みの workdir
+  // から辿るので、srt に渡すパスも正規化済みになる
+  const channelDirReal = dirname(workdirReal);
+  const sandboxEnabled = rules !== undefined && rules !== false;
+  const channelEntries = sandboxEnabled
+    ? (await readdir(channelDirReal, { withFileTypes: true }))
+        .filter((entry) => entry.isDirectory())
+        .map((entry) => join(channelDirReal, entry.name))
+    : [];
   const sandboxSettings =
     rules !== undefined && rules !== false
       ? buildSandboxSettings({
           rules,
+          workdirRoot: dirname(channelDirReal),
+          channelEntries,
           allowWrite: [
             workdirReal,
             tmpDirReal,

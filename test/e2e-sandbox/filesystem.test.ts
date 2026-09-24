@@ -1,6 +1,7 @@
-// ファイルシステム境界 (runtime.md §5.5): 書けるのは workdir / TMPDIR / HOME だけ、
-// 他 Session の workdir と settings ファイルは読めても書けない。
-import { readFile } from "node:fs/promises";
+// ファイルシステム境界 (runtime.md §5.5): 書けるのは自分の workdir / TMPDIR / HOME だけ。
+// 読み取りは Channel 単位で分かれ、同じ Channel の他 Session の workdir は読めるが、
+// 他 Channel の workdir と settings ファイルは読めない。
+import { access, readFile } from "node:fs/promises";
 
 import { expect, it } from "vitest";
 
@@ -17,35 +18,56 @@ const B = "C_FS_B";
 
 describeSandbox("sandbox e2e: filesystem", () => {
   it(
-    "自分の workdir には書け、他 Session の workdir には書けない",
+    "同じ Channel の他 Session の workdir は読めるが書けない",
+    async () => {
+      const runner = await startSandboxRunner({
+        agent: { sandbox: SandboxRulesSchema.parse({}) },
+        channels: mentionChannels(A),
+      });
+      const first = await runner.probe(A, ["echo a > a.txt"]);
+      const workdirFirst = runner.workdirFor(A, first.ts);
+
+      // 同じ Channel の別スレッド = 別 Session
+      const { results } = await runner.probe(A, [
+        'touch "$PWD/x" && echo own-ok',
+        `cat ${workdirFirst}/a.txt`,
+        `touch ${workdirFirst}/x 2>&1; echo "exit=$?"`,
+        'touch /usr/local/x 2>&1; echo "exit=$?"',
+      ]);
+      // 対照: 自分の workdir には書ける
+      expect(results[0]).toMatchObject({ code: 0, out: "own-ok\n" });
+      expect(results[1]).toMatchObject({ code: 0, out: "a\n" });
+      expect(results[2]?.out).toMatch(
+        /Read-only file system|Permission denied/,
+      );
+      expect(results[3]?.out).toMatch(
+        /Read-only file system|Permission denied/,
+      );
+    },
+    SANDBOX_TEST_TIMEOUT_MS,
+  );
+
+  it(
+    "他 Channel の workdir は読めず、書き込もうとしても実体に届かない",
     async () => {
       const runner = await startSandboxRunner({
         agent: { sandbox: SandboxRulesSchema.parse({}) },
         channels: mentionChannels(A, B),
       });
-
-      // Session A を起こして workdir を実在させる
-      const a = await runner.probe(A, ["echo a > a.txt && cat a.txt"]);
-      expect(a.results[0]).toMatchObject({ code: 0, out: "a\n" });
+      const a = await runner.probe(A, ["echo a > a.txt"]);
       const workdirA = runner.workdirFor(A, a.ts);
 
       const b = await runner.probe(B, [
-        'touch "$PWD/x" && echo own-ok',
-        `touch ${workdirA}/x 2>&1; echo "exit=$?"`,
-        `cat ${workdirA}/a.txt 2>&1; echo "exit=$?"`,
-        'touch /usr/local/x 2>&1; echo "exit=$?"',
+        `cat ${workdirA}/a.txt`,
+        `touch ${workdirA}/x`,
       ]);
-      // 対照: 自分の workdir には書ける
-      expect(b.results[0]).toMatchObject({ code: 0, out: "own-ok\n" });
-      // 他 Session の workdir は read-only (EROFS) — 読めるかは uid/mode 次第なので
-      // 書けないことだけを見る
-      expect(b.results[1]?.out).toMatch(
-        /Read-only file system|Permission denied/,
-      );
-      expect(b.results[1]?.out).toMatch(/exit=1/);
-      expect(b.results[3]?.out).toMatch(
-        /Read-only file system|Permission denied/,
-      );
+      // bwrap は隠したディレクトリを空の tmpfs に差し替えるので、エラーの種類は見ず、
+      // 中身が見えないことと実体側にファイルができていないことを見る
+      expect(b.results[0]?.code).not.toBe(0);
+      expect(b.results[0]?.out).not.toContain("a");
+      await expect(access(`${workdirA}/x`)).rejects.toMatchObject({
+        code: "ENOENT",
+      });
     },
     SANDBOX_TEST_TIMEOUT_MS,
   );
@@ -75,7 +97,7 @@ describeSandbox("sandbox e2e: filesystem", () => {
   );
 
   it(
-    "settings ファイルは読めるが書き換えられない",
+    "settings ファイルは読めず、書き換えようとしても実体は変わらない",
     async () => {
       const runner = await startSandboxRunner({
         agent: {
@@ -93,20 +115,16 @@ describeSandbox("sandbox e2e: filesystem", () => {
         A,
         [
           `cat ${settings}`,
-          // リダイレクト自体のエラーは bash が出すのでブロックで包んで 2>&1 する
-          `{ echo '{"network":{}}' >> ${settings}; } 2>&1; echo "exit=$?"`,
-          `{ rm ${settings}; } 2>&1; echo "exit=$?"`,
+          `{ echo tampered >> ${settings}; } 2>&1; true`,
+          `{ rm ${settings}; } 2>&1; true`,
         ],
         { threadTs: first.ts },
       );
-      expect(results[0]?.code).toBe(0);
-      expect(results[0]?.out).toContain("settings-probe.example.com");
-      expect(results[1]?.out).toMatch(
-        /Read-only file system|Permission denied/,
-      );
-      expect(results[2]?.out).toMatch(
-        /Read-only file system|Permission denied/,
-      );
+      expect(results[0]?.out).not.toContain("settings-probe.example.com");
+      // 対照: Runner 側からは読めて、中身は書き換わっていない
+      const onHost = await readFile(settings, "utf-8");
+      expect(onHost).toContain("settings-probe.example.com");
+      expect(onHost).not.toContain("tampered");
     },
     SANDBOX_TEST_TIMEOUT_MS,
   );

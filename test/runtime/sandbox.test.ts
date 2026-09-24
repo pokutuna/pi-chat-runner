@@ -9,7 +9,9 @@ import {
 import { FAKE_SRT } from "../helpers/session-harness.js";
 
 const HOME = "/home/agent";
-const CWD = "/data/work/C01/1700000000.000100";
+const ROOT = "/data/work";
+const CHANNEL_DIR = `${ROOT}/C01`;
+const CWD = `${CHANNEL_DIR}/1700000000.000100`;
 
 describe("sandboxSettingsPath", () => {
   it.each([
@@ -36,6 +38,8 @@ describe("buildSandboxSettings", () => {
     const { settings } = buildSandboxSettings({
       rules,
       allowWrite: [CWD, `${CWD}-tmp`, HOME],
+      workdirRoot: ROOT,
+      channelEntries: [],
       home: HOME,
       cwd: CWD,
     });
@@ -45,9 +49,32 @@ describe("buildSandboxSettings", () => {
       `${CWD}-tmp`,
       HOME,
     ]);
-    expect(settings.filesystem.denyRead).toEqual(["~/.ssh"]);
+    expect(settings.filesystem.denyRead).toEqual(["~/.ssh", ROOT]);
     expect(settings.network).toEqual(rules.network);
     expect(settings.credentials).toEqual(rules.credentials);
+  });
+
+  it("hides the workdir root and re-allows only Channel entries that hold no write path", () => {
+    const rules = SandboxRulesSchema.parse({
+      filesystem: { allowRead: ["/data/knowledge"] },
+    });
+    const { settings } = buildSandboxSettings({
+      rules,
+      allowWrite: [CWD, `${CHANNEL_DIR}/tmp/1700000000.000100`, HOME],
+      workdirRoot: ROOT,
+      channelEntries: [
+        CWD,
+        `${CHANNEL_DIR}/tmp`,
+        `${CHANNEL_DIR}/1700000000.000200`,
+      ],
+      home: HOME,
+      cwd: CWD,
+    });
+    expect(settings.filesystem.denyRead).toEqual([ROOT]);
+    expect(settings.filesystem.allowRead).toEqual([
+      "/data/knowledge",
+      `${CHANNEL_DIR}/1700000000.000200`,
+    ]);
   });
 
   it("dedupes a runner path the user already listed", () => {
@@ -57,6 +84,8 @@ describe("buildSandboxSettings", () => {
     const { settings } = buildSandboxSettings({
       rules,
       allowWrite: [CWD, HOME],
+      workdirRoot: ROOT,
+      channelEntries: [],
       home: HOME,
       cwd: CWD,
     });
@@ -73,6 +102,8 @@ describe("buildSandboxSettings", () => {
     const { permission } = buildSandboxSettings({
       rules,
       allowWrite: [CWD, HOME],
+      workdirRoot: ROOT,
+      channelEntries: [],
       home: HOME,
       cwd: CWD,
     });
@@ -95,6 +126,8 @@ describe("buildSandboxSettings", () => {
     const { permission } = buildSandboxSettings({
       rules,
       allowWrite: [CWD],
+      workdirRoot: ROOT,
+      channelEntries: [],
       home: HOME,
       cwd: CWD,
     });
