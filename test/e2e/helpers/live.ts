@@ -8,7 +8,7 @@
 // プロセス env にある値は上書きされない (loadEnvFile の仕様) ので、CI や
 // 一時的な env 指定が勝つ。
 
-import { mkdtemp } from "node:fs/promises";
+import { chmod, mkdtemp } from "node:fs/promises";
 import { join } from "node:path";
 import { Writable } from "node:stream";
 
@@ -35,6 +35,10 @@ import type { StaticConfig } from "./static-config-source.js";
 import { StaticConfigSource } from "./static-config-source.js";
 
 /** 実 LLM を叩くテストを走らせるかどうか。`pnpm run test:e2e` が立てる。 */
+/** 本番イメージと同じ agent uid/gid (Dockerfile の useradd)。root で動くときだけ使う */
+const AGENT_UID = 1001;
+const AGENT_GID = 1001;
+
 export const isLive =
   process.env.E2E_LIVE_LLM !== undefined && process.env.E2E_LIVE_LLM !== "";
 
@@ -142,24 +146,27 @@ export async function startLiveRunner(
       ...(opts.startSeq !== undefined ? { startSeq: opts.startSeq } : {}),
     });
 
-  // system ブロックのうち e2e で意味があるのは runtime.home (= PI_AGENT_HOME) だけ。
-  // 残り (Permission Model の ON、GCP env の allowlist、pi の実パス解決) は
-  // createRuntimeConfig / resolveSystemConfig のコード既定をそのまま使い、
-  // 本番と同じ経路で RuntimeConfig を組み立てる。
+  // system ブロックのうち e2e で決めるのは runtime.home (= PI_AGENT_HOME) と、root で
+  // 動くときの uid/gid だけ。root なら本番イメージと同じく agent uid (Dockerfile の
+  // useradd) で pi を動かす。root のまま srt に包むと、user namespace の中の root は
+  // agent 所有の /home/agent に書けず pi が起動直後に落ちる。残り (Permission Model の
+  // ON、GCP env の allowlist、pi の実パス解決) は createRuntimeConfig /
+  // resolveSystemConfig のコード既定をそのまま使い、本番と同じ経路で RuntimeConfig を
+  // 組み立てる。
+  const asRoot = process.getuid?.() === 0;
   const system = resolveSystemConfig(
     SystemConfigSchema.parse({
-      // home 未設定なら resolveSystemConfig のコード既定 "/home/agent" に落ちる。
-      runtime:
-        process.env.PI_AGENT_HOME !== undefined
+      runtime: {
+        // home 未設定なら resolveSystemConfig のコード既定 "/home/agent" に落ちる。
+        ...(process.env.PI_AGENT_HOME !== undefined
           ? { home: process.env.PI_AGENT_HOME }
-          : {},
+          : {}),
+        ...(asRoot ? { uid: AGENT_UID, gid: AGENT_GID } : {}),
+      },
     }),
     process.env,
   );
-  // os.tmpdir() ではなく /tmp 直下に作る: srt が Session の TMPDIR に置く Unix socket の
-  // パスは macOS で 104 byte が上限で、/var/folders/... 配下だと超える (runtime.md §5.5)
-  const workdirRoot =
-    opts.workdirRoot ?? (await mkdtemp(join("/tmp", "pcr-e2e-wd-")));
+  const workdirRoot = opts.workdirRoot ?? (await createLiveWorkdirRoot("wd"));
 
   // Dispatcher / Session のログを配列に溜める。LOG_LEVEL が指定されていれば
   // 併せて stdout にも流す (デバッグ時の従来どおりの見え方を残す)。
@@ -286,4 +293,17 @@ export function mentionOnlyChannels(channelId: string): StaticConfig {
       { channel: channelId, trigger: { when: [{ kind: "mention" }] } },
     ],
   };
+}
+
+/** live e2e 用の workdirRoot を作る。
+ *
+ * - os.tmpdir() ではなく /tmp 直下に作る。srt が Session の TMPDIR に置く Unix socket の
+ *   パスは macOS で 104 byte が上限で、/var/folders/... 配下だと超える (runtime.md §5.5)
+ * - mkdtemp は 0700 で作るので、本番の workdirRoot (mkdir の既定で 0755) と同じ 0755 に
+ *   直す。UID 分離が有効だと srt は agent uid で動き、root 所有 0700 のままでは
+ *   workdirRoot 配下の settings ファイルを読めない */
+export async function createLiveWorkdirRoot(label: string): Promise<string> {
+  const dir = await mkdtemp(join("/tmp", `pcr-e2e-${label}-`));
+  await chmod(dir, 0o755);
+  return dir;
 }

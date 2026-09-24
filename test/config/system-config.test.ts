@@ -601,6 +601,15 @@ describe("resolveSystemConfig", () => {
       expect(resolved.runtime.gid).toBe(2000);
     });
 
+    it("treats empty PI_AGENT_UID/GID as unset and falls back to file values", () => {
+      const resolved = resolveSystemConfig(empty(), {
+        PI_AGENT_UID: "",
+        PI_AGENT_GID: "",
+      });
+      expect(resolved.runtime.uid).toBeUndefined();
+      expect(resolved.runtime.gid).toBeUndefined();
+    });
+
     it("throws when only PI_AGENT_UID is set", () => {
       expect(() =>
         resolveSystemConfig(empty(), { PI_AGENT_UID: "1001" }),

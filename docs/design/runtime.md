@@ -175,6 +175,17 @@ Agent は bash tool で任意のコマンドを実行できる。Runner と同�
 指定されたときだけ spawn オプションに渡す — キーを渡して値を undefined にすると Node は
 継承ではなく「明示的に変更なし」として別に扱うためである。
 
+既定値は起動のしかたで分ける。コンテナイメージは Agent 用ユーザー (uid / gid 1001) を作り、
+`PI_AGENT_UID` / `PI_AGENT_GID` を ENV の既定値として持つので、何も設定しなければ UID 分離が
+有効になる。外すときは両方を空文字で上書きする。Node ライブラリとしてホスト上で動かす場合、
+コードの既定は UID 分離なしで、pi は Runner と同じユーザーで動く。
+
+root のまま pi を動かすと srt sandbox (§5.5) と両立しない。srt は bubblewrap で user namespace
+を作り、その中で pi を動かす。namespace に対応付けられていない uid の所有するファイルは、
+namespace 内の root でも上書きできない。このため Agent 所有の HOME に書けず、pi が起動直後に
+落ちる。一般ユーザーでホスト上で動かす場合は、pi が HOME の持ち主と同じユーザーで動くので
+この問題は起きない。
+
 Workdir と Shared staging は Runner (root) が作成・復元するので root 所有のまま残る。
 Agent が書けるよう、restore の後に再帰的に chown して 0700 にする。この再帰 chown は
 **symlink を辿らずスキップする** — Agent が Workdir 内に archive などへのリンクを仕込み、次の

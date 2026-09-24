@@ -10,7 +10,7 @@
 // `E2E_LIVE_LLM=1 pnpm exec vitest run test/e2e/sandbox.test.ts`。
 // macOS の Seatbelt 経路は開発用で、遮断の保証は Linux 側 (runtime.md §5.5)。
 
-import { access, mkdtemp, realpath } from "node:fs/promises";
+import { access, realpath } from "node:fs/promises";
 import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
@@ -21,6 +21,7 @@ import {
   SandboxRulesSchema,
 } from "../../src/config/sandbox-config.js";
 import {
+  createLiveWorkdirRoot,
   isLive,
   LIVE_MODEL,
   LIVE_TEST_TIMEOUT_MS,
@@ -163,10 +164,7 @@ describeLiveSandbox("live: srt sandbox (実 pi の bash tool 経由)", () => {
   it(
     "自分の workdir には書け、他 Session の workdir には書けない",
     async () => {
-      const workdirRoot = await realpath(
-        // /tmp 直下: srt の Unix socket パス長の上限 (live.ts と同じ理由)
-        await mkdtemp(join("/tmp", "pcr-e2e-sb-")),
-      );
+      const workdirRoot = await realpath(await createLiveWorkdirRoot("sb"));
       const runner = await startLiveRunner({
         defaultChannelId: ALLOWED,
         workdirRoot,

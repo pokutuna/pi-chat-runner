@@ -239,7 +239,7 @@ COPY --chown=1001:1001 extensions/ /home/agent/.pi/agent/extensions/
 COPY --chown=1001:1001 channel-skills/ /app/skills/
 ```
 
-Runtime user is uid/gid `1001` (`agent`) when UID separation is enabled (`PI_AGENT_UID`/`PI_AGENT_GID`), so `--chown=1001:1001` keeps files writable/readable by the process that actually runs pi.
+The image runs pi as uid/gid `1001` (`agent`) by default (`PI_AGENT_UID`/`PI_AGENT_GID`), so `--chown=1001:1001` keeps files writable/readable by the process that actually runs pi.
 
 To restrict what the agent can reach, set `agent.sandbox` in `agent.yaml` to an srt rule file — [`examples/config/sandbox/vertex.json`](examples/config/sandbox/vertex.json) admits only Vertex AI, [`vertex-github.json`](examples/config/sandbox/vertex-github.json) adds GitHub — and let channels append hosts or hide credentials with `channels[].agent.sandbox`. The base image already carries what srt needs (bubblewrap, socat); on Cloud Run the service must run on the gen2 execution environment. See [`docs/design/runtime.md` §5.5](docs/design/runtime.md) for what the sandbox does and does not guarantee.
 

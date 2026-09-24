@@ -195,7 +195,7 @@ channels:
 |---|---|
 | `TURN_TIMEOUT_MS` | `system.turnTimeoutMs` |
 | `PROGRESS_NOTICE_INTERVAL_MS` | `system.progressNoticeIntervalMs` |
-| `PI_AGENT_UID` / `PI_AGENT_GID` | `system.runtime.uid` / `gid` (片方だけの設定は fail-loud) |
+| `PI_AGENT_UID` / `PI_AGENT_GID` | `system.runtime.uid` / `gid` (片方だけの設定は fail-loud。空文字は未設定と同じ。コンテナイメージは既定で `1001`) |
 | `PI_AGENT_HOME` | `system.runtime.home` |
 | `PI_PERMISSION_MODE` / `PI_ALLOW_ADDONS` | `system.runtime.permissionMode` / `allowAddons` |
 

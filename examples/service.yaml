@@ -40,10 +40,6 @@ spec:
             - name: PI_PERMISSION_MODE
               value: "1" # "0" disables Node Permission Model sandboxing; any other value enables it
             # The srt egress sandbox is not toggled here: set agent.sandbox in agent.yaml (see examples/config/sandbox/)
-            - name: PI_AGENT_UID
-              value: "1001" # set together with PI_AGENT_GID, or not at all
-            - name: PI_AGENT_GID
-              value: "1001"
             - name: METADATA_SERVER_DETECTION
               value: assume-present # forces ADC to use Cloud Run's metadata server
             - name: SLACK_BOT_USER_ID

@@ -95,6 +95,12 @@ ENTRYPOINT ["pnpm", "exec", "vitest", "run", "test/e2e-sandbox"]
 FROM os-deps
 
 ENV NODE_ENV=production
+# UID separation is on by default in the image: the Runner stays root and
+# spawns pi as the agent user created above. Running pi as root instead breaks
+# agent.sandbox, because inside srt's user namespace root cannot write the
+# agent-owned /home/agent. Pass both as empty (-e PI_AGENT_UID= -e PI_AGENT_GID=)
+# to turn it off.
+ENV PI_AGENT_UID=1001 PI_AGENT_GID=1001
 
 # Baked default settings.json (runtime.md §3): pins only the behavior
 # the runner depends on (steeringMode/followUpMode/compaction.enabled/

@@ -17,8 +17,6 @@ services:
       GOOGLE_APPLICATION_CREDENTIALS: /var/secrets/adc.json
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT}
       GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION}
-      PI_AGENT_UID: "1001"
-      PI_AGENT_GID: "1001"
       PI_PERMISSION_MODE: "1"
       # チャンネル共有ディレクトリ (docs/design/state.md §6)。named volume で永続化し
       # コンテナ再作成を跨いで蓄積を確認できる

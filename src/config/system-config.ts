@@ -295,14 +295,16 @@ function parseProgressNoticeIntervalMsEnv(
 }
 
 /** env PI_AGENT_UID / PI_AGENT_GID (runtime.md §5.1: UID 分離) を数値として
- * パースする。どちらも省略時は undefined (file の値を使う分岐に委ねる)。片方だけ
- * 設定されているのは誤設定なので fail-loud にする。 */
+ * パースする。どちらも未設定か空文字なら undefined (file の値を使う分岐に委ねる)。
+ * 空文字を未設定と同じに扱うのは、イメージが ENV で持つ既定値を `-e PI_AGENT_UID=`
+ * のように空で上書きして UID 分離を外せるようにするため。片方だけ設定されているのは
+ * 誤設定なので fail-loud にする。 */
 function parseAgentIdsEnv(env: NodeJS.ProcessEnv): {
   uid?: number;
   gid?: number;
 } {
-  const uidRaw = env.PI_AGENT_UID;
-  const gidRaw = env.PI_AGENT_GID;
+  const uidRaw = env.PI_AGENT_UID === "" ? undefined : env.PI_AGENT_UID;
+  const gidRaw = env.PI_AGENT_GID === "" ? undefined : env.PI_AGENT_GID;
   if (uidRaw === undefined && gidRaw === undefined) return {};
   if (uidRaw === undefined || gidRaw === undefined) {
     throw new Error(
