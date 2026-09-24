@@ -1,12 +1,9 @@
 import { describe, expect, it } from "vitest";
 
 import {
-  ancestorDirs,
   buildPiArgs,
   buildPiEnv,
-  buildPiPermissionOptions,
   buildSpawnCommand,
-  piBashSpillPatterns,
   wrapWithSrt,
 } from "../../src/runtime/pi-args.js";
 
@@ -214,8 +211,8 @@ describe("buildPiEnv", () => {
   });
 });
 
-describe("buildSpawnCommand (Node Permission Model, runtime.md §5.2)", () => {
-  it("spawns piBinary directly when permission is unset (現状動作を維持)", () => {
+describe("buildSpawnCommand", () => {
+  it("spawns piBinary directly", () => {
     expect(buildSpawnCommand(["--mode", "rpc"], { piBinary: "pi" })).toEqual({
       command: "pi",
       args: ["--mode", "rpc"],
@@ -229,7 +226,7 @@ describe("buildSpawnCommand (Node Permission Model, runtime.md §5.2)", () => {
     });
   });
 
-  it("uses the detected entrypoint through node when permission is unset", () => {
+  it("runs the detected entrypoint through node", () => {
     const entrypoint =
       "/app/node_modules/@earendil-works/pi-coding-agent/dist/cli.js";
     expect(
@@ -251,186 +248,12 @@ describe("buildSpawnCommand (Node Permission Model, runtime.md §5.2)", () => {
       args: ["--mode", "rpc"],
     });
   });
-
-  it("wraps with node --permission when permission is specified", () => {
-    const result = buildSpawnCommand(["--mode", "rpc"], {
-      piBinary: "pi",
-      permission: {
-        entrypoint: "/usr/local/lib/node_modules/pi/dist/cli.js",
-        allowFsRead: ["/app/*", "/tmp/workdir/*"],
-        allowFsWrite: ["/tmp/workdir/*"],
-      },
-    });
-    expect(result.command).toBe(process.execPath);
-    expect(result.args).toEqual([
-      "--permission",
-      "--allow-fs-read=/app/*",
-      "--allow-fs-read=/tmp/workdir/*",
-      "--allow-fs-write=/tmp/workdir/*",
-      "--allow-child-process",
-      "--allow-net",
-      "/usr/local/lib/node_modules/pi/dist/cli.js",
-      "--mode",
-      "rpc",
-    ]);
-  });
-
-  it("adds --allow-addons only when permission.allowAddons is true", () => {
-    const permission = {
-      entrypoint: "/usr/local/lib/node_modules/pi/dist/cli.js",
-      allowFsRead: ["/app/*"],
-      allowFsWrite: ["/tmp/workdir/*"],
-    };
-    const without = buildSpawnCommand(["--mode", "rpc"], { permission });
-    expect(without.args).not.toContain("--allow-addons");
-
-    const withAddons = buildSpawnCommand(["--mode", "rpc"], {
-      permission: { ...permission, allowAddons: true },
-    });
-    // entrypoint より前 (node 自身のフラグ位置) に入ること
-    const entryIdx = withAddons.args.indexOf(permission.entrypoint);
-    const flagIdx = withAddons.args.indexOf("--allow-addons");
-    expect(flagIdx).toBeGreaterThan(-1);
-    expect(flagIdx).toBeLessThan(entryIdx);
-  });
-});
-
-describe("ancestorDirs", () => {
-  it("returns the dir itself and every ancestor up to /", () => {
-    expect(ancestorDirs("/tmp/pi-chat-runner/sessions/CH1")).toEqual([
-      "/tmp/pi-chat-runner/sessions/CH1",
-      "/tmp/pi-chat-runner/sessions",
-      "/tmp/pi-chat-runner",
-      "/tmp",
-      "/",
-    ]);
-  });
-
-  it("returns just / for the root dir", () => {
-    expect(ancestorDirs("/")).toEqual(["/"]);
-  });
-});
-
-describe("buildPiPermissionOptions (runtime.md §5.2)", () => {
-  it("builds allow-fs-read/write lists scoped to workdir/home/node_modules", () => {
-    const options = buildPiPermissionOptions({
-      entrypoint: "/usr/local/lib/node_modules/pi/dist/cli.js",
-      nodeModulesDir: "/usr/local/lib/node_modules",
-      workdir: "/tmp/workdir",
-      home: "/home/agent",
-    });
-    expect(options.entrypoint).toBe(
-      "/usr/local/lib/node_modules/pi/dist/cli.js",
-    );
-    expect(options.allowFsRead).toContain("/usr/local/lib/node_modules/*");
-    expect(options.allowFsRead).toContain("/tmp/workdir/*");
-    expect(options.allowFsRead).toContain("/home/agent/*");
-    // プロジェクト trust 判定の probe は workdir の全祖先で走るため、
-    // 各中間ディレクトリ × probe ファイル名の直積を含む必要がある
-    // (1 つでも欠けると existsSync が ERR_ACCESS_DENIED で pi が即死する)
-    expect(options.allowFsRead).toContain("/tmp/workdir/AGENTS.md");
-    expect(options.allowFsRead).toContain("/tmp/workdir/AGENTS.override.md");
-    expect(options.allowFsRead).toContain("/tmp/AGENTS.md");
-    expect(options.allowFsRead).toContain("/AGENTS.md");
-    expect(options.allowFsRead).toContain("/tmp/.pi/settings.json");
-    expect(options.allowFsRead).toContain("/.agents/skills");
-    // bash tool のシェル解決 (existsSync("/bin/bash")) を通すための許可
-    expect(options.allowFsRead).toContain("/bin/bash");
-    expect(options.allowFsRead).toContain("/bin/sh");
-    // bash tool の 50KB 超え出力スピル先 (tmpdir()/pi-bash-<id>.log)。
-    // 許可しないと大きな出力で pi が即死する。read/write 両方に要る
-    expect(options.allowFsWrite).toContain("/tmp/pi-bash-*");
-    expect(options.allowFsRead).toContain("/tmp/pi-bash-*");
-    expect(options.allowFsWrite.slice(0, 2)).toEqual([
-      "/tmp/workdir/*",
-      "/home/agent/*",
-    ]);
-  });
-
-  it("does not grant a blanket /app read (appDir 廃止。extension read は runner.ts の extraRead 経由)", () => {
-    const options = buildPiPermissionOptions({
-      entrypoint: "/usr/local/lib/node_modules/pi/dist/cli.js",
-      nodeModulesDir: "/usr/local/lib/node_modules",
-      workdir: "/tmp/workdir",
-      home: "/home/agent",
-    });
-    expect(options.allowFsRead).not.toContain("/app/*");
-    expect(options.allowFsRead).not.toContain("/app");
-  });
-
-  it("appends extraWrite paths when specified", () => {
-    const options = buildPiPermissionOptions({
-      entrypoint: "/e.js",
-      nodeModulesDir: "/nm",
-      workdir: "/wd",
-      home: "/home/agent",
-      extraWrite: ["/tmp/*"],
-    });
-    // extraWrite は末尾に付く (先頭 2 つは workdir/home、間に pi-bash スピル許可)
-    expect(options.allowFsWrite.slice(0, 2)).toEqual([
-      "/wd/*",
-      "/home/agent/*",
-    ]);
-    expect(options.allowFsWrite.at(-1)).toBe("/tmp/*");
-  });
-
-  it("appends extraRead paths when specified (e.g. GOOGLE_APPLICATION_CREDENTIALS, extension dirs)", () => {
-    const options = buildPiPermissionOptions({
-      entrypoint: "/e.js",
-      nodeModulesDir: "/nm",
-      workdir: "/wd",
-      home: "/home/agent",
-      extraRead: [
-        "/Users/me/.config/gcloud/application_default_credentials.json",
-        "/repo/extensions/*",
-      ],
-    });
-    expect(options.allowFsRead).toContain(
-      "/Users/me/.config/gcloud/application_default_credentials.json",
-    );
-    expect(options.allowFsRead).toContain("/repo/extensions/*");
-  });
-});
-
-describe("piBashSpillPatterns", () => {
-  it("falls back to /tmp/pi-bash-* when no session TMPDIR is given", () => {
-    expect(piBashSpillPatterns()).toContain("/tmp/pi-bash-*");
-  });
-
-  it("allows the session TMPDIR itself and its contents, and nothing under /tmp", () => {
-    expect(piBashSpillPatterns("/data/work/C01/tmp/1700")).toEqual([
-      "/data/work/C01/tmp/1700",
-      "/data/work/C01/tmp/1700/*",
-    ]);
-  });
-});
-
-describe("buildPiPermissionOptions with tmpDir", () => {
-  it("uses the session TMPDIR for the spill patterns in both read and write", () => {
-    const options = buildPiPermissionOptions({
-      entrypoint: "/usr/local/lib/node_modules/pi/dist/cli.js",
-      nodeModulesDir: "/usr/local/lib/node_modules",
-      workdir: "/tmp/workdir",
-      home: "/home/agent",
-      tmpDir: "/data/tmp/s1",
-    });
-    expect(options.allowFsWrite).toContain("/data/tmp/s1/*");
-    expect(options.allowFsRead).toContain("/data/tmp/s1");
-    expect(options.allowFsWrite).not.toContain("/tmp/pi-bash-*");
-    expect(options.allowFsRead).not.toContain("/tmp/pi-bash-*");
-  });
 });
 
 describe("wrapWithSrt", () => {
   const inner = {
     command: "/usr/local/bin/node",
-    args: [
-      "--permission",
-      "--allow-fs-read=/x/*",
-      "/pi/cli.js",
-      "--mode",
-      "rpc",
-    ],
+    args: ["/pi/cli.js", "--mode", "rpc"],
   };
 
   it("runs srt's cli.js with node and passes the inner command after --", () => {
@@ -449,8 +272,6 @@ describe("wrapWithSrt", () => {
         "/data/work/srt/C01.json",
         "--",
         "/usr/local/bin/node",
-        "--permission",
-        "--allow-fs-read=/x/*",
         "/pi/cli.js",
         "--mode",
         "rpc",

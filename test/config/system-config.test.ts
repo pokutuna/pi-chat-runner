@@ -42,8 +42,6 @@ describe("SystemConfigSchema", () => {
         uid: 1001,
         gid: 1001,
         home: "/home/agent",
-        permissionMode: true,
-        allowAddons: false,
       },
       turnTimeoutMs: 600000,
       progressNoticeIntervalMs: 20000,
@@ -233,35 +231,6 @@ describe("SystemConfigSchema", () => {
       expect(
         SystemConfigSchema.safeParse({ runtime: { unknown: true } }).success,
       ).toBe(false);
-    });
-
-    // ${env.X} 参照は文字列で来るため、"false"/"0"/"" を false と解釈できないと
-    // sandbox を OFF にできない。z.coerce.boolean() だとこれらが truthy に化ける。
-    it.each([
-      ["false", false],
-      ["0", false],
-      ["", false],
-      ["FALSE", false],
-      ["true", true],
-      ["1", true],
-    ])("interprets permissionMode string %j as %s", (input, expected) => {
-      const data = SystemConfigSchema.parse({
-        runtime: { permissionMode: input },
-      });
-      expect(data.runtime.permissionMode).toBe(expected);
-    });
-
-    it.each([
-      ["false", false],
-      ["0", false],
-      ["", false],
-      ["true", true],
-      ["1", true],
-    ])("interprets allowAddons string %j as %s", (input, expected) => {
-      const data = SystemConfigSchema.parse({
-        runtime: { allowAddons: input },
-      });
-      expect(data.runtime.allowAddons).toBe(expected);
     });
   });
 
@@ -487,71 +456,6 @@ describe("resolveSystemConfig", () => {
     expect(resolveSystemConfig(file, {}).state.agent.workdirDir).toBe(
       "/var/workdirs",
     );
-  });
-
-  describe("runtime.permissionMode", () => {
-    it("defaults to true when neither env nor file set it", () => {
-      expect(resolveSystemConfig(empty(), {}).runtime.permissionMode).toBe(
-        true,
-      );
-    });
-
-    it("can be disabled via system.runtime.permissionMode: false", () => {
-      const resolved = resolveSystemConfig(
-        SystemConfigSchema.parse({ runtime: { permissionMode: false } }),
-        {},
-      );
-      expect(resolved.runtime.permissionMode).toBe(false);
-    });
-
-    it("disables via env PI_PERMISSION_MODE=0", () => {
-      const resolved = resolveSystemConfig(empty(), {
-        PI_PERMISSION_MODE: "0",
-      });
-      expect(resolved.runtime.permissionMode).toBe(false);
-    });
-
-    it("env PI_PERMISSION_MODE overrides file value", () => {
-      const resolved = resolveSystemConfig(
-        SystemConfigSchema.parse({ runtime: { permissionMode: false } }),
-        { PI_PERMISSION_MODE: "1" },
-      );
-      expect(resolved.runtime.permissionMode).toBe(true);
-    });
-
-    it("any non-'0' env value enables permission mode", () => {
-      const resolved = resolveSystemConfig(empty(), {
-        PI_PERMISSION_MODE: "yes",
-      });
-      expect(resolved.runtime.permissionMode).toBe(true);
-    });
-  });
-
-  describe("runtime.allowAddons", () => {
-    it("defaults to false when neither env nor file set it", () => {
-      expect(resolveSystemConfig(empty(), {}).runtime.allowAddons).toBe(false);
-    });
-
-    it("can be enabled via system.runtime.allowAddons: true", () => {
-      const resolved = resolveSystemConfig(
-        SystemConfigSchema.parse({ runtime: { allowAddons: true } }),
-        {},
-      );
-      expect(resolved.runtime.allowAddons).toBe(true);
-    });
-
-    it("enables via env PI_ALLOW_ADDONS=1", () => {
-      const resolved = resolveSystemConfig(empty(), { PI_ALLOW_ADDONS: "1" });
-      expect(resolved.runtime.allowAddons).toBe(true);
-    });
-
-    it("env PI_ALLOW_ADDONS overrides file value", () => {
-      const resolved = resolveSystemConfig(
-        SystemConfigSchema.parse({ runtime: { allowAddons: true } }),
-        { PI_ALLOW_ADDONS: "0" },
-      );
-      expect(resolved.runtime.allowAddons).toBe(false);
-    });
   });
 
   describe("runtime.home", () => {

@@ -685,7 +685,7 @@ describe("Session (fake-pi integration)", () => {
     expect(homeStats.mode & 0o777).toBe(0o700);
   });
 
-  it("permissionMode が無効でも検出済み entrypoint を node で起動する", async () => {
+  it("検出済み entrypoint を node で起動する", async () => {
     const previousPiBin = process.env.PI_BIN;
     delete process.env.PI_BIN;
     try {
@@ -697,7 +697,7 @@ describe("Session (fake-pi integration)", () => {
       );
       const trigger = message({
         mentionsBot: true,
-        text: "entrypoint without permission model",
+        text: "entrypoint",
       });
 
       await h.dispatcher.handle(trigger);
@@ -717,38 +717,6 @@ describe("Session (fake-pi integration)", () => {
         process.env.PI_BIN = previousPiBin;
       }
     }
-  });
-
-  it("Node Permission Model が有効なとき node --permission 経由で pi (fake-pi) を起動する", async () => {
-    // permission 指定時は entrypoint を直接 node で起動するため、piBinary は
-    // 使われない (buildSpawnCommand の仕様)。fake-pi.mjs 自体を entrypoint に
-    // 見立て、workdir/node_modules への read/write と extension ディレクトリへの
-    // read (appDir 包括許可の廃止に伴い Session 起動時に自動で積む) を許可した状態でも
-    // 通常のセッションと同じく reply → agent_end まで動くことを確認する
-    const h = await harness(
-      {},
-      {
-        piPermission: {
-          entrypoint: FAKE_PI,
-          nodeModulesDir: join(process.cwd(), "node_modules"),
-        },
-      },
-    );
-    const trigger = message({
-      mentionsBot: true,
-      text: "permission model isolated",
-    });
-
-    await h.dispatcher.handle(trigger);
-
-    await waitFor(() => h.poster.calls.length === 1, "reply posted");
-    expect(h.poster.calls[0]?.text).toBe(
-      `echo: ${renderEvent(trigger, replyThreadKeyOf(trigger))}`,
-    );
-    await waitFor(
-      () => h.dispatcher.activeSessionCount === 0,
-      "session removed",
-    );
   });
 
   it("flushes the workdir before acking inbox items (flush → ack order)", async () => {

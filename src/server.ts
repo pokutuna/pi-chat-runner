@@ -120,7 +120,7 @@ function printUsage(configPath: string): void {
   console.error(
     "    agent:   { workdirDir, sharedDir, sharedWarnBytes }  # empty = feature off",
   );
-  console.error("  runtime: { uid, gid, home, permissionMode, allowAddons }");
+  console.error("  runtime: { uid, gid, home }");
   console.error(
     "  turnTimeoutMs, progressNoticeIntervalMs, leaseTtlMs, lingerMs",
   );
@@ -140,12 +140,6 @@ function printUsage(configPath: string): void {
   );
   console.error(
     "  PI_AGENT_HOME       directory always passed as HOME to the pi child process (default /home/agent. Also system.runtime.home)",
-  );
-  console.error(
-    "  PI_PERMISSION_MODE  set to 0 to disable the Node Permission Model (default ON. Also system.runtime.permissionMode: false)",
-  );
-  console.error(
-    "  PI_ALLOW_ADDONS     set to 1 to allow native addons under the Permission Model (default off. Also system.runtime.allowAddons)",
   );
   console.error(
     "  TURN_TIMEOUT_MS     per-turn limit in ms (default 600000 = 10 min; pi is killed and the session ends if exceeded. Also system.turnTimeoutMs)",
@@ -292,7 +286,7 @@ function buildCommonRunnerOptions(
       ...(shared !== undefined ? { shared } : {}),
     },
     // Runtime レイヤの静的設定 (pi のパス解決・env allowlist・UID 分離・
-    // Permission Model・workdir のルート) は runtime/resolve.ts に閉じる
+    // workdir のルート) は runtime/resolve.ts に閉じる
     runtime: createRuntimeConfig(system),
     // 各 ms 設定は未設定なら Dispatcher の既定を使う
     ...(system.turnTimeoutMs !== undefined

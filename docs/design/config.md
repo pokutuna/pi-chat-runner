@@ -30,8 +30,6 @@ Channel Config と Agent Config は「default を Channel ごとに上書きす�
 | `state.agent.sharedWarnBytes` | Shared のサイズ警告閾値 | Agent State |
 | `runtime.uid` / `gid` | Agent プロセスを起動する UID/GID。両方指定するか両方省略する | Runtime ([runtime.md](runtime.md)) |
 | `runtime.home` | Agent に渡す `HOME`。既定 `/home/agent` | Runtime |
-| `runtime.permissionMode` | Node Permission Model の有効化。既定 true | Runtime |
-| `runtime.allowAddons` | `--allow-addons` の opt-in。既定 false | Runtime |
 | `turnTimeoutMs` | 1 Turn の上限。超過で Agent を kill | Session ([message-dispatch.md](message-dispatch.md)) |
 | `progressNoticeIntervalMs` | 長時間 Turn の進捗通知の間隔。0 で無効 | Egress |
 | `leaseTtlMs` | Session 実行の lease TTL | Dispatcher |
@@ -110,8 +108,6 @@ system:
     uid: ${env.PI_AGENT_UID:-}
     gid: ${env.PI_AGENT_GID:-}
     home: ${env.PI_AGENT_HOME:-/home/agent}
-    permissionMode: ${env.PI_PERMISSION_MODE:-true}
-    allowAddons: ${env.PI_ALLOW_ADDONS:-false}
   turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000}
   progressNoticeIntervalMs: ${env.PROGRESS_NOTICE_INTERVAL_MS:-30000}
   leaseTtlMs: ${env.LEASE_TTL_MS:-60000}
@@ -197,7 +193,6 @@ channels:
 | `PROGRESS_NOTICE_INTERVAL_MS` | `system.progressNoticeIntervalMs` |
 | `PI_AGENT_UID` / `PI_AGENT_GID` | `system.runtime.uid` / `gid` (片方だけの設定は fail-loud。空文字は未設定と同じ。コンテナイメージは既定で `1001`) |
 | `PI_AGENT_HOME` | `system.runtime.home` |
-| `PI_PERMISSION_MODE` / `PI_ALLOW_ADDONS` | `system.runtime.permissionMode` / `allowAddons` |
 
 この経路は `${env.X}` 参照とは別のロジックなので二重に効きうる。運用では YAML 側を `${env.X:-default}` に一本化し、env 直接上書きはローカルでの一時的な変更に限る。
 

@@ -17,7 +17,6 @@ system:
         path: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db}
 
   runtime:
-    permissionMode: ${env.PI_PERMISSION_MODE:-true}
     home: ${env.PI_AGENT_HOME:-/home/agent}
 
   turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000}

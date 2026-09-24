@@ -20,7 +20,6 @@ services:
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT}
       GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION}
       GOOGLE_APPLICATION_CREDENTIALS: ${GOOGLE_APPLICATION_CREDENTIALS}
-      PI_ALLOW_ADDONS: ${PI_ALLOW_ADDONS:-1}
       # config/ is mounted to examples/config so the default CONFIG_PATH
       # (examples/config/agent.yaml) picks it up
       CONFIG_PATH: examples/config/agent.yaml

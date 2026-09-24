@@ -299,7 +299,7 @@ One YAML file, pointed at by `CONFIG_PATH` (default `examples/config/agent.yaml`
 
 Exactly three top-level blocks — anything else is an error:
 
-- **`system`** — the runner process itself, read once at boot: chat connector (`system.chat.slack`, mode/tokens), state backends (`system.state.control` / `system.state.agent`), the pi child process's execution environment (`system.runtime`: UID separation, HOME, Permission Model), and timing defaults (`turnTimeoutMs`, `progressNoticeIntervalMs`, `leaseTtlMs`, `lingerMs`). This is the only block where `${env.X}` / `${env.X:-default}` references are resolved (secrets included).
+- **`system`** — the runner process itself, read once at boot: chat connector (`system.chat.slack`, mode/tokens), state backends (`system.state.control` / `system.state.agent`), the pi child process's execution environment (`system.runtime`: UID separation, HOME), and timing defaults (`turnTimeoutMs`, `progressNoticeIntervalMs`, `leaseTtlMs`, `lingerMs`). This is the only block where `${env.X}` / `${env.X:-default}` references are resolved (secrets included).
 - **`agent`** — the default Agent Config shared by every channel: `systemPrompt`, `context`, `model` (pi's `provider/model-id[:thinking-level]` shorthand; the provider prefix is required), `tools`/`excludeTools`, `skills`/`extensions` (paths to image-baked assets, loaded in addition to the common ones under `$AGENT_HOME/.pi/agent/`), `memory`, and `env`.
 - **`channels`** — per-channel behavior, re-read on every message (no restart needed): trigger gates, session mode, reply mode, plus a per-channel `agent:` block overriding any Agent Config field. An array listing all channels, with a required `default` entry as the fallback.
 

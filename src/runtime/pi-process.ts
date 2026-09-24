@@ -17,7 +17,6 @@ import {
   buildPiEnv,
   buildSpawnCommand,
   wrapWithSrt,
-  type PiPermissionOptions,
 } from "./pi-args.js";
 import {
   JsonlDecoder,
@@ -44,10 +43,8 @@ export interface PiProcessOptions {
   /** 明示的に差し替える pi バイナリ。テストや埋め込み用途向け。
    * 指定時は piEntrypoint より優先する。 */
   piBinary?: string;
-  /** 解決済みの pi 本体 entrypoint JS。permission の有無に関わらず使用する。 */
+  /** 解決済みの pi 本体 entrypoint JS。`node <entrypoint>` で起動する。 */
   piEntrypoint?: string;
-  /** 指定時、`node --permission` 経由で pi を起動する (opt-in)。省略時は現状動作 */
-  permission?: PiPermissionOptions;
   /** 指定時、起動コマンド全体を srt CLI で包む (runtime.md §5.5)。settings ファイルは
    * 呼び出し側 (Session) が書き終えてから渡す */
   sandbox?: SandboxSpawnConfig;

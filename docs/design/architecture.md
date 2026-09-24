@@ -75,7 +75,7 @@ Chat
 | | `sqlite` | ローカルファイル。手元での永続確認 |
 | | `firestore` | 複数インスタンスでの排他を含む運用構成 |
 | Agent State | `system.state.agent.workdirDir` / `sharedDir` | 未設定なら退避なし。設定するとそのディレクトリへ保存・復元 |
-| Runtime | `system.runtime` (uid/gid/home/permissionMode/allowAddons) | Agent 隔離の強度 ([runtime.md](runtime.md)) |
+| Runtime | `system.runtime` (uid/gid/home) | Agent 隔離の強度 ([runtime.md](runtime.md)) |
 
 Slack と Google Cloud (Cloud Run / Firestore / Cloud Storage) を第一の想定動作環境として同梱するが、
 パイプラインはそれらを前提にしない。どの組み合わせでも Gate 以降の挙動は同じになる。

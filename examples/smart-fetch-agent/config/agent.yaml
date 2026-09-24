@@ -17,14 +17,7 @@ system:
         path: ${env.SQLITE_PATH:-/tmp/pi-chat-runner/state.db}
 
   runtime:
-    permissionMode: ${env.PI_PERMISSION_MODE:-true}
     home: ${env.PI_AGENT_HOME:-/home/agent}
-
-    # pi-smart-fetch's native addon (wreq-js) gets its load rejected by the
-    # Node Permission Model unless --allow-addons is passed. This example
-    # exists to demonstrate that extension, so default it to true here
-    # (unlike examples/config/agent.yaml, which defaults it to false).
-    allowAddons: ${env.PI_ALLOW_ADDONS:-true}
 
   turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000}
 

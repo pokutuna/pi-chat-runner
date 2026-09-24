@@ -2,7 +2,7 @@
 // pi のスタブ (sandbox E2E 用。test/e2e-sandbox/)。fake-pi と同じ RPC の形で動くが、
 // 応答は決まり文句ではなく「prompt に書かれた shell コマンドを実行した結果」。
 // LLM を使わずに Runner の本物の spawn 経路 (settings 書き出し → srt → bwrap →
-// Node Permission Model → この process) の内側から見えるものを観測する。
+// この process) の内側から見えるものを観測する。
 //
 // - prompt 本文の `PROBE <json>` 行 (json: { "cmds": ["...", ...] }) を拾い、各コマンドを
 //   `bash -c` で順に実行する。stdin は閉じる。1 コマンド 20 秒で打ち切る
@@ -10,8 +10,7 @@
 //   reply → agent_end で返す。PROBE 行が無ければ `no probe` を返す
 // - env / argv のスナップショットを workdir (= --session の親) に書くのは fake-pi と同じ
 //
-// この process 自身は Node Permission Model の内側 (allow-fs-write は workdir 等のみ)
-// なので、fs や network の観測はすべて bash 側のコマンドで行う。
+// fs や network の観測はすべて bash 側のコマンドで行う (pi の bash tool と同じ経路)。
 
 import { spawnSync } from "node:child_process";
 import { writeFileSync } from "node:fs";

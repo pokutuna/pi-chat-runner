@@ -1,5 +1,5 @@
-# チャンネル別 skill/extension の隔離確認用 (uid 分離 + Node Permission Model を
-# 本番相当で有効化してローカル Socket Mode を動かす)。ローカル専用・使い捨て。
+# チャンネル別 skill/extension の隔離確認用 (uid 分離を本番相当で有効化して
+# ローカル Socket Mode を動かす)。ローカル専用・使い捨て。
 #
 # 起動 (Socket Mode): develop/local.sh socket
 # 起動 (コンテナ内 TUI): develop/local.sh tui [channelId]
@@ -17,7 +17,6 @@ services:
       GOOGLE_APPLICATION_CREDENTIALS: /var/secrets/adc.json
       GOOGLE_CLOUD_PROJECT: ${GOOGLE_CLOUD_PROJECT}
       GOOGLE_CLOUD_LOCATION: ${GOOGLE_CLOUD_LOCATION}
-      PI_PERMISSION_MODE: "1"
       # チャンネル共有ディレクトリ (docs/design/state.md §6)。named volume で永続化し
       # コンテナ再作成を跨いで蓄積を確認できる
       SHARED_DIR: /data/shared

@@ -37,8 +37,6 @@ spec:
               value: /data/channels # referenced from system.state.agent.workdirDir in agent.yaml; sub-dir keeps /data shared with SHARED_DIR
             - name: SHARED_DIR
               value: /data/shared # channel-shared persistent dir (docs/design/state.md §6); unset to disable
-            - name: PI_PERMISSION_MODE
-              value: "1" # "0" disables Node Permission Model sandboxing; any other value enables it
             # The srt egress sandbox is not toggled here: set agent.sandbox in agent.yaml (see examples/config/sandbox/)
             - name: METADATA_SERVER_DETECTION
               value: assume-present # forces ADC to use Cloud Run's metadata server

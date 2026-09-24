@@ -31,7 +31,6 @@ import type { ReactionState, TurnReactor } from "../egress/turn-reactor.js";
 import type { InboundMessage } from "../ingress/chat-event.js";
 import type { Logger } from "../logger.js";
 import type { RuntimeConfig } from "../runtime/config.js";
-import type { PiPermissionOptions } from "../runtime/pi-args.js";
 import {
   extractReply,
   extractTurnErrors,
@@ -95,8 +94,8 @@ export interface SessionContext {
   progressNoticeIntervalMs: number;
   /** ユーザーへの言及をレンダリングする関数 (返信本文に埋め込む記法) */
   mentionFormat: MentionFormat;
-  /** Runtime レイヤの静的設定 (pi のパス・env allowlist・UID 分離・Permission
-   * Model・workdir のルート。runtime.md §1)。Channel ごとの Agent Config の env
+  /** Runtime レイヤの静的設定 (pi のパス・env allowlist・UID 分離・workdir の
+   * ルート。runtime.md §1)。Channel ごとの Agent Config の env
    * (config.md §1.3) と HOME=agentHomeReal は起動時に runtime.extraEnv の上へ
    * 重ねて合成する (dispatch/dispatcher.ts) */
   runtime: RuntimeConfig;
@@ -137,7 +136,6 @@ export interface StartArgs {
   workdirReal: string;
   sharedDirReal: string | undefined;
   skillPaths: string[];
-  permission: PiPermissionOptions | undefined;
   memoryIndex: string | undefined;
   /** 起動時点で session.jsonl が既に存在したか ("session started" ログ用) */
   resumed: boolean;
@@ -266,7 +264,6 @@ export class Session {
       workdirReal,
       sharedDirReal,
       skillPaths,
-      permission,
       memoryIndex,
       resumed,
       freshTranscript,
@@ -311,7 +308,6 @@ export class Session {
       ...(extraEnv !== undefined ? { extraEnv } : {}),
       ...(agentUid !== undefined ? { uid: agentUid } : {}),
       ...(agentGid !== undefined ? { gid: agentGid } : {}),
-      ...(permission !== undefined ? { permission } : {}),
       ...(sandboxSpawn !== undefined ? { sandbox: sandboxSpawn } : {}),
       // pi は正常時にも stderr へ出すことがあるため warn ではなく debug
       logger: (line) =>

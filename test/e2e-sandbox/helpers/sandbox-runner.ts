@@ -2,7 +2,7 @@
 //
 // LLM は使わない。Runner をライブラリとして起動し (test/e2e/helpers/live.ts と同じ
 // 形)、pi の代わりに test/fixtures/probe-pi.mjs を **本番と同じ経路** — settings
-// ファイル書き出し → `srt --settings` → bwrap → `node --permission` — で起動する。
+// ファイル書き出し → `srt --settings` → bwrap → `node` — で起動する。
 // probe-pi は prompt に書かれた shell コマンドを実行して結果を返すだけなので、
 // sandbox の内側から見えるものを決定的に assert できる。
 //
@@ -14,7 +14,7 @@
 import { execFile } from "node:child_process";
 import { chmod, mkdtemp, realpath } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { Writable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -54,7 +54,6 @@ const DEFAULT_REPLY_TIMEOUT_MS = 60_000;
 const PROBE_PI = fileURLToPath(
   new URL("../../fixtures/probe-pi.mjs", import.meta.url),
 );
-const REPO_ROOT = dirname(dirname(dirname(PROBE_PI)));
 
 /** 本番と同じ agent uid/gid (Dockerfile の useradd)。root で動くときだけ使う */
 const AGENT_UID = 1001;
@@ -132,20 +131,9 @@ export async function startSandboxRunner(
       "srt entrypoint did not resolve; is the sandbox E2E running on Linux with @anthropic-ai/sandbox-runtime installed?",
     );
   }
-  if (base.piPermission === undefined) {
-    throw new Error("Permission Model must stay on for the sandbox E2E");
-  }
-  // pi 本体の代わりに probe-pi を Permission Model の entrypoint にする。
+  // pi 本体の代わりに probe-pi を entrypoint にする。
   // それ以外 (srt のパス、env allowlist、UID 分離) は本番と同じ組み立て
-  const runtime = {
-    ...base,
-    piEntrypoint: PROBE_PI,
-    piPermission: {
-      ...base.piPermission,
-      entrypoint: PROBE_PI,
-      nodeModulesDir: join(REPO_ROOT, "node_modules"),
-    },
-  };
+  const runtime = { ...base, piEntrypoint: PROBE_PI };
 
   const records: LogRecord[] = [];
   // vitest.config が LOG_LEVEL を "silent" に既定するので、明示された値のときだけ流す

@@ -25,7 +25,6 @@ import { EmojiTurnReactor } from "../../src/egress/emoji-turn-reactor.js";
 import { type ChatPoster, EgressRouter } from "../../src/egress/router.js";
 import type { FetchMessage } from "../../src/gate/evaluate.js";
 import type { InboundMessage } from "../../src/ingress/chat-event.js";
-import type { PiPermissionConfig } from "../../src/runtime/config.js";
 import type { MentionFormat } from "../../src/runtime/prompt.js";
 import type {
   SharedStore,
@@ -199,7 +198,6 @@ export interface HarnessOptions {
   agentUid?: number;
   agentGid?: number;
   agentHome?: string;
-  piPermission?: PiPermissionConfig;
   turnTimeoutMs?: number;
   progressNoticeIntervalMs?: number;
   mentionFormat?: MentionFormat;
@@ -259,9 +257,6 @@ export async function harness(
       ...(options.agentUid !== undefined ? { agentUid: options.agentUid } : {}),
       ...(options.agentGid !== undefined ? { agentGid: options.agentGid } : {}),
       agentHome,
-      ...(options.piPermission !== undefined
-        ? { piPermission: options.piPermission }
-        : {}),
     },
     lingerMs: options.lingerMs ?? 30,
     logger,

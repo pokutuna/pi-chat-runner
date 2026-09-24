@@ -36,7 +36,7 @@ Control State をそのまま公開する。シナリオは「どのスレッド
 渡して回す。
 
 `test:e2e:sandbox` のスイートは `test/e2e-sandbox/` に置く。LLM は使わず、Runner の本物の
-spawn 経路 (settings ファイル → `srt --settings` → bubblewrap → Permission Model → 子) を
+spawn 経路 (settings ファイル → `srt --settings` → bubblewrap → 子) を
 通して、子に pi のスタブ (`test/fixtures/probe-pi.mjs`) を起動する。スタブは最初の prompt に
 書かれたシェルコマンド列を実行して exit code と出力を reply で返すだけなので、allowlist の
 通過・拒否、他 Session の Workdir への EROFS、env の隠蔽、turn timeout 後にプロセスが
@@ -65,7 +65,7 @@ node dist/server.mjs local [channelId]  # ビルド済みバイナリから
   チャンネルの ID を渡せば、その Channel Config での挙動を確認できる。
 - `dev:local` は watch しない。再起動のたびに TUI と Control State が飛ぶため。
 - Agent は本物が起動する。必要な環境変数は `.env.local` に置く。`system.runtime` の
-  uid 分離・Permission Model は `dev:socket` と同じ扱い ([runtime.md](runtime.md))。
+  uid 分離は `dev:socket` と同じ扱い ([runtime.md](runtime.md))。
 
 差し替えるのは Runner に渡す `ChatPlatform` だけで、Gate 以降には local 専用の分岐を
 持ち込まない ([architecture.md](architecture.md) §3, §4)。

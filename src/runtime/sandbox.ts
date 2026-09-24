@@ -8,7 +8,7 @@
 import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, resolve } from "node:path";
+import { join } from "node:path";
 
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 
@@ -37,23 +37,10 @@ export function sandboxSettingsPath(
   return join(workdirRoot, "srt", `${encodeURIComponent(sessionKey)}.json`);
 }
 
-/** buildSandboxSettings の結果。 */
-export interface SandboxSettings {
-  /** srt に渡す最終形 (`--settings` ファイルの中身) */
-  settings: SandboxRuntimeConfig;
-  /** 利用者ルールの filesystem.allowRead / allowWrite を Node Permission Model の
-   * `--allow-fs-read` / `--allow-fs-write` へ写すためのパターン群 (runtime.md §5.5)。
-   * srt の read は既定で全許可 (deny-then-allow) なので、「別ディレクトリを読みたい」
-   * を実際に満たすのは Permission Model 側 — sandbox ファイルを fs ポリシーの唯一の
-   * 書き場所にするため、両層へ同じ集合を渡す。Runner が足す allowWrite (workdir 等)
-   * は Permission Model 側が既に自前で持っているのでここには含めない */
-  permission: { allowRead: string[]; allowWrite: string[] };
-}
-
 /** 利用者ルール + Runner が足す読み書きの範囲を合成する (runtime.md §5.5)。
  *
  * - `filesystem.allowWrite` に allowWrite (Session の workdir・TMPDIR・agentHome・
- *   shared staging。Permission Model の allowFsWrite と同じ集合) を足す (additive、
+ *   shared staging) を足す (additive、
  *   利用者は外せない)。network には何も足さない — provider の到達先も利用者ファイルの
  *   責任 (config.md §1.3)
  * - 読み取りは Channel 単位で分ける。`filesystem.denyRead` に workdirRoot を足し、
@@ -66,11 +53,7 @@ export interface SandboxSettings {
  *   書き込み先を含むディレクトリを allowRead にすると書き込み先まで読み取り専用になる。
  *   そのため Channel 直下のエントリのうち、書き込み先を含まないもの (他 Session の
  *   workdir) だけを戻す。一覧は Session 起動時のもので、後から作られた同じ Channel の
- *   Session の workdir は見えない
- * - 利用者の allowRead / allowWrite は Permission Model 用パターンにも展開する。
- *   srt は `~` を HOME で、相対パスを cwd (= workdir) 基準で解くので、同じ規則で
- *   絶対化してから `dir` と `dir/*` の両方を出す (readdir にディレクトリ自体の許可も
- *   要る)。グロブを含むエントリはそのまま渡す */
+ *   Session の workdir は見えない */
 export function buildSandboxSettings(input: {
   rules: SandboxRules;
   allowWrite: string[];
@@ -79,52 +62,23 @@ export function buildSandboxSettings(input: {
   /** 自分の Channel のディレクトリ `<workdirRoot>/<channelId>` 直下にあるディレクトリ
    * (realpath 済みの絶対パス)。allowWrite のどれかを含むものを除いて allowRead に足す */
   channelEntries: string[];
-  /** pi 子プロセスの HOME (agentHomeReal)。`~` の展開先 */
-  home: string;
-  /** pi 子プロセスの cwd (workdirReal)。相対パスの基準 */
-  cwd: string;
-}): SandboxSettings {
-  const { rules, allowWrite, workdirRoot, channelEntries, home, cwd } = input;
+}): SandboxRuntimeConfig {
+  const { rules, allowWrite, workdirRoot, channelEntries } = input;
   const readableEntries = channelEntries.filter(
     (entry) =>
       !allowWrite.some((w) => w === entry || w.startsWith(`${entry}/`)),
   );
-  const userAllowRead = rules.filesystem.allowRead ?? [];
-  const userAllowWrite = rules.filesystem.allowWrite;
-  const settings: SandboxRuntimeConfig = {
+  return {
     ...rules,
     filesystem: {
       ...rules.filesystem,
       denyRead: [...new Set([...rules.filesystem.denyRead, workdirRoot])],
-      allowRead: [...new Set([...userAllowRead, ...readableEntries])],
-      allowWrite: [...new Set([...userAllowWrite, ...allowWrite])],
+      allowRead: [
+        ...new Set([...(rules.filesystem.allowRead ?? []), ...readableEntries]),
+      ],
+      allowWrite: [...new Set([...rules.filesystem.allowWrite, ...allowWrite])],
     },
   };
-  const expand = (paths: readonly string[]): string[] => [
-    ...new Set(paths.flatMap((p) => permissionPatterns(p, { home, cwd }))),
-  ];
-  return {
-    settings,
-    permission: {
-      allowRead: expand(userAllowRead),
-      allowWrite: expand(userAllowWrite),
-    },
-  };
-}
-
-/** srt のパス規則 (`~` は HOME、相対は cwd 基準) で絶対化し、Permission Model の
- * パターンに展開する。 */
-function permissionPatterns(
-  path: string,
-  base: { home: string; cwd: string },
-): string[] {
-  let absolute: string;
-  if (path === "~") absolute = base.home;
-  else if (path.startsWith("~/")) absolute = join(base.home, path.slice(2));
-  else if (isAbsolute(path)) absolute = path;
-  else absolute = resolve(base.cwd, path);
-  if (/[*?[\]]/.test(absolute)) return [absolute];
-  return [absolute, `${absolute}/*`];
 }
 
 /** srt が実際に起動できるかを、最小の settings で trivial なコマンドを 1 回包んで

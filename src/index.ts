@@ -124,7 +124,7 @@ export { SlackUserResolver } from "./ingress/slack/user-resolver.js";
 export { enrichEvent, type UserResolver } from "./ingress/user-resolver.js";
 export type { Logger } from "./logger.js";
 export { type RunnerOptions, startRunner } from "./runner.js";
-export type { PiPermissionConfig, RuntimeConfig } from "./runtime/config.js";
+export type { RuntimeConfig } from "./runtime/config.js";
 export { createRuntimeConfig } from "./runtime/resolve.js";
 export {
   Session,

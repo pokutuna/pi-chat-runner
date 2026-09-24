@@ -44,8 +44,6 @@ system:
     uid: ${env.PI_AGENT_UID:-1001}
     gid: ${env.PI_AGENT_GID:-1001}
     home: ${env.PI_AGENT_HOME:-/home/agent}
-    permissionMode: ${env.PI_PERMISSION_MODE:-true}
-    allowAddons: ${env.PI_ALLOW_ADDONS:-false}
 
   turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000}
   # 0 disables progress notices outright (unlike turnTimeoutMs, 0 is a valid,
@@ -201,5 +199,5 @@ channels:
         - /app/extensions/bq-runner.ts
       memory: false
       # `false` is the one non-additive value: this channel runs pi without
-      # srt (Node Permission Model and UID separation still apply).
+      # srt (UID separation still applies).
       sandbox: false

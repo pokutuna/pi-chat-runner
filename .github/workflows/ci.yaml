@@ -52,7 +52,7 @@ jobs:
         cancel: firestore
 
   # Deterministic sandbox E2E (test/e2e-sandbox/): the real spawn path
-  # (srt --settings → bwrap → node --permission) with a probe pi, inside the
+  # (srt --settings → bwrap → node) with a probe pi, inside the
   # e2e image so the base image's apt line (bubblewrap/socat) is exercised.
   sandbox-e2e:
     runs-on: ubuntu-latest

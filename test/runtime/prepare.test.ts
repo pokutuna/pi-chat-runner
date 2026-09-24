@@ -34,11 +34,6 @@ describe("buildSpawnOptions (sandbox, runtime.md §5.5)", () => {
     await rm(dir, { recursive: true, force: true });
   });
 
-  const piPermission = {
-    entrypoint: "/usr/local/lib/node_modules/pi/dist/cli.js",
-    nodeModulesDir: "/usr/local/lib/node_modules",
-  };
-
   function channelWith(sandbox: ResolvedChannel["agent"]["sandbox"]) {
     return {
       agent: { model: "google-vertex/gemini-3.5-flash", sandbox },
@@ -54,7 +49,6 @@ describe("buildSpawnOptions (sandbox, runtime.md §5.5)", () => {
       channel,
       builtinExtensionPaths: [],
       memorySkillPath: undefined,
-      piPermission,
     });
   }
 
@@ -64,19 +58,12 @@ describe("buildSpawnOptions (sandbox, runtime.md §5.5)", () => {
     expect((await build(channelWith(false))).sandbox).toBeUndefined();
   });
 
-  it("points the spill patterns at the session TMPDIR instead of /tmp", async () => {
-    const { permission } = await build(null);
-    expect(permission?.allowFsWrite).toContain(`${tmpDirReal}/*`);
-    expect(permission?.allowFsRead).toContain(tmpDirReal);
-    expect(permission?.allowFsWrite).not.toContain("/tmp/pi-bash-*");
-  });
-
-  it("adds workdir, TMPDIR and home to allowWrite and mirrors user paths into the Permission Model", async () => {
+  it("adds workdir, TMPDIR and home to allowWrite after the user's paths", async () => {
     const rules = SandboxRulesSchema.parse({
       network: { allowedDomains: ["aiplatform.googleapis.com:443"] },
       filesystem: { allowRead: ["/data/knowledge"], allowWrite: ["/scratch"] },
     });
-    const { sandbox, permission } = await build(channelWith(rules));
+    const { sandbox } = await build(channelWith(rules));
     expect(sandbox?.filesystem.allowWrite).toEqual([
       "/scratch",
       workdirReal,
@@ -86,8 +73,6 @@ describe("buildSpawnOptions (sandbox, runtime.md §5.5)", () => {
     expect(sandbox?.network.allowedDomains).toEqual([
       "aiplatform.googleapis.com:443",
     ]);
-    expect(permission?.allowFsRead).toContain("/data/knowledge/*");
-    expect(permission?.allowFsWrite).toContain("/scratch/*");
   });
 
   it("includes the shared staging dir in allowWrite when present", async () => {
@@ -101,7 +86,6 @@ describe("buildSpawnOptions (sandbox, runtime.md §5.5)", () => {
       channel: channelWith(rules),
       builtinExtensionPaths: [],
       memorySkillPath: undefined,
-      piPermission,
     });
     expect(sandbox?.filesystem.allowWrite).toEqual([
       workdirReal,

@@ -6,7 +6,7 @@
 | ファイル | 用途 |
 |---|---|
 | `compose.yaml` | Firestore エミュレータ (`FirestoreControlState` のテスト専用) |
-| `compose.local-container.yaml` | UID 分離 + Node Permission Model を有効にした状態で、コンテナ内で Socket Mode を動かす検証用 |
+| `compose.local-container.yaml` | UID 分離を有効にした状態で、コンテナ内で Socket Mode を動かす検証用 |
 | `local.sh` | 検証用コンテナの build / tui / socket / down をまとめたランチャー |
 | `Dockerfile.dev-agent` | base イメージにローカル検証用の拡張 (`pi-smart-fetch` 等) をまとめて追加した `pi-chat-runner-dev:local` を作る |
 | `Dockerfile.cloud-run-verify` | `config/` を焼き込み、Cloud Run へ実機デプロイして動作確認するための使い捨てイメージ |
@@ -26,7 +26,7 @@ docker compose -f develop/compose.yaml up -d
 FIRESTORE_EMULATOR_HOST=localhost:8080 pnpm test
 ```
 
-## コンテナでのローカル検証 (UID 分離 + Permission Model)
+## コンテナでのローカル検証 (UID 分離)
 
 ```sh
 develop/local.sh build            # base (pi-chat-runner:local) + dev イメージ (pi-chat-runner-dev:local) をビルド

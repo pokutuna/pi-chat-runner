@@ -1,39 +1,10 @@
 /**
- * pi の起動引数・Permission Model オプション・env allowlist の組み立て
- * (docs/design/runtime.md §3 起動引数、§5.2 Node Permission Model、
+ * pi の起動引数・env allowlist の組み立て (docs/design/runtime.md §3 起動引数、
  * §5.3 環境変数の allowlist)。すべて純粋関数で、子プロセスの spawn 自体は
  * pi-process.ts が行う。
  */
-import { realpathSync } from "node:fs";
-import { dirname, join } from "node:path";
-
 import type { PiProcessOptions } from "./pi-process.js";
 import type { SandboxSpawnConfig } from "./sandbox.js";
-
-/**
- * Node Permission Model 経由での起動設定 (pi-tools-and-sandbox.md
- * 「リーズナブルな sandbox レイヤ案」、runtime.md §5.2)。指定時のみ有効になる
- * opt-in。permission の有無に関わらず、解決済みの pi entrypoint を起動できる。
- * bash の子プロセスには効かない (uid 分離が担う層) が、pi 本体の JS 実装ツール
- * (read/write/edit/grep) の fs アクセスを制限する多層防御の一層。
- */
-export interface PiPermissionOptions {
-  /** pi 本体のエントリポイント JS (例
-   * /usr/local/lib/node_modules/@earendil-works/pi-coding-agent/dist/cli.js)。
-   * `node --permission ... <entrypoint> <pi の引数...>` の形で起動する */
-  entrypoint: string;
-  /** `--allow-fs-read` に渡すパス群 (グロブ可)。フラグはパスごとに繰り返し指定する
-   * (Node 26 で `--allow-fs-write` のカンマ区切りは deprecated warning になり
-   * 機能しないため、read/write ともに 1 パス 1 フラグで組み立てる) */
-  allowFsRead: string[];
-  /** `--allow-fs-write` に渡すパス群 (グロブ可) */
-  allowFsWrite: string[];
-  /** true なら `--allow-addons` を付ける (既定 false)。native addon (.node) を含む
-   * extension (例: pi-smart-fetch の wreq-js) は Permission Model 下でロード自体が
-   * 拒否されるため opt-in で緩める。native code は fs チェックを素通りできるので、
-   * 有効化するとこのレイヤの隔離は実質 uid 分離だけになる (runtime.md §5.1) */
-  allowAddons?: boolean;
-}
 
 /** API キー環境変数ではなく ADC (ambient credentials) で認証する provider の一覧。
  * pi-ai の認証可否判定 (env-api-keys.js) は ADC ファイルの存在チェックを行うため、
@@ -106,54 +77,23 @@ export function buildPiArgs(
 
 /**
  * 実際に spawn する command/args の組み立て (純粋関数、テスト対象)。
- * piBinary が明示されていればそれを直接呼ぶ。
- * piEntrypoint が指定されていれば permission の有無に関わらず Node.js で起動する。
- * どちらも未指定の場合だけ `pi` を呼ぶ。
- * 指定時は `node --permission --allow-fs-read=... --allow-fs-write=...
- * --allow-child-process <entrypoint> <pi の引数...>` に切り替える
- * (pi-tools-and-sandbox.md 「リーズナブルな sandbox レイヤ案」)。
- * --allow-child-process は常に付ける — bash tool 自体は uid 分離が守る層なので、
- * ここで止めても意味がなく (JS 実装ツールの fs アクセス制限が本レイヤの主目的)、
- * 付けなければ bash tool の spawn 自体が Permission Model に拒否されて動かなくなる。
- * allowFsRead/allowFsWrite はパスごとに 1 フラグに展開する (Node 26 で
- * カンマ区切りは deprecated warning になり機能しないため)。
+ * piBinary が明示されていればそれを直接呼ぶ。piEntrypoint が指定されていれば
+ * Runner と同じ Node.js で起動する。どちらも未指定の場合だけ `pi` を呼ぶ。
  */
 export function buildSpawnCommand(
   piArgs: string[],
-  options: Pick<PiProcessOptions, "piBinary" | "piEntrypoint" | "permission">,
+  options: Pick<PiProcessOptions, "piBinary" | "piEntrypoint">,
 ): { command: string; args: string[] } {
-  const permission = options.permission;
-  if (permission === undefined) {
-    if (options.piBinary !== undefined) {
-      return { command: options.piBinary, args: piArgs };
-    }
-    if (options.piEntrypoint !== undefined) {
-      return {
-        command: process.execPath,
-        args: [options.piEntrypoint, ...piArgs],
-      };
-    }
+  if (options.piBinary !== undefined) {
+    return { command: options.piBinary, args: piArgs };
+  }
+  if (options.piEntrypoint !== undefined) {
     return {
-      command: "pi",
-      args: piArgs,
+      command: process.execPath,
+      args: [options.piEntrypoint, ...piArgs],
     };
   }
-  const flags: string[] = ["--permission"];
-  for (const path of permission.allowFsRead)
-    flags.push(`--allow-fs-read=${path}`);
-  for (const path of permission.allowFsWrite)
-    flags.push(`--allow-fs-write=${path}`);
-  flags.push("--allow-child-process");
-  // Node 26 の Permission Model はネットワークもデフォルト拒否
-  // (fetch が getaddrinfo ERR_ACCESS_DENIED で失敗し LLM 呼び出しが不可能になる)。
-  // このレイヤの目的は fs アクセス制限なので net は全面許可する
-  flags.push("--allow-net");
-  // native addon は既定でロード拒否 (Node 側仕様)。opt-in のときだけ許可する
-  if (permission.allowAddons) flags.push("--allow-addons");
-  return {
-    command: process.execPath,
-    args: [...flags, permission.entrypoint, ...piArgs],
-  };
+  return { command: "pi", args: piArgs };
 }
 
 /**
@@ -161,9 +101,7 @@ export function buildSpawnCommand(
  * `node <srt cli.js> [--debug] --settings <file> -- <command> <args...>` の形。
  * srt はライブラリではなく CLI で挟む — srt のネットワーク許可リストはプロセス単位で
  * 1 つしか持てないため、Channel ごとに違う許可リストを与えるには Session ごとに srt
- * プロセスを立てる必要がある。Permission Model 込みの `node --permission ...` も
- * そのまま内側のコマンドとして渡せる (srt → bwrap → node --permission → pi の順に
- * ネストし、Permission Model が最内殻)。argv は srt がシェル用にクォートして子に渡す。
+ * プロセスを立てる必要がある。argv は srt がシェル用にクォートして子に渡す。
  */
 export function wrapWithSrt(
   inner: { command: string; args: string[] },
@@ -181,143 +119,6 @@ export function wrapWithSrt(
       ...inner.args,
     ],
   };
-}
-
-/**
- * pi 起動時に cwd から `/` まで祖先ディレクトリを 1 段ずつ遡って existsSync する
- * ファイル名 (プロジェクト trust 判定・context ファイル探索。pi
- * dist/core/trust-manager.js の TRUST_REQUIRING_PROJECT_CONFIG_RESOURCES と
- * dist/core/resource-loader.js の loadContextFileFromDir、および `.git` /
- * `.agents/skills` の存在チェックを docker で実測して特定した一覧)。
- * この probe は workdir だけでなく**全ての中間ディレクトリ**
- * (/tmp/pi-chat-runner/sessions/<ch> など) で走るため、workdir の祖先すべてに
- * ついてこのファイル名との直積を `--allow-fs-read` へ展開する必要がある —
- * 1 つでも欠けると existsSync が ERR_ACCESS_DENIED を投げ pi が exit 1 で即死する
- * (`--allow-fs-read=/` や `/*` の一括許可は他ユーザーの読めるファイルまで丸ごと
- * 開けてしまい広すぎるため使わない。docker で確認済み)。
- */
-const PI_TRUST_PROBE_FILENAMES = [
-  "AGENTS.override.md",
-  "AGENTS.md",
-  "AGENTS.MD",
-  "CLAUDE.md",
-  "CLAUDE.MD",
-  ".git",
-  ".pi/settings.json",
-  ".pi/extensions",
-  ".pi/skills",
-  ".pi/prompts",
-  ".pi/themes",
-  ".pi/SYSTEM.md",
-  ".pi/APPEND_SYSTEM.md",
-  // dist/migrations.js の migrateCommandsToPrompts が cwd の .pi/commands を
-  // existsSync する (prompts への rename 判定)
-  ".pi/commands",
-  ".agents/skills",
-];
-
-/** dir 自身を含む `/` までの祖先ディレクトリ一覧 (純粋関数、テスト対象) */
-export function ancestorDirs(dir: string): string[] {
-  const dirs: string[] = [];
-  let current = dir;
-  while (true) {
-    dirs.push(current);
-    const parent = dirname(current);
-    if (parent === current) break;
-    current = parent;
-  }
-  return dirs;
-}
-
-/**
- * Node Permission Model 用の allow パス一覧の組み立て (純粋関数、テスト対象)。
- * pi 本体 (npm global の node_modules) / workdir / agent HOME への read を
- * 許可し、write は workdir と agent HOME (+ 任意で /tmp) に限る。extension
- * (reply / permission-gate) の読み込みは `/app` 包括許可の廃止に伴い extraRead
- * 経由で個別に許可する (呼び出し側の runner.ts が積む)。実際の allow 集合は
- * docker 起動での実測 (このモジュールのコメント、pi-tools-and-sandbox.md) に
- * 基づく最小構成。
- */
-export function buildPiPermissionOptions(options: {
-  /** pi 本体のエントリポイント JS の絶対パス */
-  entrypoint: string;
-  /** pi 本体の node_modules ルート (既定は entrypoint の npm global レイアウトから
-   * 推測できないため必須。例 /usr/local/lib/node_modules) */
-  nodeModulesDir: string;
-  /** セッションの workdir (cwd)。read/write 両方を許可する */
-  workdir: string;
-  /** pi の HOME (常に agentHome)。~/.pi 等の読み書きに要る */
-  home: string;
-  /** 追加で write を許可したいパス (例 "/tmp/*"）。既定なし */
-  extraWrite?: string[];
-  /** 追加で read を許可したいパス (例 GOOGLE_APPLICATION_CREDENTIALS のファイル
-   * パス、または --extension に渡す extension ファイルのディレクトリ)。HOME を
-   * agentHome に固定するとローカルのユーザー ADC ($HOME/.config/gcloud) は HOME
-   * 経由で見えなくなるため、明示指定されたファイルだけ個別に read を許可する用途。
-   * `/app` 配下を包括的に許可することはしないため、extension を読ませるには
-   * 呼び出し側 (runner.ts) が extensionPaths の dirname をここへ積む必要がある。
-   * 既定なし */
-  extraRead?: string[];
-  /** `--allow-addons` の付与 (PiPermissionOptions.allowAddons へ素通し)。既定 false */
-  allowAddons?: boolean;
-  /** pi に TMPDIR として渡す Session 専用ディレクトリ (runtime.md §5.5)。指定時は
-   * bash 出力のスピル先 (tmpdir()/pi-bash-*.log) の許可をここに向け、/tmp 直下の
-   * パターンは出さない。未指定なら従来どおり /tmp/pi-bash-* を許可する */
-  tmpDir?: string;
-}): PiPermissionOptions {
-  const spill = piBashSpillPatterns(options.tmpDir);
-  return {
-    entrypoint: options.entrypoint,
-    ...(options.allowAddons !== undefined
-      ? { allowAddons: options.allowAddons }
-      : {}),
-    allowFsRead: [
-      `${options.nodeModulesDir}/*`,
-      `${options.workdir}/*`,
-      `${options.home}/*`,
-      // workdir の全祖先 (workdir 自身は上の glob で足りるが重複しても無害) ×
-      // trust probe ファイル名の直積。中間ディレクトリの existsSync を通すため
-      ...ancestorDirs(options.workdir).flatMap((dir) =>
-        PI_TRUST_PROBE_FILENAMES.map((name) => join(dir, name)),
-      ),
-      // pi の bash tool はシェル解決で existsSync("/bin/bash") を呼ぶ
-      // (dist/utils/shell.js の getShellConfig)。Permission Model 下では
-      // 未許可パスの existsSync は例外になるため、許可しないと bash tool が
-      // コマンド内容にかかわらず全て失敗する。/bin/sh はそのフォールバック
-      "/bin/bash",
-      "/bin/sh",
-      // bash tool の出力が 50KB (DEFAULT_MAX_BYTES) を超えると pi は
-      // tmpdir()/pi-bash-<id>.log へスピルする (dist/core/bash-executor.js)。
-      // 許可しないと WriteStream の unhandled 'error' で pi がツール実行中に即死する。
-      // tmpdir() は TMPDIR を見る (Node の os.tmpdir) ので、tmpDir を渡す構成では
-      // そこを、渡さない構成では /tmp を許可する
-      ...spill,
-      ...(options.extraRead ?? []),
-    ],
-    allowFsWrite: [
-      `${options.workdir}/*`,
-      `${options.home}/*`,
-      ...spill,
-      ...(options.extraWrite ?? []),
-    ],
-  };
-}
-
-/** pi の bash 出力スピルファイル (tmpdir()/pi-bash-*.log) の許可パターン。
- * tmpDir (Session 専用の TMPDIR) が与えられればディレクトリ自体と配下を許可する
- * (srt はグロブをディスク上に展開するため、srt 側 allowWrite にはディレクトリを
- * 渡す。Permission Model 側も同じディレクトリに揃える)。
- * 与えられなければ /tmp/pi-bash-*。macOS では /tmp が /private/tmp への symlink で、
- * Permission Model の照合はパスの実体化タイミングで揺れるため realpath 側も併記する */
-export function piBashSpillPatterns(tmpDir?: string): string[] {
-  if (tmpDir !== undefined) return [tmpDir, `${tmpDir}/*`];
-  const patterns = new Set<string>(["/tmp/pi-bash-*"]);
-  try {
-    patterns.add(join(realpathSync("/tmp"), "pi-bash-*"));
-  } catch {
-    // /tmp が無い環境はそのまま (コンテナでは /tmp は実体)
-  }
-  return [...patterns];
 }
 
 /**

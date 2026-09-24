@@ -35,13 +35,11 @@ describe("buildSandboxSettings", () => {
       filesystem: { allowWrite: ["/scratch"], denyRead: ["~/.ssh"] },
       credentials: { envVars: [{ name: "GH_TOKEN", mode: "deny" }] },
     });
-    const { settings } = buildSandboxSettings({
+    const settings = buildSandboxSettings({
       rules,
       allowWrite: [CWD, `${CWD}-tmp`, HOME],
       workdirRoot: ROOT,
       channelEntries: [],
-      home: HOME,
-      cwd: CWD,
     });
     expect(settings.filesystem.allowWrite).toEqual([
       "/scratch",
@@ -58,7 +56,7 @@ describe("buildSandboxSettings", () => {
     const rules = SandboxRulesSchema.parse({
       filesystem: { allowRead: ["/data/knowledge"] },
     });
-    const { settings } = buildSandboxSettings({
+    const settings = buildSandboxSettings({
       rules,
       allowWrite: [CWD, `${CHANNEL_DIR}/tmp/1700000000.000100`, HOME],
       workdirRoot: ROOT,
@@ -67,8 +65,6 @@ describe("buildSandboxSettings", () => {
         `${CHANNEL_DIR}/tmp`,
         `${CHANNEL_DIR}/1700000000.000200`,
       ],
-      home: HOME,
-      cwd: CWD,
     });
     expect(settings.filesystem.denyRead).toEqual([ROOT]);
     expect(settings.filesystem.allowRead).toEqual([
@@ -81,57 +77,13 @@ describe("buildSandboxSettings", () => {
     const rules = SandboxRulesSchema.parse({
       filesystem: { allowWrite: [HOME] },
     });
-    const { settings } = buildSandboxSettings({
+    const settings = buildSandboxSettings({
       rules,
       allowWrite: [CWD, HOME],
       workdirRoot: ROOT,
       channelEntries: [],
-      home: HOME,
-      cwd: CWD,
     });
     expect(settings.filesystem.allowWrite).toEqual([HOME, CWD]);
-  });
-
-  it("mirrors only the user's allowRead/allowWrite into Permission Model patterns", () => {
-    const rules = SandboxRulesSchema.parse({
-      filesystem: {
-        allowRead: ["/data/knowledge", "~/.config/gh", "notes", "~"],
-        allowWrite: ["/scratch/**/*.log"],
-      },
-    });
-    const { permission } = buildSandboxSettings({
-      rules,
-      allowWrite: [CWD, HOME],
-      workdirRoot: ROOT,
-      channelEntries: [],
-      home: HOME,
-      cwd: CWD,
-    });
-    expect(permission.allowRead).toEqual([
-      "/data/knowledge",
-      "/data/knowledge/*",
-      `${HOME}/.config/gh`,
-      `${HOME}/.config/gh/*`,
-      `${CWD}/notes`,
-      `${CWD}/notes/*`,
-      HOME,
-      `${HOME}/*`,
-    ]);
-    // グロブを含むエントリは展開せずそのまま
-    expect(permission.allowWrite).toEqual(["/scratch/**/*.log"]);
-  });
-
-  it("returns empty permission lists when the user granted nothing", () => {
-    const rules = SandboxRulesSchema.parse({});
-    const { permission } = buildSandboxSettings({
-      rules,
-      allowWrite: [CWD],
-      workdirRoot: ROOT,
-      channelEntries: [],
-      home: HOME,
-      cwd: CWD,
-    });
-    expect(permission).toEqual({ allowRead: [], allowWrite: [] });
   });
 });
 

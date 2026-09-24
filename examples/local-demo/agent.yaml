@@ -10,12 +10,6 @@ system:
   state:
     control:
       backend: ${env.CONTROL_STATE_BACKEND:-memory}
-  runtime:
-    # The "links" channel loads pi-smart-fetch, which contains a native addon
-    # (.node) — loading it under the Node Permission Model requires
-    # --allow-addons. Off by default; set PI_ALLOW_ADDONS=1 when trying that
-    # channel (see README.md).
-    allowAddons: ${env.PI_ALLOW_ADDONS:-false}
 
 # --- agent: the default Agent Config for every channel ---
 # The model is pi's canonical "provider/model-id[:thinking]" shorthand; every
@@ -99,8 +93,8 @@ channels:
 
   # Link-reading channel: any message containing a URL triggers (no mention
   # needed), and the pi-smart-fetch extension (URL fetch + summarize) is
-  # enabled for this channel only. Requires `pnpm add pi-smart-fetch` and
-  # PI_ALLOW_ADDONS=1 — see README.md; the other channels work without it.
+  # enabled for this channel only. Requires `pnpm add pi-smart-fetch` — see
+  # README.md; the other channels work without it.
   - channel: "links"
     agent:
       systemPrompt: >

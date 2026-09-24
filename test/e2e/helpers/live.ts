@@ -90,8 +90,7 @@ export interface StartLiveRunnerOptions {
    *
    * 再起動をまたぐ再開では本番と同じく固定値を渡す必要がある: 復元される
    * session.jsonl には記録時の cwd が入っており、resume した pi はその実在を
-   * 確かめる。Permission Model の allow パスは新しい workdirRoot 基準なので、
-   * ルートが変わると旧 cwd の stat が ERR_ACCESS_DENIED で弾かれ pi が即死する。 */
+   * 確かめるので、ルートが変わると記録時の cwd と食い違う。 */
   workdirRoot?: string;
   /** agent_end 後に追いメッセージを待つ時間 (ms)。省略時は Dispatcher の既定 3s。
    * linger 中の継続 / linger 満了後の再起動を切り分けるため、テストでは本番既定
@@ -149,8 +148,8 @@ export async function startLiveRunner(
   // system ブロックのうち e2e で決めるのは runtime.home (= PI_AGENT_HOME) と、root で
   // 動くときの uid/gid だけ。root なら本番イメージと同じく agent uid (Dockerfile の
   // useradd) で pi を動かす。root のまま srt に包むと、user namespace の中の root は
-  // agent 所有の /home/agent に書けず pi が起動直後に落ちる。残り (Permission Model の
-  // ON、GCP env の allowlist、pi の実パス解決) は createRuntimeConfig /
+  // agent 所有の /home/agent に書けず pi が起動直後に落ちる。残り (GCP env の
+  // allowlist、pi の実パス解決) は createRuntimeConfig /
   // resolveSystemConfig のコード既定をそのまま使い、本番と同じ経路で RuntimeConfig を
   // 組み立てる。
   const asRoot = process.getuid?.() === 0;

@@ -13,10 +13,8 @@ ENV PATH=$PNPM_HOME:$PATH
 RUN curl -fsSL https://get.pnpm.io/install.sh | env PNPM_VERSION=10.30.3 SHELL=/bin/sh ENV=/dev/null sh -
 
 # Install pi-smart-fetch into /app/node_modules (the base image's existing
-# production node_modules root). This keeps the extension's file under a path
-# the base image's Permission Model config already allows reading — no extra
-# --allow-fs-read wiring beyond what the runner already adds for the
-# channel's `extensions:` entry (its dirname, i.e. .../pi-smart-fetch/dist/).
+# production node_modules root), outside pi's auto-discovery path so only the
+# channel that lists it in `extensions:` loads it.
 # The base image installed node_modules with --store-dir /pnpm/store; pnpm
 # refuses to link from a different store (ERR_PNPM_UNEXPECTED_STORE), so pass
 # the same one.
