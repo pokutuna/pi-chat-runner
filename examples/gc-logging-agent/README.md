@@ -6,7 +6,7 @@ Extends the pi-chat-runner base image with a single `FROM` step, specialized for
 - Skills:
   - [`skills/investigate-logging`](skills/investigate-logging/SKILL.md) — fetch logs via `gcloud logging read`, analyze with jq/duckdb
   - [`skills/uv-pep723`](skills/uv-pep723/SKILL.md) — write self-contained Python scripts with `uv run --script` for analysis beyond jq/duckdb
-- pi extension: [`extensions/init-gcloud.ts`](extensions/init-gcloud.ts) — on each pi process start, points `gcloud` at the mounted `GOOGLE_APPLICATION_CREDENTIALS` (`auth/credential_file_override`) and sets the default project, so the agent never has to run `gcloud auth`/`gcloud config` itself
+- pi extension: [`extensions/init-gcloud.ts`](extensions/init-gcloud.ts) — on each pi process start, sets up `gcloud` credentials and the default project, so the agent never has to run `gcloud auth`/`gcloud config` itself. Credentials come from the mounted `GOOGLE_APPLICATION_CREDENTIALS` when set; otherwise (e.g. on Cloud Run) the extension fetches an access token from the metadata server and hands it to `gcloud`, which also works inside the [sandbox](../../README.md#sandbox) where `gcloud` cannot reach the metadata server on its own
 - Config: a mention-triggered channel using the investigation prompt
 
 See [docs/design/runtime.md §4.2-4.3](../../docs/design/runtime.md) for the image-layering convention this follows (`FROM` one step + skills/extensions under `$AGENT_HOME/.pi/agent/`).
