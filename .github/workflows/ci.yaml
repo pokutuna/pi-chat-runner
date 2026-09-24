@@ -60,6 +60,10 @@ jobs:
       - uses: actions/checkout@v7
       - name: Build e2e image
         run: docker build --target e2e -t pi-chat-runner-e2e .
+      # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor,
+      # which makes bwrap (run as the agent uid inside the container) fail
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Run sandbox E2E
         run: |
           docker run --rm \
