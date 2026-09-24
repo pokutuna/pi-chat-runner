@@ -52,7 +52,7 @@ describe("buildSandboxSettings", () => {
     expect(settings.credentials).toEqual(rules.credentials);
   });
 
-  it("hides the workdir root and re-allows only Channel entries that hold no write path", () => {
+  it("hides the workdir root and re-allows the write paths and Channel entries that hold no write path", () => {
     const rules = SandboxRulesSchema.parse({
       filesystem: { allowRead: ["/data/knowledge"] },
     });
@@ -70,6 +70,9 @@ describe("buildSandboxSettings", () => {
     expect(settings.filesystem.allowRead).toEqual([
       "/data/knowledge",
       `${CHANNEL_DIR}/1700000000.000200`,
+      CWD,
+      `${CHANNEL_DIR}/tmp/1700000000.000100`,
+      HOME,
     ]);
   });
 

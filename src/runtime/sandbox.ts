@@ -48,6 +48,9 @@ export function sandboxSettingsPath(
  *   srt の read は allowRead が denyRead より優先されるので、他 Channel の workdir・
  *   TMPDIR・shared staging と `<workdirRoot>/srt/` の settings ファイルは読めない。
  *   全 Session が同じ agent uid で動くため、UID 分離ではこの境界を作れない
+ * - 書き込み先そのものも allowRead に足す。srt (macOS) は denyRead の中の書き込み先を
+ *   読み取り可に戻さないので、足さないと pi が自分の cwd を読めない。srt (Linux) は
+ *   書き込み先の中にある allowRead を読み取り専用で重ねずに飛ばすので、書き込み可のまま残る
  * - Channel のディレクトリごと allowRead にはしない。srt (Linux) は denyRead の中の
  *   書き込み先を書き込み可で戻した後に allowRead を読み取り専用で重ねるので、
  *   書き込み先を含むディレクトリを allowRead にすると書き込み先まで読み取り専用になる。
@@ -74,7 +77,11 @@ export function buildSandboxSettings(input: {
       ...rules.filesystem,
       denyRead: [...new Set([...rules.filesystem.denyRead, workdirRoot])],
       allowRead: [
-        ...new Set([...(rules.filesystem.allowRead ?? []), ...readableEntries]),
+        ...new Set([
+          ...(rules.filesystem.allowRead ?? []),
+          ...readableEntries,
+          ...allowWrite,
+        ]),
       ],
       allowWrite: [...new Set([...rules.filesystem.allowWrite, ...allowWrite])],
     },

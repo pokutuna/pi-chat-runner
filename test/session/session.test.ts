@@ -1274,7 +1274,7 @@ describe("Session sandbox (srt, runtime.md §5.5)", () => {
     expect(seen.settings.network.allowedDomains).toEqual([
       "aiplatform.googleapis.com:443",
     ]);
-    expect(seen.settings.filesystem.allowRead).toEqual(["/data/knowledge"]);
+    expect(seen.settings.filesystem.allowRead).toContain("/data/knowledge");
     expect(seen.settings.filesystem.allowWrite).toEqual(
       expect.arrayContaining([
         join(workdirRoot, "C01", trigger.id),

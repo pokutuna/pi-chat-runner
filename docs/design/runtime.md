@@ -301,6 +301,9 @@ Channel のディレクトリをまとめて allowRead にはしない。srt (Li
 ディレクトリを allowRead にすると、書き込み先まで読み取り専用になり pi が起動できない。
 そのため Session 起動時に Channel 直下を列挙し、書き込み先を含まないエントリ (他 Session の
 workdir) だけを戻す。起動後に作られた同じ Channel の Session の workdir は見えない。
+書き込み先そのものは allowRead にも足す。srt (macOS) は denyRead の中の書き込み先を読み取り可に
+戻さないので、足さないと pi が自分の cwd を読めず起動できない。srt (Linux) は書き込み先の中に
+ある allowRead を読み取り専用で重ねずに飛ばすので、書き込み先は書き込み可のまま残る。
 
 srt は sandbox 内の `TMPDIR` を自分の env の `CLAUDE_CODE_TMPDIR` (既定 `/tmp/claude`) で
 上書きするので、Runner は `TMPDIR` と `CLAUDE_CODE_TMPDIR` の両方に同じディレクトリを渡す。
