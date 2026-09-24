@@ -12,7 +12,7 @@ See [docs/design.md](docs/design.md) for the design.
 - It's a conversation: steer it while it runs, follow up after it answers, come back later — context and files survive
 - Prompts, models, triggers, and skills are per-channel YAML; [chat commands](#chat-commands) (`/new`, `/enable`, `/disable`) control a channel from inside the chat
 - The serverless part: Cloud Run + Firestore + GCS with scale-to-zero — or in-memory / SQLite / local dirs for dev, or embed it as a library
-- Optional egress sandbox: pi runs inside [srt](https://github.com/anthropics/sandbox-runtime) with a per-channel FQDN allowlist, so the agent reaches only the hosts you name and writes only to its own session directory
+- [Sandbox](#sandbox) (off by default, highly recommended): pi runs inside [srt](https://github.com/anthropics/sandbox-runtime) with a per-channel FQDN allowlist, so the agent reaches only the hosts you name and writes only to its own session directory
 
 ## Quickstart
 
@@ -241,7 +241,7 @@ COPY --chown=1001:1001 channel-skills/ /app/skills/
 
 The image runs pi as uid/gid `1001` (`agent`) by default (`PI_AGENT_UID`/`PI_AGENT_GID`), so `--chown=1001:1001` keeps files writable/readable by the process that actually runs pi.
 
-To restrict what the agent can reach, set `agent.sandbox` in `agent.yaml` to an srt rule file — [`examples/config/sandbox/vertex.json`](examples/config/sandbox/vertex.json) admits only Vertex AI, [`vertex-github.json`](examples/config/sandbox/vertex-github.json) adds GitHub — and let channels append hosts or hide credentials with `channels[].agent.sandbox`. The base image already carries what srt needs (bubblewrap, socat); on Cloud Run the service must run on the gen2 execution environment. See [`docs/design/runtime.md` §5.5](docs/design/runtime.md) for what the sandbox does and does not guarantee.
+The base image already carries what the [sandbox](#sandbox) needs (bubblewrap, socat); on Cloud Run the service must run on the gen2 execution environment.
 
 ### 3. Embed just the runner (no bundled Slack server)
 
@@ -360,6 +360,37 @@ agent:
   env:
     ANTHROPIC_API_KEY: ${env.ANTHROPIC_API_KEY}
 ```
+
+### Sandbox
+
+The sandbox is off by default, and we highly recommend turning it on. Without it, the agent's bash tool can connect to any host and read or write every other session's workdir, in any channel. With it, pi runs inside [srt](https://github.com/anthropics/sandbox-runtime), which uses bubblewrap and a network namespace on Linux and Seatbelt on macOS. The agent then connects only to the hosts you allow and writes only to its own session directory. It cannot read sessions in other channels; sessions in the same channel can read, but not write, each other's workdirs.
+
+Enable it with `agent.sandbox`. The value is an srt settings object, written inline or as a path to a JSON/YAML file relative to the config file. A channel can add hosts to that list with `channels[].agent.sandbox`, or turn the sandbox off for itself with `sandbox: false`:
+
+```yaml
+agent:
+  model: google-vertex/gemini-3.5-flash
+  sandbox: ./sandbox/vertex.json
+
+channels:
+  - channel: "C0000000001"
+    agent:
+      sandbox:
+        network:
+          allowedDomains: [github.com, api.github.com]
+```
+
+Once the sandbox is on, every host not in `allowedDomains` is denied, and the runner adds no hosts to the list. pi's own calls to the LLM API pass through the same allowlist, so **list your provider's API endpoint**, or pi cannot reach the model:
+
+| Provider | `allowedDomains` |
+|---|---|
+| `google-vertex` (ADC) | [`examples/config/sandbox/vertex.json`](examples/config/sandbox/vertex.json): `aiplatform.googleapis.com:443`, `*.aiplatform.googleapis.com:443`, `oauth2.googleapis.com:443`, plus the metadata server (`169.254.169.254:80`, `metadata.google.internal:80`) that ADC gets tokens from on Cloud Run |
+| `anthropic` | `api.anthropic.com:443` |
+| `openai` | `api.openai.com:443` |
+
+To find a host that is missing from the list, run the runner with `LOG_LEVEL=debug`. srt then logs each connection decision to pi's stderr, which the runner writes to its own log. A blocked connection appears as `[SandboxDebug] No matching config rule, denying: <host>:<port>`; add that `<host>:<port>` to `allowedDomains` and retry.
+
+See [`docs/design/runtime.md` §5.5](docs/design/runtime.md) for what the sandbox does and does not guarantee.
 
 ## Local Development
 
