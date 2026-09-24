@@ -241,8 +241,6 @@ COPY --chown=1001:1001 channel-skills/ /app/skills/
 
 The image runs pi as uid/gid `1001` (`agent`) by default (`PI_AGENT_UID`/`PI_AGENT_GID`), so `--chown=1001:1001` keeps files writable/readable by the process that actually runs pi.
 
-The base image already carries what the [sandbox](#sandbox) needs (bubblewrap, socat); on Cloud Run the service must run on the gen2 execution environment.
-
 ### 3. Embed just the runner (no bundled Slack server)
 
 If you already have a Slack bot (or any other event source) and just want to dispatch a pi session from it — without running this project's HTTP/Socket-Mode server — import `Dispatcher` directly and call `handle()`/`handleReaction()` from your own event handler:
@@ -363,34 +361,32 @@ agent:
 
 ### Sandbox
 
-The sandbox is off by default, and we highly recommend turning it on. Without it, the agent's bash tool can connect to any host and read or write every other session's workdir, in any channel. With it, pi runs inside [srt](https://github.com/anthropics/sandbox-runtime), which uses bubblewrap and a network namespace on Linux and Seatbelt on macOS. The agent then connects only to the hosts you allow and writes only to its own session directory. It cannot read sessions in other channels; sessions in the same channel can read, but not write, each other's workdirs.
-
-Enable it with `agent.sandbox`. The value is an srt settings object, written inline or as a path to a JSON/YAML file relative to the config file. A channel can add hosts to that list with `channels[].agent.sandbox`, or turn the sandbox off for itself with `sandbox: false`:
+We strongly recommend running the agent in the sandbox. It is off by default, and without it the agent's shell commands can connect to any host and read or change other sessions' files. With it, pi runs inside [srt](https://github.com/anthropics/sandbox-runtime): it connects only to the hosts you list and writes only to its own session directory.
 
 ```yaml
 agent:
-  model: google-vertex/gemini-3.5-flash
-  sandbox: ./sandbox/vertex.json
-
-channels:
-  - channel: "C0000000001"
-    agent:
-      sandbox:
-        network:
-          allowedDomains: [github.com, api.github.com]
+  model: anthropic/claude-sonnet-5
+  sandbox:
+    network:
+      allowedDomains:
+        - api.anthropic.com:443 # the LLM API
+        - github.com            # whatever else the agent needs
 ```
 
-Once the sandbox is on, every host not in `allowedDomains` is denied, and the runner adds no hosts to the list. pi's own calls to the LLM API pass through the same allowlist, so **list your provider's API endpoint**, or pi cannot reach the model:
+The LLM API that pi calls is blocked like any other host, so list your provider's endpoint. Each provider's endpoint is the `baseUrl` in pi's [`packages/ai/src/providers/<provider>.ts`](https://github.com/earendil-works/pi/tree/main/packages/ai/src/providers) (`api.openai.com` for `openai`, for example); for `google-vertex`, use the hosts in [`examples/config/sandbox/vertex.json`](examples/config/sandbox/vertex.json). To see which hosts are blocked, run with `LOG_LEVEL=debug` and look for `[SandboxDebug] No matching config rule, denying: <host>:<port>` in the log.
 
-| Provider | `allowedDomains` |
-|---|---|
-| `google-vertex` (ADC) | [`examples/config/sandbox/vertex.json`](examples/config/sandbox/vertex.json): `aiplatform.googleapis.com:443`, `*.aiplatform.googleapis.com:443`, `oauth2.googleapis.com:443`, plus the metadata server (`169.254.169.254:80`, `metadata.google.internal:80`) that ADC gets tokens from on Cloud Run |
-| `anthropic` | `api.anthropic.com:443` |
-| `openai` | `api.openai.com:443` |
+In Docker, add these flags to `docker run` so the sandbox can start:
 
-To find a host that is missing from the list, run the runner with `LOG_LEVEL=debug`. srt then logs each connection decision to pi's stderr, which the runner writes to its own log. A blocked connection appears as `[SandboxDebug] No matching config rule, denying: <host>:<port>`; add that `<host>:<port>` to `allowedDomains` and retry.
+```sh
+docker run \
+  --cap-add SYS_ADMIN \
+  --security-opt seccomp=unconfined \
+  --security-opt apparmor=unconfined \
+  --security-opt systempaths=unconfined \
+  ...
+```
 
-See [`docs/design/runtime.md` §5.5](docs/design/runtime.md) for what the sandbox does and does not guarantee.
+On Cloud Run, use the gen2 execution environment.
 
 ## Local Development
 
