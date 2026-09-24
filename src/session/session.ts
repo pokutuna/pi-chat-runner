@@ -10,7 +10,7 @@
 // Turn は型ではなくこのクラスのフィールド群 (#turnEpoch / #turnMessageIds /
 // #turnTimeoutTimer) として表す (session-model.md §7)。
 
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
@@ -213,8 +213,6 @@ export class Session {
   /** レジストリから外れたことを示すフラグ。全終了経路の Map delete の代わりに
    * 立て、stale チェックの主語になる */
   #disposed = false;
-  /** この起動で書いた srt settings ファイル。#dispose で消す (runtime.md §5.5) */
-  #sandboxSettingsPath: string | undefined;
 
   readonly #observer: SessionObserver;
   readonly #sharedStagingDir: string | undefined;
@@ -912,22 +910,12 @@ export class Session {
   #dispose(): void {
     this.#disposed = true;
     this.#observer.onDisposed(this);
-    // srt settings は Session 1 回分の使い捨て。全終了経路で best-effort に消す
-    // (次の起動は同じパスに書き直すので、消し損ねても害は無い)
-    const path = this.#sandboxSettingsPath;
-    if (path !== undefined) {
-      this.#sandboxSettingsPath = undefined;
-      void rm(path, { force: true }).catch((err) => {
-        this.#ctx.logger.warn(
-          { sessionKey: this.sessionKey, path, err },
-          "sandbox settings cleanup failed",
-        );
-      });
-    }
   }
 
   /** srt の `--settings` ファイルを書く (runtime.md §5.5)。srtEntrypoint が無ければ
-   * fail-closed で throw する。パスは #sandboxSettingsPath に控え、#dispose で消す */
+   * fail-closed で throw する。ファイルは消さずに残し、同じ sessionKey の次の起動が
+   * 上書きする — 終了時に消すと、同じキーで直後に始まった Session の settings を
+   * srt が読む前に消しうる */
   async #writeSandboxSettings(
     settings: SandboxRuntimeConfig,
   ): Promise<SandboxSpawnConfig> {
@@ -944,7 +932,6 @@ export class Session {
     await writeFile(settingsPath, JSON.stringify(settings, null, 2), {
       mode: 0o644,
     });
-    this.#sandboxSettingsPath = settingsPath;
     return {
       srtEntrypoint,
       settingsPath,

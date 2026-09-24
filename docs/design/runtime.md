@@ -314,7 +314,9 @@ workdirRoot は既定の `/tmp/pi-chat-runner/sessions` のように短く保つ
 
 settings ファイルは `<workdirRoot>/srt/<sessionKey>.json` — Workdir の外、Runner 所有で、
 sandbox の中からは読めない (workdirRoot の denyRead に含まれる)。srt 自身は sandbox を作る前に
-Agent uid で読むので 0644 にする。Session 終了時に消す。
+Agent uid で読むので 0644 にする。Session 終了時には消さず、同じ sessionKey の次の起動が
+上書きする。終了時に消すと、同じ sessionKey で直後に始まった Session の settings を srt が
+読む前に消すことがある。
 
 **fail-closed**。sandbox が有効な Channel で srt が使えない (対応 OS でない、パッケージが
 無い、srt が要求する OS 側の依存や namespace が無い) ときは Session の起動を失敗させ、

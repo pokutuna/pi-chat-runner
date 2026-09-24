@@ -1290,20 +1290,6 @@ describe("Session sandbox (srt, runtime.md §5.5)", () => {
     const tmpDir = join(workdirRoot, "C01", "tmp", trigger.id);
     expect(env.TMPDIR).toBe(tmpDir);
     expect(env.CLAUDE_CODE_TMPDIR).toBe(tmpDir);
-
-    // Session 終了で settings ファイルは消える
-    await waitFor(
-      () => h.dispatcher.activeSessionCount === 0,
-      "session removed",
-    );
-    await waitFor(
-      () =>
-        stat(seen.settingsPath).then(
-          () => false,
-          () => true,
-        ),
-      "settings file removed",
-    );
   });
 
   it("does not involve srt when the channel sets sandbox: false", async () => {
