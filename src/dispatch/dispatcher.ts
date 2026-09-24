@@ -69,8 +69,8 @@ export interface DispatcherOptions {
    * 未指定なら shared 機能ごと無効 — staging の作成・skill 配線・system prompt
    * への言及をすべて行わない (createSharedStore が設定から解決する) */
   sharedStore?: SharedStore;
-  /** Runtime レイヤの静的設定 (pi のパス・env allowlist・UID 分離・Permission Model・
-   * workdir のルート)。組み立ては composition root の担当 (runtime/resolve.ts の
+  /** Runtime レイヤの静的設定 (pi のパス・env allowlist・UID 分離・workdir の
+   * ルート)。組み立ては composition root の担当 (runtime/resolve.ts の
    * createRuntimeConfig)。runtime.md §1 */
   runtime: RuntimeConfig;
   /** lease の TTL。既定 60_000ms。renew は ttl/3 間隔 */
@@ -764,6 +764,7 @@ export class Dispatcher implements SessionObserver {
       const {
         workdirReal,
         agentHomeReal,
+        tmpDirReal,
         sharedDirReal,
         sessionPath,
         resumed,
@@ -785,17 +786,16 @@ export class Dispatcher implements SessionObserver {
         logger: this.runtimeLogger,
       });
 
-      // extension/skill パス解決 + Node Permission Model オプション組み立て
-      // (runtime.md §4, §5.2)
-      const { extensionPaths, skillPaths, memoryEnabled, permission } =
+      // extension/skill パス解決 + srt settings の合成 (runtime.md §4, §5.5)
+      const { extensionPaths, skillPaths, memoryEnabled, sandbox } =
         await buildSpawnOptions({
           agentHomeReal,
           workdirReal,
+          tmpDirReal,
           sharedDirReal,
           channel,
           builtinExtensionPaths: this.extensionPaths,
           memorySkillPath: this.memorySkillPath,
-          piPermission: this.ctx.runtime.piPermission,
         });
 
       const model = channel?.agent.model;
@@ -803,12 +803,18 @@ export class Dispatcher implements SessionObserver {
       // (server.ts の gcpEnv / PI_EXPORT_ENTRYPOINT。ctx.extraEnv) の上に、解決済み
       // Channel の Agent Config の env を Channel ごとに重ねる。後勝ちなのは
       // 「利用者が意図して GOOGLE_CLOUD_PROJECT 等を差し替える」を許すため。
-      // 最後に HOME を agentHome へ上書きする (Runner 自身の HOME は継承しない。
-      // buildPiEnv は extraEnv が PATH/HOME を上書きできる実装になっている)
+      // 最後に HOME を agentHome へ、TMPDIR を Session 専用ディレクトリへ上書きする
+      // (Runner 自身の HOME は継承しない。buildPiEnv は extraEnv が PATH/HOME を
+      // 上書きできる実装になっている)。TMPDIR は srt の
+      // allowWrite と同じ tmpDirReal を向ける (runtime.md §5.5)。srt は sandbox 内の
+      // TMPDIR を自分の env の CLAUDE_CODE_TMPDIR (既定 /tmp/claude) で上書きするので、
+      // sandbox 有効時はそれも同じディレクトリに向けておく
       const extraEnv = {
         ...this.ctx.runtime.extraEnv,
         ...channel?.agent.env,
         HOME: agentHomeReal,
+        TMPDIR: tmpDirReal,
+        ...(sandbox !== undefined ? { CLAUDE_CODE_TMPDIR: tmpDirReal } : {}),
       };
       // memory の索引 (MEMORY.md) は skill 発火 (agent の自発的な read) に頼らず
       // system prompt に常時注入する (docs/design/runtime.md §6)。1 行 1 メモリの
@@ -824,7 +830,6 @@ export class Dispatcher implements SessionObserver {
         workdirReal,
         sharedDirReal,
         skillPaths,
-        permission,
         memoryIndex,
         resumed,
         // Transcript が世代交代したか、まだ Session の記録が無いなら Transcript は
@@ -833,6 +838,7 @@ export class Dispatcher implements SessionObserver {
         freshTranscript: transcriptRotated || previousSession === null,
         model,
         extraEnv,
+        sandbox,
       });
 
       // /new マーカーの消費 (session-model.md §5.1: 「マーカーは次の Session 起動時、

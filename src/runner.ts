@@ -43,8 +43,8 @@ export interface RunnerOptions {
     workdir: WorkdirStore;
     shared?: SharedStore;
   };
-  /** Runtime レイヤの静的設定 (pi のパス・env allowlist・UID 分離・Permission Model・
-   * workdir のルート)。組み立ては server.ts が createRuntimeConfig で行う */
+  /** Runtime レイヤの静的設定 (pi のパス・env allowlist・UID 分離・workdir の
+   * ルート)。組み立ては server.ts が createRuntimeConfig で行う */
   runtime: RuntimeConfig;
   configSource: ConfigSource;
   /** 1 ターンの上限 (ms)。省略時は Dispatcher の既定 */

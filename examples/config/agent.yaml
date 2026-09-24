@@ -62,15 +62,6 @@ system:
 
     home: ${env.PI_AGENT_HOME:-/home/agent} # HOME passed to the pi child process
 
-    # permissionMode toggles Node Permission Model sandboxing.
-    permissionMode: ${env.PI_PERMISSION_MODE:-true} # SET: false for local dev against a fake pi binary
-
-    # allowAddons opts into --allow-addons, which lets native addons (.node)
-    # load under the Permission Model. Only needed for npm extensions with
-    # native deps (e.g. pi-smart-fetch's wreq-js). Native code can bypass this
-    # layer's fs checks, so leave it off unless such an extension is enabled.
-    allowAddons: ${env.PI_ALLOW_ADDONS:-false}
-
   turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000} # pi is killed if a turn runs past this
 
 # --- agent: the default Agent Config for every channel ---
@@ -93,6 +84,19 @@ agent:
   # agent/channels where ${env.X} is resolved.
   env:
     GH_TOKEN: ${env.GH_TOKEN:-}
+
+  # sandbox wraps pi in srt (@anthropic-ai/sandbox-runtime): a network
+  # namespace whose only way out is srt's proxy, which admits CONNECTs by FQDN
+  # allowlist (docs/design/runtime.md §5.5). Off unless set. The value is
+  # `false`, a path to an srt-format rule file (JSON/YAML), or inline rules.
+  # The runner adds nothing to network: the LLM provider's endpoints must be
+  # in the allowlist too (./sandbox/vertex.json has the Vertex AI set;
+  # ./sandbox/vertex-github.json adds github.com). Runs on Linux (the
+  # published image has what srt needs; Cloud Run must be gen2, not gen1) and
+  # on macOS for local dev via sandbox-exec. At boot the runner runs srt once
+  # and refuses to start if srt cannot run in this environment, instead of
+  # failing on the first message. UNCOMMENT to enable:
+  # sandbox: ./sandbox/vertex.json
 
 # --- channels: per-channel behavior, re-read on every message ---
 # One array of channel configs. "default" is required as the fallback base;
@@ -143,6 +147,17 @@ channels:
     #     - /app/skills/gc-logging
     #   extensions:
     #     - /app/extensions/bq-runner.ts
+    # Per-channel sandbox entries are ADDITIVE to the top-level agent.sandbox
+    # rules (only allowedDomains/deniedDomains, filesystem allow*/deny*, and
+    # credentials envVars/files may appear; `sandbox: false` turns it off for
+    # this channel). Requires agent.sandbox above to be enabled.
+    # UNCOMMENT to enable:
+    # agent:
+    #   sandbox:
+    #     network:
+    #       allowedDomains: [api.github.com]
+    #     credentials:
+    #       envVars: [{ name: GH_TOKEN, mode: deny }]
 
   - channel: "C0000000003" # REPLACE: your channel ID
     # Classifier demo: judges every message, no mention needed. Only

@@ -111,6 +111,7 @@ Agent は Runner の制御領域や認証情報から隔離する。
 - Agent は Runner とは別の UID で起動し、Runner の所有するプロセス情報やファイルへのアクセスを制限する
 - Runner と Agent でファイルシステムを共有するが、Agent が読み書きできるパスを制限する
 - Agent に渡す環境変数は、明示的に許可したものに限る
+- Channel ごとに opt-in で、Agent の外部ネットワークを FQDN の allowlist に絞る (srt。[runtime.md](design/runtime.md) §5.5)
 - Agent には応答を返すための reply tool を与える。Runner 側が実際の返信先を解決するため、Agent はチャットアプリケーションの認証情報や送信方法に関与しない
 
 Agent には、通常の動作環境と同様にファイルシステムを与える。

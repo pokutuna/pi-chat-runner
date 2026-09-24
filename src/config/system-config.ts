@@ -126,24 +126,8 @@ const StateSchema = z
 
 // --- system.runtime ---
 
-/** ${env.X} 解決後の boolean フラグを解釈する。env-ref は string しか返さないため、
- * YAML に native boolean で書いた場合 (boolean のまま来る) と ${env.X} 参照で
- * 書いた場合 ("true"/"false"/"0"/"1"/"" の文字列で来る) の両方を受ける。
- * z.coerce.boolean() は "false" や "0" も truthy にしてしまい sandbox を OFF に
- * できない罠があるため使わない — 文字列は "0"/"false"/"" (大小無視) を false、
- * それ以外を true と解釈する (env 直読み経路 parseBooleanFlagEnv とは "false" の扱いが
- * 異なる点に注意)。 */
-const BooleanFlagSchema = z.preprocess((value) => {
-  if (typeof value === "string") {
-    const v = value.trim().toLowerCase();
-    return v !== "" && v !== "0" && v !== "false";
-  }
-  return value;
-}, z.boolean().optional());
-
 /** pi 子プロセスの実行環境設定 (runtime.md §5)。${env.X} 解決後に zod で
- * 型を確定する — uid/gid は文字列でも number に coerce する。permissionMode /
- * allowAddons は coerce の罠を避けるため専用の BooleanFlagSchema で解釈する。 */
+ * 型を確定する — uid/gid は文字列でも number に coerce する。 */
 const RuntimeSchema = z
   .object({
     uid: z.preprocess(
@@ -156,11 +140,6 @@ const RuntimeSchema = z
     ),
     /** pi 子プロセスへ常に HOME として渡すディレクトリ。既定 "/home/agent"。 */
     home: z.string().optional(),
-    /** Node Permission Model 起動の有効/無効。コード既定は ON (true)。 */
-    permissionMode: BooleanFlagSchema,
-    /** native addon (.node) を含む extension 用の `--allow-addons` opt-in
-     * (runtime.md §5.2)。native code は fs チェックを素通りできるため既定 OFF。 */
-    allowAddons: BooleanFlagSchema,
   })
   .strict();
 
@@ -236,9 +215,7 @@ export async function loadSystemConfig(
 
 /** loadSystemConfig + resolveSystemConfig を通した後の平坦な設定。省略された
  * 時間フィールドは undefined のまま (Dispatcher / Session の既定に委ねる)。
- * runtime は「値を渡さない」「隔離する」がそれぞれの既定挙動そのものであるため、
- * このモジュールがコード既定 (permissionMode: true / allowAddons: false /
- * home: "/home/agent") を埋めて返す。 */
+ * runtime.home だけはこのモジュールがコード既定 ("/home/agent") を埋めて返す。 */
 export interface ResolvedSystemConfig {
   chat: SystemConfig["chat"];
   state: SystemConfig["state"];
@@ -252,15 +229,6 @@ export interface ResolvedSystemConfig {
 export interface ResolvedRuntimeConfig {
   uid?: number;
   gid?: number;
-  /** Node Permission Model 起動の有効/無効。コード既定は ON (true) — 書かなければ
-   * 隔離が効く。env PI_PERMISSION_MODE=0 または YAML の
-   * system.runtime.permissionMode: false で切れる。 */
-  permissionMode: boolean;
-  /** Permission Model 下で native addon (.node) のロードを許可するか
-   * (`--allow-addons`)。native code は fs チェックを素通りできるため既定は OFF
-   * (false) — env PI_ALLOW_ADDONS=1 または YAML の
-   * system.runtime.allowAddons: true で opt-in する。 */
-  allowAddons: boolean;
   /** pi 子プロセスへ常に HOME として渡すディレクトリ。既定 "/home/agent"。 */
   home: string;
 }
@@ -295,14 +263,16 @@ function parseProgressNoticeIntervalMsEnv(
 }
 
 /** env PI_AGENT_UID / PI_AGENT_GID (runtime.md §5.1: UID 分離) を数値として
- * パースする。どちらも省略時は undefined (file の値を使う分岐に委ねる)。片方だけ
- * 設定されているのは誤設定なので fail-loud にする。 */
+ * パースする。どちらも未設定か空文字なら undefined (file の値を使う分岐に委ねる)。
+ * 空文字を未設定と同じに扱うのは、イメージが ENV で持つ既定値を `-e PI_AGENT_UID=`
+ * のように空で上書きして UID 分離を外せるようにするため。片方だけ設定されているのは
+ * 誤設定なので fail-loud にする。 */
 function parseAgentIdsEnv(env: NodeJS.ProcessEnv): {
   uid?: number;
   gid?: number;
 } {
-  const uidRaw = env.PI_AGENT_UID;
-  const gidRaw = env.PI_AGENT_GID;
+  const uidRaw = env.PI_AGENT_UID === "" ? undefined : env.PI_AGENT_UID;
+  const gidRaw = env.PI_AGENT_GID === "" ? undefined : env.PI_AGENT_GID;
   if (uidRaw === undefined && gidRaw === undefined) return {};
   if (uidRaw === undefined || gidRaw === undefined) {
     throw new Error(
@@ -315,14 +285,6 @@ function parseAgentIdsEnv(env: NodeJS.ProcessEnv): {
     throw new Error("PI_AGENT_UID and PI_AGENT_GID must be integers");
   }
   return { uid, gid };
-}
-
-/** env のブールフラグ (PI_PERMISSION_MODE / PI_ALLOW_ADDONS) をパースする。
- * 未設定/空文字なら undefined (file/コード既定に委ねる)。"0" は明示的に無効化、
- * それ以外の値は有効化として扱う。 */
-function parseBooleanFlagEnv(raw: string | undefined): boolean | undefined {
-  if (raw === undefined || raw === "") return undefined;
-  return raw !== "0";
 }
 
 /** system ブロックの内容と env を合わせて解決する。優先順位は env > YAML >
@@ -342,14 +304,6 @@ export function resolveSystemConfig(
   const agentIdsFromEnv = parseAgentIdsEnv(env);
   const uid = agentIdsFromEnv.uid ?? file.runtime.uid;
   const gid = agentIdsFromEnv.gid ?? file.runtime.gid;
-  const permissionMode =
-    parseBooleanFlagEnv(env.PI_PERMISSION_MODE) ??
-    file.runtime.permissionMode ??
-    true;
-  const allowAddons =
-    parseBooleanFlagEnv(env.PI_ALLOW_ADDONS) ??
-    file.runtime.allowAddons ??
-    false;
   const home = env.PI_AGENT_HOME ?? file.runtime.home ?? "/home/agent";
 
   return {
@@ -358,8 +312,6 @@ export function resolveSystemConfig(
     runtime: {
       ...(uid !== undefined ? { uid } : {}),
       ...(gid !== undefined ? { gid } : {}),
-      permissionMode,
-      allowAddons,
       home,
     },
     ...(turnTimeoutMs !== undefined ? { turnTimeoutMs } : {}),

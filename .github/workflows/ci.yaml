@@ -5,6 +5,9 @@ on:
     branches: [main]
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   ci:
     runs-on: ubuntu-latest
@@ -50,3 +53,25 @@ jobs:
 
       - name: Stop Firestore emulator
         cancel: firestore
+
+  # Deterministic sandbox E2E (test/e2e-sandbox/): the real spawn path
+  # (srt --settings → bwrap → node) with a probe pi, inside the
+  # e2e image so the base image's apt line (bubblewrap/socat) is exercised.
+  sandbox-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Build e2e image
+        run: docker build --target e2e -t pi-chat-runner-e2e .
+      # Ubuntu 24.04 restricts unprivileged user namespaces through AppArmor,
+      # which makes bwrap (run as the agent uid inside the container) fail
+      - name: Allow unprivileged user namespaces
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Run sandbox E2E
+        run: |
+          docker run --rm \
+            --cap-add SYS_ADMIN \
+            --security-opt seccomp=unconfined \
+            --security-opt apparmor=unconfined \
+            --security-opt systempaths=unconfined \
+            pi-chat-runner-e2e

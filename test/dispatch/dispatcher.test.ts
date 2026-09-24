@@ -11,7 +11,6 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 
 import type { ClassifierClient } from "../../src/classifier/client.js";
-import type { ChannelConfig } from "../../src/config/channel-config.js";
 import { renderEvent, replyThreadKeyOf } from "../../src/dispatch/policy.js";
 import type { FetchMessage } from "../../src/gate/evaluate.js";
 import type { ReactionEvent } from "../../src/ingress/chat-event.js";
@@ -23,6 +22,7 @@ import {
   sleep,
   derivedSessionKeyOf,
   waitFor,
+  type TestChannelConfig,
 } from "../helpers/session-harness.js";
 
 describe("Dispatcher (fake-pi integration)", () => {
@@ -1467,7 +1467,7 @@ describe("Dispatcher (fake-pi integration)", () => {
     // alias が失われた状態) でも threads.resolve で合流先 sessionKey を引ける
     // (state.md §3.3)
     const controlState = new InMemoryControlState();
-    const docs: Record<string, ChannelConfig> = {
+    const docs: Record<string, TestChannelConfig> = {
       C01: { session: { affinity: { scope: "channel" } } },
     };
     const h1 = await harness(docs, { controlState });

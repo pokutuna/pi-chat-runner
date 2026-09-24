@@ -24,6 +24,7 @@ import { createSlackPlatform, createSlackWebClient } from "./chat/slack.js";
 import {
   FileConfigSource,
   loadChannelConfigFile,
+  resolveChannelConfig,
 } from "./config/config-source.js";
 import { formatEffectiveConfig } from "./config/dump.js";
 import {
@@ -38,7 +39,9 @@ import { SocketIngress } from "./ingress/slack/socket-ingress.js";
 import { rootLogger } from "./logger.js";
 import type { RunnerOptions } from "./runner.js";
 import { startRunner } from "./runner.js";
+import type { RuntimeConfig } from "./runtime/config.js";
 import { createRuntimeConfig } from "./runtime/resolve.js";
+import { probeSandboxRuntime } from "./runtime/sandbox.js";
 import { createSharedStore, createWorkdirStore } from "./state/agent/copy.js";
 import { FirestoreControlState } from "./state/control/backends/firestore.js";
 import { InMemoryControlState } from "./state/control/backends/memory.js";
@@ -117,7 +120,7 @@ function printUsage(configPath: string): void {
   console.error(
     "    agent:   { workdirDir, sharedDir, sharedWarnBytes }  # empty = feature off",
   );
-  console.error("  runtime: { uid, gid, home, permissionMode, allowAddons }");
+  console.error("  runtime: { uid, gid, home }");
   console.error(
     "  turnTimeoutMs, progressNoticeIntervalMs, leaseTtlMs, lingerMs",
   );
@@ -137,12 +140,6 @@ function printUsage(configPath: string): void {
   );
   console.error(
     "  PI_AGENT_HOME       directory always passed as HOME to the pi child process (default /home/agent. Also system.runtime.home)",
-  );
-  console.error(
-    "  PI_PERMISSION_MODE  set to 0 to disable the Node Permission Model (default ON. Also system.runtime.permissionMode: false)",
-  );
-  console.error(
-    "  PI_ALLOW_ADDONS     set to 1 to allow native addons under the Permission Model (default off. Also system.runtime.allowAddons)",
   );
   console.error(
     "  TURN_TIMEOUT_MS     per-turn limit in ms (default 600000 = 10 min; pi is killed and the session ends if exceeded. Also system.turnTimeoutMs)",
@@ -289,7 +286,7 @@ function buildCommonRunnerOptions(
       ...(shared !== undefined ? { shared } : {}),
     },
     // Runtime レイヤの静的設定 (pi のパス解決・env allowlist・UID 分離・
-    // Permission Model・workdir のルート) は runtime/resolve.ts に閉じる
+    // workdir のルート) は runtime/resolve.ts に閉じる
     runtime: createRuntimeConfig(system),
     // 各 ms 設定は未設定なら Dispatcher の既定を使う
     ...(system.turnTimeoutMs !== undefined
@@ -304,6 +301,48 @@ function buildCommonRunnerOptions(
     ...(system.lingerMs !== undefined ? { lingerMs: system.lingerMs } : {}),
     logger,
   };
+}
+
+/** boot 時の sandbox 前提チェック (runtime.md §5.5)。初回ロードした設定で
+ * agent.sandbox が有効な Channel が 1 つでもあれば、srt が解決できることと、srt が
+ * この環境で実際に起動できること (最小 settings で trivial なコマンドを 1 回包む) を
+ * 確認し、駄目なら srt の stderr を出して exit(1) する。Session 起動時にも fail-closed で落ちるが、
+ * それは最初のメッセージが来てからなので、イメージの取りこぼしはここで先に拾う。
+ * agent / channels はメッセージごとに読み直すため完全ではない (後から sandbox を
+ * 足した場合は Session 起動時の fail-closed が受け止める) */
+async function checkSandboxPrerequisites(
+  configPath: string,
+  runtime: RuntimeConfig,
+): Promise<void> {
+  const { file, defaultAgent } = await loadChannelConfigFile(configPath);
+  const sandboxed = file.channels
+    .map((c) => resolveChannelConfig(file, c.channel, defaultAgent))
+    .some((resolved) => {
+      const sandbox = resolved?.channel.agent.sandbox;
+      return sandbox !== undefined && sandbox !== false;
+    });
+  if (!sandboxed) return;
+
+  if (runtime.srtEntrypoint === undefined) {
+    logger.error(
+      { platform: process.platform },
+      "agent.sandbox is enabled but srt is unavailable (requires Linux or macOS " +
+        "and @anthropic-ai/sandbox-runtime); set agent.sandbox: false to run without it",
+    );
+    process.exit(1);
+  }
+  const probe = await probeSandboxRuntime(runtime.srtEntrypoint);
+  if (!probe.ok) {
+    logger.error(
+      { srtEntrypoint: runtime.srtEntrypoint, stderr: probe.stderr },
+      "agent.sandbox is enabled but srt cannot run in this environment",
+    );
+    process.exit(1);
+  }
+  logger.info(
+    { srtEntrypoint: runtime.srtEntrypoint },
+    "sandbox prerequisites satisfied",
+  );
 }
 
 /** `local [channelId]` (docs/design/local-dev.md §2): Slack を介さず stdin/stdout で
@@ -331,6 +370,7 @@ async function runLocal(argv: string[]): Promise<void> {
     process.env,
   );
   const options = buildCommonRunnerOptions(system);
+  await checkSandboxPrerequisites(configPath, options.runtime);
 
   const chat = createLocalChat({ defaultChannelId: channelId });
 
@@ -391,6 +431,7 @@ async function main() {
     process.env,
   );
   const options = buildCommonRunnerOptions(system);
+  await checkSandboxPrerequisites(configPath, options.runtime);
   const chat = buildSlackChat(system.chat.slack, configPath);
 
   logger.info(

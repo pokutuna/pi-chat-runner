@@ -48,15 +48,18 @@ FROM base AS prod-deps
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
   pnpm install --frozen-lockfile --prod --store-dir /pnpm/store
 
-# ---- runtime ----
-FROM node:26-slim
+# ---- os-deps: apt packages + agent user, shared by runtime and e2e ----
+# Kept in one stage so the package list is written once (runtime and the
+# sandbox E2E image must agree on what is installed).
+FROM node:26-slim AS os-deps
 
-ENV NODE_ENV=production
-
-# Basic investigation set for pi's bash tool (git/curl/jq/ripgrep/fd) only.
-# Debian installs fd-find as fdfind; symlink it to fd.
+# Basic investigation set for pi's bash tool (git/curl/jq/ripgrep/fd), plus
+# what srt (@anthropic-ai/sandbox-runtime) needs on Linux to sandbox pi
+# (runtime.md §5.5): bubblewrap (namespaces / fs isolation), socat (bridging
+# the sandboxed network namespace to the host-side proxy), ripgrep (already
+# in the set). Debian installs fd-find as fdfind; symlink it to fd.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      git curl ca-certificates jq ripgrep fd-find \
+      git curl ca-certificates jq ripgrep fd-find bubblewrap socat \
   &&  rm -rf /var/lib/apt/lists/* \
   &&  ln -s "$(command -v fdfind)" /usr/local/bin/fd
 
@@ -67,6 +70,37 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # rewrite the Runner's own code.
 RUN groupadd --gid 1001 agent \
   && useradd --uid 1001 --gid 1001 --create-home --shell /usr/sbin/nologin agent
+
+# ---- e2e: full dev install + os deps, for the deterministic sandbox E2E ----
+# `docker build --target e2e` then `docker run --cap-add SYS_ADMIN
+# --security-opt seccomp=unconfined --security-opt apparmor=unconfined
+# --security-opt systempaths=unconfined` (bubblewrap needs user namespaces and
+# an unmasked /proc to mount a fresh proc inside them). Runs vitest against the
+# source tree; see test/e2e-sandbox/ and `pnpm run test:e2e:sandbox`.
+# procps (ps) is for the tests' process-leak assertions only.
+FROM os-deps AS e2e
+RUN apt-get update && apt-get install -y --no-install-recommends procps \
+  &&  rm -rf /var/lib/apt/lists/*
+
+ENV PNPM_HOME=/usr/local/share/pnpm
+ENV PATH=$PNPM_HOME:$PATH
+COPY --from=base $PNPM_HOME $PNPM_HOME
+WORKDIR /app
+COPY --from=builder /app/node_modules ./node_modules
+COPY . .
+ENV E2E_SANDBOX=1
+ENTRYPOINT ["pnpm", "exec", "vitest", "run", "test/e2e-sandbox"]
+
+# ---- runtime ----
+FROM os-deps
+
+ENV NODE_ENV=production
+# UID separation is on by default in the image: the Runner stays root and
+# spawns pi as the agent user created above. Running pi as root instead breaks
+# agent.sandbox, because inside srt's user namespace root cannot write the
+# agent-owned /home/agent. Pass both as empty (-e PI_AGENT_UID= -e PI_AGENT_GID=)
+# to turn it off.
+ENV PI_AGENT_UID=1001 PI_AGENT_GID=1001
 
 # Baked default settings.json (runtime.md §3): pins only the behavior
 # the runner depends on (steeringMode/followUpMode/compaction.enabled/

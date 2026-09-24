@@ -12,6 +12,7 @@ See [docs/design.md](docs/design.md) for the design.
 - It's a conversation: steer it while it runs, follow up after it answers, come back later — context and files survive
 - Prompts, models, triggers, and skills are per-channel YAML; [chat commands](#chat-commands) (`/new`, `/enable`, `/disable`) control a channel from inside the chat
 - The serverless part: Cloud Run + Firestore + GCS with scale-to-zero — or in-memory / SQLite / local dirs for dev, or embed it as a library
+- [Sandbox](#sandbox) (off by default, highly recommended): pi runs inside [srt](https://github.com/anthropics/sandbox-runtime) with a per-channel FQDN allowlist, so the agent reaches only the hosts you name and writes only to its own session directory
 
 ## Quickstart
 
@@ -238,7 +239,7 @@ COPY --chown=1001:1001 extensions/ /home/agent/.pi/agent/extensions/
 COPY --chown=1001:1001 channel-skills/ /app/skills/
 ```
 
-Runtime user is uid/gid `1001` (`agent`) when UID separation is enabled (`PI_AGENT_UID`/`PI_AGENT_GID`), so `--chown=1001:1001` keeps files writable/readable by the process that actually runs pi.
+The image runs pi as uid/gid `1001` (`agent`) by default (`PI_AGENT_UID`/`PI_AGENT_GID`), so `--chown=1001:1001` keeps files writable/readable by the process that actually runs pi.
 
 ### 3. Embed just the runner (no bundled Slack server)
 
@@ -296,7 +297,7 @@ One YAML file, pointed at by `CONFIG_PATH` (default `examples/config/agent.yaml`
 
 Exactly three top-level blocks — anything else is an error:
 
-- **`system`** — the runner process itself, read once at boot: chat connector (`system.chat.slack`, mode/tokens), state backends (`system.state.control` / `system.state.agent`), the pi child process's execution environment (`system.runtime`: UID separation, HOME, Permission Model), and timing defaults (`turnTimeoutMs`, `progressNoticeIntervalMs`, `leaseTtlMs`, `lingerMs`). This is the only block where `${env.X}` / `${env.X:-default}` references are resolved (secrets included).
+- **`system`** — the runner process itself, read once at boot: chat connector (`system.chat.slack`, mode/tokens), state backends (`system.state.control` / `system.state.agent`), the pi child process's execution environment (`system.runtime`: UID separation, HOME), and timing defaults (`turnTimeoutMs`, `progressNoticeIntervalMs`, `leaseTtlMs`, `lingerMs`). This is the only block where `${env.X}` / `${env.X:-default}` references are resolved (secrets included).
 - **`agent`** — the default Agent Config shared by every channel: `systemPrompt`, `context`, `model` (pi's `provider/model-id[:thinking-level]` shorthand; the provider prefix is required), `tools`/`excludeTools`, `skills`/`extensions` (paths to image-baked assets, loaded in addition to the common ones under `$AGENT_HOME/.pi/agent/`), `memory`, and `env`.
 - **`channels`** — per-channel behavior, re-read on every message (no restart needed): trigger gates, session mode, reply mode, plus a per-channel `agent:` block overriding any Agent Config field. An array listing all channels, with a required `default` entry as the fallback.
 
@@ -357,6 +358,35 @@ agent:
   env:
     ANTHROPIC_API_KEY: ${env.ANTHROPIC_API_KEY}
 ```
+
+### Sandbox
+
+We strongly recommend running the agent in the sandbox. It is off by default, and without it the agent's shell commands can connect to any host and read or change other sessions' files. With it, pi runs inside [srt](https://github.com/anthropics/sandbox-runtime): it connects only to the hosts you list and writes only to its own session directory.
+
+```yaml
+agent:
+  model: anthropic/claude-sonnet-5
+  sandbox:
+    network:
+      allowedDomains:
+        - api.anthropic.com:443 # the LLM API
+        - github.com            # whatever else the agent needs
+```
+
+The LLM API that pi calls is blocked like any other host, so list your provider's endpoint. Each provider's endpoint is the `baseUrl` in pi's [`packages/ai/src/providers/<provider>.ts`](https://github.com/earendil-works/pi/tree/main/packages/ai/src/providers) (`api.openai.com` for `openai`, for example); for `google-vertex`, use the hosts in [`examples/config/sandbox/vertex.json`](examples/config/sandbox/vertex.json). To see which hosts are blocked, run with `LOG_LEVEL=debug` and look for `[SandboxDebug] No matching config rule, denying: <host>:<port>` in the log.
+
+In Docker, add these flags to `docker run` so the sandbox can start:
+
+```sh
+docker run \
+  --cap-add SYS_ADMIN \
+  --security-opt seccomp=unconfined \
+  --security-opt apparmor=unconfined \
+  --security-opt systempaths=unconfined \
+  ...
+```
+
+On Cloud Run, use the gen2 execution environment.
 
 ## Local Development
 

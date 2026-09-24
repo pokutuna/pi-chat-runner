@@ -34,9 +34,11 @@
     "lint": "oxlint . && oxfmt --check .",
     "test": "vitest run",
     "test:e2e": "E2E_LIVE_LLM=1 vitest run test/e2e",
+    "test:e2e:sandbox": "docker build --target e2e -t pi-chat-runner-e2e . && docker run --rm --cap-add SYS_ADMIN --security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined pi-chat-runner-e2e",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@anthropic-ai/sandbox-runtime": "0.0.77",
     "@earendil-works/pi-coding-agent": "^0.85.1",
     "@google-cloud/firestore": "^9.1.0",
     "@google/genai": "^2.22.0",

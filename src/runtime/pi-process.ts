@@ -16,7 +16,7 @@ import {
   buildPiArgs,
   buildPiEnv,
   buildSpawnCommand,
-  type PiPermissionOptions,
+  wrapWithSrt,
 } from "./pi-args.js";
 import {
   JsonlDecoder,
@@ -25,6 +25,7 @@ import {
   type RpcCommand,
   type RpcResponse,
 } from "./rpc.js";
+import type { SandboxSpawnConfig } from "./sandbox.js";
 
 // graceful stop の 2 段の猶予 (stop() 既定)。compaction 中の書き出しなど、pi 側の
 // 後始末は SIGTERM 後よりも stdin close 後の方が長くかかりうるため、
@@ -42,10 +43,11 @@ export interface PiProcessOptions {
   /** 明示的に差し替える pi バイナリ。テストや埋め込み用途向け。
    * 指定時は piEntrypoint より優先する。 */
   piBinary?: string;
-  /** 解決済みの pi 本体 entrypoint JS。permission の有無に関わらず使用する。 */
+  /** 解決済みの pi 本体 entrypoint JS。`node <entrypoint>` で起動する。 */
   piEntrypoint?: string;
-  /** 指定時、`node --permission` 経由で pi を起動する (opt-in)。省略時は現状動作 */
-  permission?: PiPermissionOptions;
+  /** 指定時、起動コマンド全体を srt CLI で包む (runtime.md §5.5)。settings ファイルは
+   * 呼び出し側 (Session) が書き終えてから渡す */
+  sandbox?: SandboxSpawnConfig;
   /** `--model` に渡す `provider/model-id[:thinking-level]` (省略時は pi のローカル
    * 設定に従う)。provider の切り替え・thinking level はこの shorthand で表現し、
    * パースは pi の resolveCliModel に委譲する (--provider は渡さない) */
@@ -114,14 +116,20 @@ export class PiProcess extends EventEmitter<PiProcessEvents> {
 
   start(): void {
     if (this.child) throw new Error("PiProcess already started");
-    const { command, args } = buildSpawnCommand(
-      buildPiArgs(this.options),
-      this.options,
-    );
+    const inner = buildSpawnCommand(buildPiArgs(this.options), this.options);
+    const { command, args } =
+      this.options.sandbox !== undefined
+        ? wrapWithSrt(inner, this.options.sandbox)
+        : inner;
     const child = spawn(command, args, {
       cwd: this.options.cwd,
       env: buildPiEnv(process.env, this.options.extraEnv),
       stdio: ["pipe", "pipe", "pipe"],
+      // 子を独自のプロセスグループにして、kill() でグループごと落とせるようにする。
+      // srt で包むと Runner の直接の子は srt (node) で、その下に `sh -c` → bwrap →
+      // (pid namespace 内の) pi と続く。srt だけを SIGKILL すると sh が生き残り、
+      // bwrap の --die-with-parent は発火せず、pi とその子が残留する (runtime.md §5.5)
+      detached: true,
       // uid/gid はキー自体を省略すると現行プロセスの uid/gid を継承する
       // (runtime.md §5.1: UID 分離。コンテナは root 起動、spawn 時に落とす)。
       // キーを渡した上で値を undefined にすると Node の spawn は継承ではなく
@@ -212,15 +220,24 @@ export class PiProcess extends EventEmitter<PiProcessEvents> {
     });
     child.stdin.end();
     if (await withTimeout(exited, stdinCloseGraceMs)) return;
+    // SIGTERM は直接の子にだけ送る (srt は自分の子へ転送し、sh → bwrap → pi の順に
+    // 畳まれる)。猶予を超えたらグループごと SIGKILL
     child.kill("SIGTERM");
     if (await withTimeout(exited, sigtermGraceMs)) return;
-    child.kill("SIGKILL");
+    this.kill();
     await exited;
   }
 
-  /** 即時 kill */
+  /** 即時 kill。プロセスグループごと SIGKILL する (srt / sh / bwrap / socat まで)。
+   * グループへの送信に失敗したら直接の子だけを kill する */
   kill(): void {
-    this.child?.kill("SIGKILL");
+    const child = this.child;
+    if (!child || child.pid === undefined || child.exitCode !== null) return;
+    try {
+      process.kill(-child.pid, "SIGKILL");
+    } catch {
+      child.kill("SIGKILL");
+    }
   }
 }
 

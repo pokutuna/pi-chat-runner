@@ -30,8 +30,6 @@ Channel Config と Agent Config は「default を Channel ごとに上書きす�
 | `state.agent.sharedWarnBytes` | Shared のサイズ警告閾値 | Agent State |
 | `runtime.uid` / `gid` | Agent プロセスを起動する UID/GID。両方指定するか両方省略する | Runtime ([runtime.md](runtime.md)) |
 | `runtime.home` | Agent に渡す `HOME`。既定 `/home/agent` | Runtime |
-| `runtime.permissionMode` | Node Permission Model の有効化。既定 true | Runtime |
-| `runtime.allowAddons` | `--allow-addons` の opt-in。既定 false | Runtime |
 | `turnTimeoutMs` | 1 Turn の上限。超過で Agent を kill | Session ([message-dispatch.md](message-dispatch.md)) |
 | `progressNoticeIntervalMs` | 長時間 Turn の進捗通知の間隔。0 で無効 | Egress |
 | `leaseTtlMs` | Session 実行の lease TTL | Dispatcher |
@@ -70,6 +68,7 @@ System Config は全 Channel 共通で、Channel ごとの上書きを持たな�
 | `extensions` | 追加ロードする Extension のファイルパス (`--extension`)。additive |
 | `memory` | 組み込み memory skill の配線。Shared 有効時の既定 true、false で opt-out |
 | `env` | Agent プロセスへ渡す env の名前=値マップ (足し算モデル)。値に `${env.X}` を書ける唯一の Agent Config フィールド (§2.1) |
+| `sandbox` | Agent を srt (sandbox-runtime) で包むルール ([runtime.md](runtime.md) §5.5)。トップレベルでは `false` / srt ネイティブ形式のファイルパス / srt の設定をそのままインラインで書いたもの、省略で無効。Channel 側は配列に要素を足すだけ (§3.2)。provider の到達先も含め、network に何を許すかは全部このルールに書く |
 
 すべて Runtime が消費する ([runtime.md](runtime.md))。`model` の provider prefix は必須で、bare id は pi 側の fuzzy match で provider が非決定になるため schema で弾く。認証は pi に委譲し、API キー系 provider は `env` に env 名を列挙して渡す。google-vertex だけは Runtime が ADC marker を付ける。
 
@@ -109,8 +108,6 @@ system:
     uid: ${env.PI_AGENT_UID:-}
     gid: ${env.PI_AGENT_GID:-}
     home: ${env.PI_AGENT_HOME:-/home/agent}
-    permissionMode: ${env.PI_PERMISSION_MODE:-true}
-    allowAddons: ${env.PI_ALLOW_ADDONS:-false}
   turnTimeoutMs: ${env.TURN_TIMEOUT_MS:-600000}
   progressNoticeIntervalMs: ${env.PROGRESS_NOTICE_INTERVAL_MS:-30000}
   leaseTtlMs: ${env.LEASE_TTL_MS:-60000}
@@ -122,6 +119,7 @@ agent:
   systemPrompt: ./prompts/ask-ai.md            # ./ 始まりはファイル参照 (§3)
   env:
     GH_TOKEN: ${env.GH_TOKEN:-}                # Agent へ渡す env の名前=値 (§2.1)
+  sandbox: ./sandbox/vertex.json               # srt のルール (§3.2)。省略で無効
 
 # --- channels: Channel ごとの設定 (メッセージごとに読み直す) ---
 channels:
@@ -159,6 +157,9 @@ channels:
       systemPrompt: ./prompts/alerts.md
       skills:
         - /app/skills/gc-logging
+      sandbox:                                 # Channel 側は配列に足すだけ (§3.2)
+        network:
+          allowedDomains: [api.github.com]
 ```
 
 ### 2.1 ブロックごとの読み方
@@ -190,9 +191,8 @@ channels:
 |---|---|
 | `TURN_TIMEOUT_MS` | `system.turnTimeoutMs` |
 | `PROGRESS_NOTICE_INTERVAL_MS` | `system.progressNoticeIntervalMs` |
-| `PI_AGENT_UID` / `PI_AGENT_GID` | `system.runtime.uid` / `gid` (片方だけの設定は fail-loud) |
+| `PI_AGENT_UID` / `PI_AGENT_GID` | `system.runtime.uid` / `gid` (片方だけの設定は fail-loud。空文字は未設定と同じ。コンテナイメージは既定で `1001`) |
 | `PI_AGENT_HOME` | `system.runtime.home` |
-| `PI_PERMISSION_MODE` / `PI_ALLOW_ADDONS` | `system.runtime.permissionMode` / `allowAddons` |
 
 この経路は `${env.X}` 参照とは別のロジックなので二重に効きうる。運用では YAML 側を `${env.X:-default}` に一本化し、env 直接上書きはローカルでの一時的な変更に限る。
 
@@ -247,6 +247,16 @@ deep merge は一切しない。`session` や `reply` の内側キー、`trigger
 
 マージ対象のフィールド一覧は型から網羅を強制する (`Record<keyof AgentConfig, true>` を書かせる) ため、フィールドを足してマージから漏れることがない。
 
+**`sandbox` だけは配列への追加**。トップレベル `agent.sandbox` に srt の設定そのもの (srt ネイティブ形式で、network / filesystem / credentials をすべて持つ。ファイル参照はロード時にインライン化、§3.5) を書き、`channels[].agent.sandbox` にはその配列へ足す要素だけを書く。丸ごと置換だと Channel ごとに provider の到達先まで書き直すことになり、Channel の 1 行が sandbox 全体を弱める経路になるため。想定する変更 (ドメインの追加、読み書き先の追加、Channel 限定で env を隠す) は全部 union で足りるので、削除・置換・スカラの上書きは持たない。
+
+| 追加できる配列 | |
+|---|---|
+| `network.allowedDomains` / `network.deniedDomains` | 末尾に追加、重複は 1 つに |
+| `filesystem.allowRead` / `allowWrite` / `denyRead` / `denyWrite` | 同上 |
+| `credentials.envVars` / `credentials.files` | `name` / `path` で同一視。同じキーで内容が違えば error |
+
+これ以外のキー (`strictAllowlist` や `filesystem.disabled` 等のスカラ) は Channel 側では strict に弾く。`channels[].agent.sandbox: false` は「この Channel は sandbox なし」で、これだけは置換。トップレベルが無効 (省略か `false`) のまま Channel が追加を書くのは error にする — 足す土台が無いのに書かれたルールは、書いた人の意図 (この Channel を守りたい) と実際 (何も守られない) が食い違うため。合成後の設定は srt の schema で再検証し、`dump` (§5) に出す。`enableWeakerNestedSandbox` / `enableWeakerNetworkIsolation` / `filesystem.disabled` はエラーも警告も出ないまま sandbox を弱めるので、どの段でもロード時に error。
+
 ### 3.3 provenance
 
 マージと同時に、各フィールドがどのエントリ由来かを記録する。`default` / `channel` / `dm` / `default agent` / `channel agent` の 5 ラベルで、どの段からも値が来なかったフィールドは記録しない (読む側でコード既定に落ちる)。`dump` (§5) がこれを表示する。
@@ -263,6 +273,7 @@ deep merge は一切しない。`session` や `reply` の内側キー、`trigger
 |---|---|
 | `systemPrompt` / `context` | `./` `../` 始まりならファイルを読んでインライン化する。読めなければ fail-loud |
 | `skills` / `extensions` | 内容は読まず、絶対パス化だけする。裸の相対パス (`skills/foo`) は基準が曖昧なので schema で拒否する |
+| `sandbox` (トップレベル `agent` のみ) | パスならファイル (JSON / YAML、srt ネイティブ形式) を読んで正規化・検証し、ルールをインライン化する。読めない・不正なら fail-loud。パスの規則は `skills` と同じ |
 
 インライン化した結果をディスクへ書き戻す処理は持たない。インライン化後の値が実行時スキーマの形を守っていることを、もう一度 strict 検証で確かめる。
 
@@ -384,6 +395,7 @@ Config は「静的な宣言」、Control State は「実行中に変わる事�
 | Agent Config | `src/config/agent-config.ts` (`AgentConfigSchema`)。YAML ではトップレベル `agent` ブロックと `channels[].agent` の両方に同じスキーマが使われる |
 | Channel Config | `src/config/channel-config.ts` (`ChannelConfigSchema`, `ChannelEntrySchema`, `ChannelsFileSchema`) |
 | Agent Config の `env` | `AgentConfigSchema` の `env` (`agent.env` / `channels[].agent.env`)。`${env.X}` を解決する唯一の Agent Config フィールド |
+| Agent Config の `sandbox` | `src/config/sandbox-config.ts` (`SandboxRulesSchema` / `SandboxAdditionsSchema` / `mergeSandboxAdditions` / `loadSandboxRuleFile`)。Channel 側の形は `src/config/channel-config.ts` (`ChannelAgentConfigSchema`)、Channel が足す要素の union は `mergeSandboxLayer` (`src/config/config-source.ts`) |
 | ファイルのロードと Channel の解決 | `src/config/config-source.ts` (`ConfigSource`, `ResolvedChannel`, `FileConfigSource`, `loadChannelConfigFile`, `resolveChannelConfig`, `mergeChannelPart`, `mergeAgentConfig`) |
 | ブロックごとの独立ロード | `src/config/root-config.ts` (`readRootConfig`) |
 | `${env.X}` 参照 | `src/config/env-ref.ts` (`resolveEnvRefs`) |

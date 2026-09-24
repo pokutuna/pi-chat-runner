@@ -22,16 +22,8 @@ This example deliberately does the opposite: `pi-smart-fetch` is listed in
 The extension's file lives at `/app/node_modules/pi-smart-fetch/dist/index.js`
 — outside `$AGENT_HOME/.pi/agent/extensions/` — precisely so it is *not*
 auto-discovered, and only channels that explicitly reference its path get it.
-This is the right shape when a capability (and its cost — see below) should
-only apply to a channel that actually needs it, rather than to every channel
-the bot is in.
-
-The Dispatcher (`src/dispatch/dispatcher.ts`) automatically adds each `extensions:`
-path's dirname to `--allow-fs-read` when it dispatches the session, so no extra
-filesystem permission wiring is needed here. `/app/node_modules/pi-smart-fetch/dist/`
-is also already covered by the base image's own Permission Model config
-(the whole `/app/node_modules` tree is readable), so nothing has to be added
-for this example either.
+This is the right shape when a capability (and its cost) should only apply to
+a channel that actually needs it, rather than to every channel the bot is in.
 
 ## Alternative: install into `$AGENT_HOME` with `pi install` (all channels)
 
@@ -60,28 +52,7 @@ Because this path *is* pi's auto-discovery path, no `channels[].agent.extensions
 entry is needed at all; every channel picks it up automatically. This trades
 away the per-channel scoping (and its cost containment) this example
 otherwise demonstrates — use it only when every channel the bot serves should
-have the capability (and its `allowAddons` cost — see below).
-
-## Why `system.runtime.allowAddons` is needed
-
-`pi-smart-fetch` depends on a native addon (`wreq-js`, a Rust N-API binary).
-Node's Permission Model (`--permission`, on by default for the pi child
-process — see `docs/design/runtime.md` §5.2) rejects loading native addons
-(`.node` files) unless `--allow-addons` is passed. `pi-smart-fetch` would
-otherwise fail to load under this runner.
-
-`system.runtime.allowAddons` (default `false` across the repo) is the opt-in
-for this: setting it `true` adds `--allow-addons` to the pi child process's
-flags (env override: `PI_ALLOW_ADDONS`). This example sets its default to
-`true` in `config/agent.yaml`, since enabling `pi-smart-fetch` is the whole
-point of this example — unlike `examples/config/agent.yaml`, where it
-defaults to `false` because no channel there needs it.
-
-**Trade-off**: enabling `--allow-addons` loosens part of the Permission Model
-isolation layer — native code can bypass this layer's own fs-access checks
-(uid separation between the runner and the spawned pi process still holds
-regardless). Only enable it for images that actually load a native-addon
-extension, and only for the channels that need it.
+have the capability.
 
 ## Build
 

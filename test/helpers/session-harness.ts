@@ -8,10 +8,12 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { SandboxRuntimeConfig } from "@anthropic-ai/sandbox-runtime";
 import pino from "pino";
 
 import { SLACK_STATE_EMOJI } from "../../src/chat/slack.js";
 import type { ClassifierClient } from "../../src/classifier/client.js";
+import type { AgentConfig } from "../../src/config/agent-config.js";
 import type { ChannelConfig } from "../../src/config/channel-config.js";
 import type {
   ConfigSource,
@@ -23,7 +25,6 @@ import { EmojiTurnReactor } from "../../src/egress/emoji-turn-reactor.js";
 import { type ChatPoster, EgressRouter } from "../../src/egress/router.js";
 import type { FetchMessage } from "../../src/gate/evaluate.js";
 import type { InboundMessage } from "../../src/ingress/chat-event.js";
-import type { PiPermissionConfig } from "../../src/runtime/config.js";
 import type { MentionFormat } from "../../src/runtime/prompt.js";
 import type {
   SharedStore,
@@ -35,6 +36,10 @@ import type { ControlState } from "../../src/state/control/interfaces.js";
 
 export const FAKE_PI = fileURLToPath(
   new URL("../fixtures/fake-pi.mjs", import.meta.url),
+);
+/** srt CLI のスタブ (test/fixtures/fake-srt.mjs)。HarnessOptions.srtEntrypoint に渡す */
+export const FAKE_SRT = fileURLToPath(
+  new URL("../fixtures/fake-srt.mjs", import.meta.url),
 );
 
 export class FakePoster implements ChatPoster {
@@ -66,11 +71,17 @@ export class FakePoster implements ChatPoster {
   }
 }
 
+/** テスト用の Channel 設定。YAML と同じ ChannelConfig 形 (agent フィールドが
+ * agent: の下) だが、agent はマージ後の形 (sandbox は srt の設定そのもの) で書く。 */
+export type TestChannelConfig = Omit<ChannelConfig, "agent"> & {
+  agent?: AgentConfig;
+};
+
 /** テストは YAML と同じ ChannelConfig 形 (agent フィールドが agent: の下) で
  * 書き、ここで ResolvedChannel (agent 必須) へ均す — 実ローダーの 3 段マージを
  * 通さないぶん、agent は書かれたものをそのまま採用する。 */
 export class FakeConfigSource implements ConfigSource {
-  constructor(private readonly configs: Record<string, ChannelConfig>) {}
+  constructor(private readonly configs: Record<string, TestChannelConfig>) {}
   async channel(id: string): Promise<ResolvedChannel | null> {
     const config = this.configs[id];
     if (config === undefined) return null;
@@ -157,6 +168,15 @@ export interface Harness {
   commandsLog(channelId: string, threadTs: string): Promise<string[]>;
   envSeen(channelId: string, threadTs: string): Promise<Record<string, string>>;
   argvSeen(channelId: string, threadTs: string): Promise<string[]>;
+  /** fake-srt が書く観測結果 (settings の位置と中身、内側コマンド) */
+  srtSeen(channelId: string, threadTs: string): Promise<SrtSeen>;
+}
+
+export interface SrtSeen {
+  settingsPath: string;
+  settings: SandboxRuntimeConfig;
+  debug: boolean;
+  inner: string[];
 }
 
 export interface HarnessOptions {
@@ -172,10 +192,12 @@ export interface HarnessOptions {
   owner?: string;
   piBinary?: string;
   piEntrypoint?: string;
+  /** srt の cli.js のパス (RuntimeConfig.srtEntrypoint)。未指定なら sandbox 有効な
+   * Channel の起動は fail-closed で失敗する */
+  srtEntrypoint?: string;
   agentUid?: number;
   agentGid?: number;
   agentHome?: string;
-  piPermission?: PiPermissionConfig;
   turnTimeoutMs?: number;
   progressNoticeIntervalMs?: number;
   mentionFormat?: MentionFormat;
@@ -185,7 +207,7 @@ export interface HarnessOptions {
 }
 
 export async function harness(
-  docs: Record<string, ChannelConfig> = {},
+  docs: Record<string, TestChannelConfig> = {},
   options: HarnessOptions = {},
 ): Promise<Harness> {
   const workdirRoot =
@@ -228,13 +250,13 @@ export async function harness(
       ...(options.piEntrypoint !== undefined
         ? { piEntrypoint: options.piEntrypoint }
         : {}),
+      ...(options.srtEntrypoint !== undefined
+        ? { srtEntrypoint: options.srtEntrypoint }
+        : {}),
       ...(options.extraEnv !== undefined ? { extraEnv: options.extraEnv } : {}),
       ...(options.agentUid !== undefined ? { agentUid: options.agentUid } : {}),
       ...(options.agentGid !== undefined ? { agentGid: options.agentGid } : {}),
       agentHome,
-      ...(options.piPermission !== undefined
-        ? { piPermission: options.piPermission }
-        : {}),
     },
     lingerMs: options.lingerMs ?? 30,
     logger,
@@ -286,6 +308,13 @@ export async function harness(
     argvSeen: async (channelId, threadTs) => {
       const raw = await readFile(
         join(workdirRoot, channelId, threadTs, "argv-seen.json"),
+        "utf-8",
+      );
+      return JSON.parse(raw);
+    },
+    srtSeen: async (channelId, threadTs) => {
+      const raw = await readFile(
+        join(workdirRoot, channelId, threadTs, "srt-seen.json"),
         "utf-8",
       );
       return JSON.parse(raw);

@@ -478,7 +478,8 @@ Slack、Firestore、GCS など runner 自身の通信まで意図せず proxy �
 
 forward proxy server は pi-chat-runner に内蔵しない。
 利用側は sidecar、Node preload、別 host のどれで実装してもよい。
-既存の [`docs/forward-proxy.md`](../forward-proxy.md) は Node preload の例としてそのまま利用できる。
+Agent の egress を FQDN で絞る用途は `agent.sandbox` (srt、[runtime.md](../design/runtime.md) §5.5) が担い、
+Model Broker はそれと独立に動く。
 
 HTTP proxy 環境変数は協調する client の既定経路を変えるだけである。
 pi が `curl --noproxy '*'` や直接 socket を使うと迂回できることは、現在の前提どおり受容する。
@@ -620,7 +621,6 @@ Model Broker が gateway credential を隠し、外部 gateway が高度な poli
 
 ## Related Documents and Sources
 
-- [Restricting agent egress with proxy-chain](../forward-proxy.md)
 - [Session Runtime](session-runtime.md)
 - [Config 設計](config.md)
 - [pi Providers](https://pi.dev/docs/latest/providers)

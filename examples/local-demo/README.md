@@ -30,8 +30,7 @@ GOOGLE_CLOUD_LOCATION=<region, or "global">
 
 # The pi child process runs with HOME remapped to PI_AGENT_HOME (default
 # /home/agent), so ADC needs an explicit absolute path and PI_AGENT_HOME a
-# writable directory. On macOS write /tmp paths as /private/tmp (its
-# realpath) — the Permission Model compares realpaths.
+# writable directory.
 GOOGLE_APPLICATION_CREDENTIALS=<absolute path to application_default_credentials.json>
 PI_AGENT_HOME=<writable dir, e.g. /private/tmp/pi-chat-runner/home>
 ```
@@ -111,8 +110,7 @@ Optional — the only channel needing extra installs:
 
 ```sh
 pnpm add pi-smart-fetch     # provides ../../node_modules/pi-smart-fetch/...
-# then restart with PI_ALLOW_ADDONS=1 added to the same command line
-# (native addon under the Permission Model)
+# then restart
 ```
 
 ```

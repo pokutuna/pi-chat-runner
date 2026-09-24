@@ -14,10 +14,9 @@
  * を別プロセスとして起動する。呼び出しには pi 本体のエントリポイントが要るため、
  * ホスト (server.ts) が PI_EXPORT_ENTRYPOINT 環境変数で絶対パスを渡す。
  *
- * この孫プロセスは親 (Node Permission Model 下で動く pi 本体) と違い無制限で
- * 起動される。安全なのは読み書きするパスが常に ctx.cwd (workdir) 由来に固定
- * されているため — parameters を空のまま保つこと。agent 入力由来のパスを
- * 一つでも受け取ると任意ファイル読み書きの穴になる。
+ * この孫プロセスは pi 本体の子なので、pi の bash tool と同じ uid・同じ srt sandbox
+ * の中で動き、agent が bash で得られる以上の権限は持たない。それでも読み書きする
+ * パスは ctx.cwd (workdir) 由来に固定し、parameters は空のまま保つ。
  *
  * pi が `--extension` でソースのまま直接ロードするため、ビルド対象外。
  */

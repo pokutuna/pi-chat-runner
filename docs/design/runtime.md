@@ -58,17 +58,17 @@ chown より前に世代交代するのは、rename されたファイルの所�
 
 ### 2.2 realpath 正規化
 
-pi は cwd を canonicalize してから trust probe と migration の存在チェックを行う。
-macOS では `/tmp` が `/private/tmp` への symlink のため、allow パス・cwd・HOME を
-realpath で正規化して渡さないと Permission Model の判定と食い違い、pi が起動直後に
-落ちる。Linux では通常 no-op になる。
+Workdir・TMPDIR・agentHome・Shared staging は realpath で正規化してから pi の cwd・HOME と
+srt の settings (§5.5) に渡す。macOS では `/tmp` が `/private/tmp` への symlink で、pi は cwd
+を canonicalize して使う。settings に書くパスと pi が実際に触るパスが食い違わないように
+揃える。Linux では通常 no-op になる。
 
 ## 3. pi の起動引数
 
 中間の設定ファイルは生成しない。Agent Config の内容はすべて起動引数で渡す。
 
 ```
-node [<permission flags>] <pi entrypoint>
+node <pi entrypoint>
   --mode rpc
   --session <workdir>/session.jsonl
   --offline
@@ -80,6 +80,8 @@ node [<permission flags>] <pi entrypoint>
   [--tools <csv>]
   [--exclude-tools <csv>]
 ```
+
+srt sandbox が有効な Channel では、このコマンド全体を srt で包む (§5.5)。
 
 - `--offline` は常に付ける。pi は起動時にバージョンチェックと install telemetry の外部
   通信を行うが、メッセージごとに起動する構成ではその都度の通信が無駄でコールドスタート
@@ -119,9 +121,9 @@ node [<permission flags>] <pi entrypoint>
 
 `export` は Runner を経由せず execute の中で完結する。pi の extension コンテキストからは
 セッションのエクスポートを直接呼べないため、`pi --export` を孫プロセスとして起動して
-完了を待つ。この孫プロセスは Permission Model の外側で動くので、**パラメータを空に保ち、
-読み書きするパスを常に cwd 由来に固定する**ことが安全の根拠になる。Agent 入力由来の
-パスを 1 つでも受け取ると任意ファイル読み書きの穴になる。
+完了を待つ。この孫プロセスは pi の子なので、bash tool と同じ uid・同じ srt sandbox の中で
+動き、Agent が bash で得られる以上の権限は持たない。それでもパラメータは空に保ち、読み書き
+するパスは cwd 由来に固定する。
 
 ### 4.2 自動で拾う extension
 
@@ -165,14 +167,26 @@ Agent は bash tool で任意のコマンドを実行できる。Runner と同�
 |---|---|---|
 | Runner の環境変数 (チャットのトークン等) | 子プロセスへの env 継承、同一 UID なら `/proc/<pid>/environ` | env allowlist (§5.3) + UID 分離 |
 | Agent State の archive (全 Channel・全 Session 分) | マウントはコンテナ全体から見える | archive を Runner の UID・0700 で持ち、Agent には traverse させない。Agent が触るのは staging のコピーだけ |
-| 同一インスタンス上の他 Session の Workdir | 並行実行で同居する | Workdir を Session ごとに 0700 |
+| 同一インスタンス上の他 Session の Workdir | 並行実行で同居する。全 Session が同じ Agent uid で動く | srt 有効時は他 Channel の Workdir を読み書きできない。同じ Channel の他 Session の Workdir は読めるが書けない (§5.5) |
 | Runner のコード | 読める | 秘密が無いので読めてよい。書き換えは所有権で防ぐ |
+| 外部ネットワーク (データ持ち出し・許可外 API) | bash tool から任意の宛先へ接続できる | srt の netns + FQDN allowlist (§5.5)。opt-in |
 
 ### 5.1 UID 分離
 
 コンテナは root で起動し、Runner が spawn 時に Agent 用の UID / GID へ落とす。UID / GID は
 指定されたときだけ spawn オプションに渡す — キーを渡して値を undefined にすると Node は
 継承ではなく「明示的に変更なし」として別に扱うためである。
+
+既定値は起動のしかたで分ける。コンテナイメージは Agent 用ユーザー (uid / gid 1001) を作り、
+`PI_AGENT_UID` / `PI_AGENT_GID` を ENV の既定値として持つので、何も設定しなければ UID 分離が
+有効になる。外すときは両方を空文字で上書きする。Node ライブラリとしてホスト上で動かす場合、
+コードの既定は UID 分離なしで、pi は Runner と同じユーザーで動く。
+
+root のまま pi を動かすと srt sandbox (§5.5) と両立しない。srt は bubblewrap で user namespace
+を作り、その中で pi を動かす。namespace に対応付けられていない uid の所有するファイルは、
+namespace 内の root でも上書きできない。このため Agent 所有の HOME に書けず、pi が起動直後に
+落ちる。一般ユーザーでホスト上で動かす場合は、pi が HOME の持ち主と同じユーザーで動くので
+この問題は起きない。
 
 Workdir と Shared staging は Runner (root) が作成・復元するので root 所有のまま残る。
 Agent が書けるよう、restore の後に再帰的に chown して 0700 にする。この再帰 chown は
@@ -186,79 +200,33 @@ agentHome は「Runner が作ったものだけ chown する」規則にする�
 Turn にはタイムアウトを設け、超過したらプロセスを kill する。プロセスは使い捨てなので
 kill してよい。
 
-### 5.2 Node Permission Model
+### 5.2 srt を使わない構成
 
-`node --permission` 経由で pi 本体を起動し、pi の JS 実装ツール (read / write / edit /
-grep) のファイルアクセスを制限する。bash の子プロセスには効かない (そこは UID 分離が
-担う) が、多層防御の一層として機能する。既定で有効。
+srt (§5.5) を有効にしない Channel (`sandbox` を省略、または `false`) と、srt が動かない
+環境で Node ライブラリとして組み込む場合は、利用者とチャットの入力を信頼できる用途に限る。
+この構成で効くのは次の 3 つである。
 
-```
-node --permission
-     --allow-fs-read=<path>   … パスごとに 1 フラグ
-     --allow-fs-write=<path>  … パスごとに 1 フラグ
-     --allow-child-process
-     --allow-net
-     [--allow-addons]
-     <pi entrypoint> <pi の引数...>
-```
+- env allowlist (§5.3)。Runner の環境変数は Agent に渡らない
+- UID 分離 (§5.1) が有効なら、Runner の `/proc/<pid>/environ` と Agent State の archive は
+  Agent から読めない
+- reply の files の境界チェック (§5.4)
 
-read / write ともに 1 パス 1 フラグで組み立てる。Node 26 でカンマ区切りは deprecated
-warning になり機能しない。
+次のものは守られない。
 
-`--allow-child-process` は常に付ける。bash tool 自体は UID 分離が守る層なのでここで
-止めても意味がなく、付けなければ bash tool の spawn がそもそも動かなくなる。
-`--allow-net` も常に付ける。Node 26 の Permission Model はネットワークも既定で拒否し、
-fetch が失敗して LLM 呼び出しが不可能になる。このレイヤの目的はファイルアクセスの制限
-である。
+- Session 間・Channel 間の分離。全 Session が同じ Agent uid で動くので、Agent は他 Session
+  の Workdir と Shared staging を読み書きできる
+- 外向きの通信。Agent は bash tool から任意の宛先へ接続できる
+- UID 分離を使わない場合 (ホスト上で動かすときのコード既定)、pi は Runner と同じユーザーで
+  動く。Agent は Runner のプロセスの環境変数と、そのユーザーが読めるすべてのファイルに届く
 
-**allow-fs-read の集合**
-
-| パス | 理由 |
-|---|---|
-| `<nodeModulesDir>/*` | pi 本体と実行時依存 |
-| `<workdir>/*` | cwd |
-| `<agentHome>/*` | `~/.pi` の読み書き |
-| `<workdir> の全祖先> × <trust probe ファイル名>` | 下記 |
-| `/bin/bash`, `/bin/sh` | pi の bash tool がシェル解決で存在チェックする。許可しないとコマンド内容によらず bash tool が全滅する |
-| `/tmp/pi-bash-*` (と realpath 側) | bash の出力が 50KB を超えると pi が tmpdir へスピルする。許可しないと書き込みストリームの unhandled error で pi がツール実行中に落ちる |
-| extension 各ファイルの所在ディレクトリ | extension を読ませるため。write は与えない |
-| Skill の各ディレクトリと配下 | pi がディレクトリごと再帰で読む。readdir にディレクトリ自体の read も要る |
-| Shared staging とその配下 | ls に要る |
-| 明示指定された追加パス | ローカルのユーザー ADC (`GOOGLE_APPLICATION_CREDENTIALS`) 等 |
-
-**allow-fs-write の集合**: `<workdir>/*`、`<agentHome>/*`、`/tmp/pi-bash-*`、Shared
-staging の配下、明示指定された追加パス。
-
-**trust probe の直積**が要る理由: pi は起動時に cwd から `/` まで祖先ディレクトリを 1 段
-ずつ遡り、プロジェクトの trust 判定と context ファイル探索のために固定のファイル名群を
-存在チェックする。この probe は Workdir だけでなく**全ての中間ディレクトリ**で走るため、
-祖先すべてについてファイル名との直積を read 許可へ展開する必要がある。1 つでも欠けると
-存在チェックが拒否され pi が起動直後に落ちる。`/` や `/*` の一括許可は他ユーザーの
-読めるファイルまで開けてしまうため使わない。probe するファイル名は pi のバージョンで
-変わるので、pi を上げるときは実プロセスで確認する。
-
-**`nodeModulesDir` は最外殻を採る**。pi の entrypoint は pi パッケージの実体を指すが、
-許可すべきは pi の依存を実際に張っている平坦な node_modules ルートである。npm の平坦
-構成では両者が一致するが pnpm では食い違い、pi パッケージの直上だけを許可すると pi が
-spawn 時に読む依存が拒否されて落ちる。パス上で最も外側に現れる `node_modules` セグメント
-までを採れば、どちらのレイアウトでも「全依存を含むルート」に一致する。
-
-**`/app` 全体は読ませない**。extension を読ませるための包括許可は置かず、
-`--extension` に渡すファイルの所在ディレクトリだけを個別に read 許可する。
-
-**HOME の固定と ADC**: HOME を agentHome に固定するとローカルのユーザー ADC は HOME
-経由で見えなくなる。`GOOGLE_APPLICATION_CREDENTIALS` で明示されたファイルだけを追加の
-read 許可として渡す。
-
-**native addon**: `.node` は syscall を直接叩けるため Permission Model 下では既定で
-ロード自体が拒否される。native 依存を持つ extension を使うときだけ `--allow-addons` を
-opt-in で足す。有効にすると native コードはこのレイヤのファイルチェックを素通りできる
-ため、隔離は実質 UID 分離だけになる。
+pi の JS 実装ツール (read / write / edit / grep) だけを制限する層は置かない。bash tool から
+同じ操作ができるため、bash を残す限り境界にならない。
 
 ### 5.3 環境変数の allowlist
 
 `process.env` を丸ごと継承せず、`PATH` と `HOME` に明示的に足したものだけを渡す。
-`HOME` は常に agentHome へ上書きする (Runner の HOME を継承しない)。
+`HOME` は常に agentHome へ上書きし (Runner の HOME を継承しない)、`TMPDIR` は Session
+専用ディレクトリ (§5.5) へ向ける。
 
 丸ごと継承しない理由は、Agent が bash tool で `env` を実行できることにある。継承すると
 チャットのトークンや signing secret が Agent と会話ログから見えてしまう。
@@ -286,6 +254,97 @@ semi-trusted なので、次の順に落とす。
 2 と 3 は「Workdir 内に外部ファイルへの symlink を置いて添付させる」経路を塞ぐ。落とした
 パスは warn に残す。全件落ちたらファイルなしの返信として扱う。Shared のファイルは添付
 できない — 添付したければ Agent が Workdir へコピーしてから reply する。
+
+### 5.5 srt によるネットワークとファイルシステムの隔離
+
+UID 分離と env allowlist は「Runner のものを見せない」ためのもので、Agent が外へ何を
+送るかは制限しない。bash tool から任意の宛先へ接続できる以上、データの持ち出しと許可外
+API の利用を止める層が要る。これを srt (`@anthropic-ai/sandbox-runtime`) に任せる。
+Linux では bubblewrap で network namespace を切り、外へ出る経路を srt の loopback proxy
+だけにし、proxy が FQDN の allowlist で CONNECT を通す・拒む。IP 直打ちや `--noproxy` は
+netns の外に出られないので、allowlist を迂回できない。自前の forward proxy や seccomp
+ベースの実装は持たない — FQDN で絞るには netns と proxy の 2 層が必須で、それを Runner
+に作り込む理由がない。
+
+**opt-in で Channel 単位**。Agent Config の `sandbox` ([config.md](config.md) §1.3、§3.2)
+に srt ネイティブ形式のルールを書いたときだけ有効になる。Runner は network に何も足さない
+ので、LLM provider の到達先 (Vertex なら oauth2 / aiplatform / metadata server) も利用者の
+ルールに書く。書き忘れれば pi 自身の LLM 呼び出しが 403 で落ちるが、それは「何を許したか
+がルールファイルに全部載っている」ことの裏面で、Runner が暗黙に穴を開けるより良い。
+
+**srt は CLI として Session ごとに立てる**。起動コマンド全体を
+`node <srt>/dist/cli.js --settings <file> -- node <pi> ...` の形で包む。
+ライブラリとして Runner に組み込まない — srt の proxy と設定はプロセスグローバルで、
+Channel ごとに違うルールを 1 プロセスで並行に持てない。Session ごとに proxy が 1 つ立つ
+コストは pi 子プロセス 1 つに比べて無視できる。
+
+**Runner が Session ごとに足すもの**。利用者ルールは Channel が足した要素を union し終えた
+srt の設定として届き (config.md §3.2)、Runner はそこへ `filesystem.allowWrite` に書き込み先を足して
+settings ファイルにする。
+
+| 足すもの | |
+|---|---|
+| Workdir | cwd。Session の作業領域 |
+| Session 専用の TMPDIR | `<workdirRoot>/<channelId>/tmp/<threadTs>`。起動ごとに作り直し、UID 分離時は Agent 所有 0700。bash tool の出力が 50KB を超えたときのスピル先 (pi が `os.tmpdir()` 配下に書く) と srt 自身の mux ソケットがここに入る |
+| agentHome | `~/.pi` の読み書き |
+| Shared staging | 有効なとき |
+
+読み取りは Channel 単位で分ける。全 Session が同じ Agent uid で動くので、UID 分離ではこの
+境界を作れない。Runner は `filesystem.denyRead` に workdirRoot を足し、同じ Channel の他
+Session の workdir を `filesystem.allowRead` で読めるように戻す。srt の read は allowRead が
+denyRead より優先される。この結果、他 Channel の workdir・TMPDIR・Shared staging と
+settings ファイルは読めず、同じ Channel の過去の Session の workdir は読める。DM は相手ごとに
+別の Channel なので、DM 同士も、DM と公開チャンネルの間も分かれる。
+
+Channel のディレクトリをまとめて allowRead にはしない。srt (Linux) は denyRead の中にある
+書き込み先を書き込み可で戻した後、allowRead を読み取り専用で重ねる。書き込み先を含む
+ディレクトリを allowRead にすると、書き込み先まで読み取り専用になり pi が起動できない。
+そのため Session 起動時に Channel 直下を列挙し、書き込み先を含まないエントリ (他 Session の
+workdir) だけを戻す。起動後に作られた同じ Channel の Session の workdir は見えない。
+書き込み先そのものは allowRead にも足す。srt (macOS) は denyRead の中の書き込み先を読み取り可に
+戻さないので、足さないと pi が自分の cwd を読めず起動できない。srt (Linux) は書き込み先の中に
+ある allowRead を読み取り専用で重ねずに飛ばすので、書き込み先は書き込み可のまま残る。
+
+srt は sandbox 内の `TMPDIR` を自分の env の `CLAUDE_CODE_TMPDIR` (既定 `/tmp/claude`) で
+上書きするので、Runner は `TMPDIR` と `CLAUDE_CODE_TMPDIR` の両方に同じディレクトリを渡す。
+両方が揃っていないと、sandbox 内の TMPDIR が Session 専用ディレクトリから外れる。srt は
+host 側の Unix socket (`srt-mux-*.sock`) もこの TMPDIR に置くため、パス長が Unix socket の
+上限 (Linux 108 byte、macOS 104 byte) を超えると srt が `listen EINVAL` で起動できない。
+workdirRoot は既定の `/tmp/pi-chat-runner/sessions` のように短く保つ。
+
+settings ファイルは `<workdirRoot>/srt/<sessionKey>.json` — Workdir の外、Runner 所有で、
+sandbox の中からは読めない (workdirRoot の denyRead に含まれる)。srt 自身は sandbox を作る前に
+Agent uid で読むので 0644 にする。Session 終了時には消さず、同じ sessionKey の次の起動が
+上書きする。終了時に消すと、同じ sessionKey で直後に始まった Session の settings を srt が
+読む前に消すことがある。
+
+**fail-closed**。sandbox が有効な Channel で srt が使えない (対応 OS でない、パッケージが
+無い、srt が要求する OS 側の依存や namespace が無い) ときは Session の起動を失敗させ、
+sandbox なしで走らせない。Runner は boot 時に全 Channel を解いて sandbox 有効なものが
+あれば、srt の所在を確かめた上で最小の settings で trivial なコマンドを 1 回 srt に包ませ、
+失敗すれば srt の stderr を出して exit 1 する — 最初のメッセージが来てから気づくより先に
+落とす。srt が何を要求するか (Linux なら bubblewrap / socat / ripgrep) の一覧は Runner
+には持たせず、srt 自身の検査結果だけを見る。
+
+**対応 OS**。srt は Linux (bubblewrap + network namespace) と macOS (sandbox-exec /
+Seatbelt) で動く。本番は Linux で、上記の遮断特性はそちらで検証している。macOS 経路は
+手元で実 pi + 実 LLM を sandbox 越しに動かす開発用で、pid namespace が無いなど bwrap と
+挙動が違うため、遮断の保証は Linux 側にだけ置く。
+
+**プロセスの後始末**。srt で包むと Runner の直接の子は srt (node) で、その下に `sh -c` →
+bwrap → (pid namespace 内の) pi と続く。srt だけを SIGKILL すると `sh` が生き残り、bwrap の
+`--die-with-parent` が発火せず pi とその子が残留する。そのため pi 子プロセスは独自の
+プロセスグループで spawn し、kill はグループごと SIGKILL する。graceful stop の SIGTERM
+は直接の子にだけ送る (srt が自分の子へ転送する)。
+
+**env は境界ではない**。Runner の env allowlist (§5.3) は「Agent に見せる env」を決めるが、
+srt の `credentials.envVars` deny は Channel ごとに、allowlist を通った値を sandbox 内で
+隠す。用途が違うので両方残す。
+
+**Cloud Run**。bubblewrap は user namespace と `/proc` の mount を要するため、gen1 (gVisor)
+では動かず gen2 が要る。ローカルの Docker では `--cap-add SYS_ADMIN` と
+`--security-opt seccomp=unconfined --security-opt apparmor=unconfined --security-opt systempaths=unconfined`
+が要る ([local-dev.md](local-dev.md) §1 の `test:e2e:sandbox`)。
 
 ## 6. システムプロンプトの組み立て
 
@@ -372,14 +431,16 @@ Channel や Agent ごとに変えたい項目は Agent Config で宣言し、Run
 
 | 設計上の名前 | 現在の実装 |
 |---|---|
-| Runtime (レイヤ) | `src/runtime/` (`prepare.ts` / `pi-process.ts` / `pi-args.ts` / `prompt.ts` / `rpc.ts` / `pi-events.ts` / `reply-files.ts` / `config.ts` / `resolve.ts` / `session-file.ts`) |
+| Runtime (レイヤ) | `src/runtime/` (`prepare.ts` / `pi-process.ts` / `pi-args.ts` / `sandbox.ts` / `prompt.ts` / `rpc.ts` / `pi-events.ts` / `reply-files.ts` / `config.ts` / `resolve.ts` / `session-file.ts`) |
 | 起動準備 (§2) | `prepareWorkdir` / `buildSpawnOptions` / `rotateTranscript` / `chownRecursive` (`src/runtime/prepare.ts`) |
 | 組み込み extension / memory skill の解決 | `resolveBuiltinExtensionPaths` / `resolveBuiltinMemorySkillPath` / `resolveChannelResourcePaths` (同上) |
 | memory 索引の読み込み | `loadMemoryIndex` (同上) |
-| Runtime の静的設定 | `RuntimeConfig` / `PiPermissionConfig` (`src/runtime/config.ts`)、組み立ては `createRuntimeConfig` (`src/runtime/resolve.ts`) を `src/server.ts` が呼ぶ |
-| 起動引数の組み立て | `buildPiArgs` / `buildSpawnCommand` (`src/runtime/pi-args.ts`) |
-| Permission Model | `buildPiPermissionOptions` / `ancestorDirs` (`src/runtime/pi-args.ts`)、`PiPermissionConfig` (`src/runtime/config.ts`)、`buildPiPermissionConfig` / `resolvePiPaths` / `outermostNodeModules` (`src/runtime/resolve.ts`) |
+| Runtime の静的設定 | `RuntimeConfig` (`src/runtime/config.ts`)、組み立ては `createRuntimeConfig` (`src/runtime/resolve.ts`) を `src/server.ts` が呼ぶ |
+| 起動引数の組み立て | `buildPiArgs` / `buildSpawnCommand` (`src/runtime/pi-args.ts`)、pi の所在は `resolvePiEntrypoint` (`src/runtime/resolve.ts`) |
 | env allowlist | `buildPiEnv` (`src/runtime/pi-args.ts`)、`collectGcpEnv` (`src/runtime/resolve.ts`) |
+| srt (§5.5) の settings 合成 | `buildSandboxSettings` / `sandboxSettingsPath` / `probeSandboxRuntime` (`src/runtime/sandbox.ts`)、書き出しと削除は `Session` (`src/session/session.ts`)、boot 時の検査は `checkSandboxPrerequisites` (`src/server.ts`) |
+| srt で包む起動コマンド | `wrapWithSrt` (`src/runtime/pi-args.ts`)、`PiProcess` の `sandbox` オプション、srt の所在は `resolveSrtPath` (`src/runtime/resolve.ts`) |
+| Session 専用 TMPDIR | `sessionTmpDir` / `prepareWorkdir` (`src/runtime/prepare.ts`)、env への配線は `Dispatcher` (`src/dispatch/dispatcher.ts`) |
 | 子プロセスのラッパ | `PiProcess` (`src/runtime/pi-process.ts`) |
 | システムプロンプト | `buildSystemPrompt` / `prependContext` (`src/runtime/prompt.ts`) |
 | RPC プロトコル | `src/runtime/rpc.ts` (`RpcCommand` / `PiEvent` / `JsonlDecoder`) |

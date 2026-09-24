@@ -18,6 +18,7 @@ import { join } from "node:path";
 
 import { describe, expect, it } from "vitest";
 
+import { SandboxRulesSchema } from "../../src/config/sandbox-config.js";
 import { renderEvent, replyThreadKeyOf } from "../../src/dispatch/policy.js";
 import { CopySharedStore } from "../../src/state/agent/copy.js";
 import type {
@@ -28,6 +29,7 @@ import { InMemoryControlState } from "../../src/state/control/backends/memory.js
 import { inboxItemId } from "../../src/state/control/inbox-item.js";
 import {
   FAKE_PI,
+  FAKE_SRT,
   harness,
   message,
   sleep,
@@ -683,7 +685,7 @@ describe("Session (fake-pi integration)", () => {
     expect(homeStats.mode & 0o777).toBe(0o700);
   });
 
-  it("permissionMode が無効でも検出済み entrypoint を node で起動する", async () => {
+  it("検出済み entrypoint を node で起動する", async () => {
     const previousPiBin = process.env.PI_BIN;
     delete process.env.PI_BIN;
     try {
@@ -695,7 +697,7 @@ describe("Session (fake-pi integration)", () => {
       );
       const trigger = message({
         mentionsBot: true,
-        text: "entrypoint without permission model",
+        text: "entrypoint",
       });
 
       await h.dispatcher.handle(trigger);
@@ -715,38 +717,6 @@ describe("Session (fake-pi integration)", () => {
         process.env.PI_BIN = previousPiBin;
       }
     }
-  });
-
-  it("Node Permission Model が有効なとき node --permission 経由で pi (fake-pi) を起動する", async () => {
-    // permission 指定時は entrypoint を直接 node で起動するため、piBinary は
-    // 使われない (buildSpawnCommand の仕様)。fake-pi.mjs 自体を entrypoint に
-    // 見立て、workdir/node_modules への read/write と extension ディレクトリへの
-    // read (appDir 包括許可の廃止に伴い Session 起動時に自動で積む) を許可した状態でも
-    // 通常のセッションと同じく reply → agent_end まで動くことを確認する
-    const h = await harness(
-      {},
-      {
-        piPermission: {
-          entrypoint: FAKE_PI,
-          nodeModulesDir: join(process.cwd(), "node_modules"),
-        },
-      },
-    );
-    const trigger = message({
-      mentionsBot: true,
-      text: "permission model isolated",
-    });
-
-    await h.dispatcher.handle(trigger);
-
-    await waitFor(() => h.poster.calls.length === 1, "reply posted");
-    expect(h.poster.calls[0]?.text).toBe(
-      `echo: ${renderEvent(trigger, replyThreadKeyOf(trigger))}`,
-    );
-    await waitFor(
-      () => h.dispatcher.activeSessionCount === 0,
-      "session removed",
-    );
   });
 
   it("flushes the workdir before acking inbox items (flush → ack order)", async () => {
@@ -1270,5 +1240,87 @@ describe("Session (fake-pi integration)", () => {
     expect(
       await h.controlState.leases.acquire(derivedSessionKey, "probe", 1000),
     ).not.toBeNull();
+  });
+});
+
+describe("Session sandbox (srt, runtime.md §5.5)", () => {
+  const rules = SandboxRulesSchema.parse({
+    network: { allowedDomains: ["aiplatform.googleapis.com:443"] },
+    filesystem: { allowRead: ["/data/knowledge"] },
+  });
+
+  it("writes the merged settings outside the workdir and launches pi through srt", async () => {
+    const h = await harness(
+      { C01: { agent: { sandbox: rules } } },
+      { srtEntrypoint: FAKE_SRT },
+    );
+    const trigger = message({ mentionsBot: true, text: "hello" });
+    await h.dispatcher.handle(trigger);
+    await waitFor(() => h.poster.calls.length === 1, "reply posted");
+
+    const seen = await h.srtSeen("C01", trigger.id);
+    const workdirRoot = await realpath(h.workdirRoot);
+    // settings は <workdirRoot>/srt/ に置かれ、workdir (agent 所有) の外
+    expect(seen.settingsPath).toBe(
+      join(
+        h.workdirRoot,
+        "srt",
+        `${encodeURIComponent(`C01:${trigger.id}`)}.json`,
+      ),
+    );
+    // harness の logger は debug レベルなので srt にも --debug が渡る
+    expect(seen.debug).toBe(true);
+    // 利用者ルールは素通り、Runner が workdir / TMPDIR / home を allowWrite に足す
+    expect(seen.settings.network.allowedDomains).toEqual([
+      "aiplatform.googleapis.com:443",
+    ]);
+    expect(seen.settings.filesystem.allowRead).toContain("/data/knowledge");
+    expect(seen.settings.filesystem.allowWrite).toEqual(
+      expect.arrayContaining([
+        join(workdirRoot, "C01", trigger.id),
+        join(workdirRoot, "C01", "tmp", trigger.id),
+      ]),
+    );
+    // 内側コマンドは fake-pi の rpc 起動そのもの
+    expect(seen.inner[0]).toBe(FAKE_PI);
+    expect(seen.inner.slice(1, 3)).toEqual(["--mode", "rpc"]);
+    // pi の TMPDIR は Session 専用ディレクトリ。srt が sandbox 内 TMPDIR の決定に使う
+    // CLAUDE_CODE_TMPDIR も同じ場所を向く (srt の既定 /tmp/claude に飛ばないように)
+    const env = await h.envSeen("C01", trigger.id);
+    const tmpDir = join(workdirRoot, "C01", "tmp", trigger.id);
+    expect(env.TMPDIR).toBe(tmpDir);
+    expect(env.CLAUDE_CODE_TMPDIR).toBe(tmpDir);
+  });
+
+  it("does not involve srt when the channel sets sandbox: false", async () => {
+    const h = await harness(
+      // FakeConfigSource はマージしない。実ローダーが default の有効ルールを
+      // Channel の `false` で打ち消した結果 (agent.sandbox === false) を直接与える
+      { C01: { agent: { sandbox: false } } },
+      { srtEntrypoint: FAKE_SRT },
+    );
+    const trigger = message({ mentionsBot: true, text: "hello" });
+    await h.dispatcher.handle(trigger);
+    await waitFor(() => h.poster.calls.length === 1, "reply posted");
+    await expect(h.srtSeen("C01", trigger.id)).rejects.toThrow(/ENOENT/);
+    expect(await h.argvSeen("C01", trigger.id)).not.toContain("--settings");
+  });
+
+  it("fails closed when sandbox is enabled but srt is unavailable", async () => {
+    const h = await harness({ C01: { agent: { sandbox: rules } } });
+    const trigger = message({ mentionsBot: true, text: "hello" });
+    await h.dispatcher.handle(trigger);
+    await waitFor(
+      () => h.logLines().some((l) => l.msg === "session dispatch failed"),
+      "dispatch failed log",
+    );
+    const line = h
+      .logLines()
+      .find((l) => l.msg === "session dispatch failed") as {
+      err?: { message?: string };
+    };
+    expect(line.err?.message).toMatch(/srt is unavailable/);
+    expect(h.poster.calls).toEqual([]);
+    expect(h.dispatcher.activeSessionCount).toBe(0);
   });
 });

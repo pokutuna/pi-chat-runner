@@ -1,0 +1,27 @@
+agent:
+  model: google-vertex/gemini-3.5-flash
+  sandbox: ./rules/base.json
+
+channels:
+  - channel: "default"
+    trigger:
+      when:
+        - kind: mention
+    agent:
+      sandbox:
+        network:
+          deniedDomains: ["*.example.org"]
+  - channel: "C0GITHUB01"
+    agent:
+      sandbox:
+        network:
+          allowedDomains:
+            ["github.com", "api.github.com", "oauth2.googleapis.com:443"]
+        filesystem:
+          allowRead: ["/data/knowledge"]
+        credentials:
+          envVars:
+            - { name: GH_TOKEN, mode: deny }
+  - channel: "C0NOSANDBOX"
+    agent:
+      sandbox: false

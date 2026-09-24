@@ -9,7 +9,8 @@
 // 「Channel 部分 = channels[default] → channels[id] の 2 段」
 // 「Agent 部分   = agent → channels[default].agent → channels[id].agent の 3 段」を
 // マージした 1 つの ResolvedChannel で動く (config.md §3.2)。マージはフィールド単位の
-// 丸ごと置換のみで、深いマージはしない。
+// 丸ごと置換のみで、深いマージはしない。唯一の例外が agent.sandbox: Channel 側は
+// 配列に要素を足すだけの形 (sandbox-config.ts) で、トップレベルの srt 設定に union する。
 //
 // env 参照 (${env.X}) の解決は agent.env / channels[].agent.env の値だけに適用する
 // (config.md §2.1)。system ブロックには触れないため、dump (config.md §5) が secrets を
@@ -24,6 +25,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { type AgentConfig, AgentConfigSchema } from "./agent-config.js";
 import {
+  type ChannelAgentConfig,
   type ChannelConfig,
   ChannelConfigSchema,
   type ChannelEntry,
@@ -31,6 +33,11 @@ import {
   ChannelsFileSchema,
 } from "./channel-config.js";
 import { readRootConfig, resolveAgentEnvRefs } from "./root-config.js";
+import {
+  loadSandboxRuleFile,
+  mergeSandboxAdditions,
+  type SandboxRules,
+} from "./sandbox-config.js";
 
 /** マージ後の実効 Channel 設定 (config.md §3)。Channel 部分は未設定なら
  * undefined のまま (読む側のコード既定に落ちる) だが、Agent 部分は 3 段の
@@ -98,7 +105,22 @@ const AGENT_CONFIG_KEYS = Object.keys({
   extensions: true,
   memory: true,
   env: true,
+  sandbox: true,
 } satisfies Record<keyof AgentConfig, true>) as (keyof AgentConfig)[];
+
+/** フィールド単位の置き換え (mergeLayer) で扱う Agent Config のキー。sandbox だけは
+ * 配列への追加 (mergeSandboxLayer) なので外す。 */
+const AGENT_REPLACE_KEYS = AGENT_CONFIG_KEYS.filter(
+  (key): key is keyof AgentConfigReplacePart => key !== "sandbox",
+);
+
+/** Agent Config のうち置き換えマージされる部分 (sandbox 以外)。トップレベル agent と
+ * channels[].agent は sandbox の形だけが違うので、この部分は両者で共通。 */
+type AgentConfigReplacePart = Omit<AgentConfig, "sandbox">;
+
+/** 3 段マージの各段で sandbox がどう書かれているか (トップレベルは srt の設定、
+ * Channel は配列に足す要素)。 */
+type SandboxLayer = AgentConfig["sandbox"] | ChannelAgentConfig["sandbox"];
 
 /** ChannelEntry から channel / agent を落とし、Channel 部分だけを取り出す。 */
 function toChannelPart(entry: ChannelEntry): ChannelPart {
@@ -158,31 +180,89 @@ export function mergeChannelPart(
 /** Agent 部分の 3 段マージ (config.md §3.2):
  * `agent` (default ブロック) → `channels[base].agent` → `channels[id].agent`。
  * トップレベル agent ブロック由来は "default agent"、channels[*].agent 由来は
- * "channel agent" (どの channels エントリでも同じラベル)。 */
+ * "channel agent" (どの channels エントリでも同じラベル)。
+ *
+ * sandbox 以外はフィールド単位の置き換え。sandbox はトップレベルの srt 設定の配列に
+ * Channel が足す要素を union する (`false` を書いた段で無効になる)。labels は
+ * error メッセージ用に「どの段の sandbox か」を示す。 */
 export function mergeAgentConfig(
   defaultAgent: AgentConfig,
-  baseAgent: AgentConfig,
-  ownAgent: AgentConfig,
+  baseAgent: ChannelAgentConfig,
+  ownAgent: ChannelAgentConfig,
+  labels: { base: string; own: string } = {
+    base: `channels[${DEFAULT_CHANNEL}].agent`,
+    own: "channels[<id>].agent",
+  },
 ): { agent: AgentConfig; provenance: AgentProvenance } {
   const defaultProvenance: AgentProvenance = {};
   for (const key of AGENT_CONFIG_KEYS) {
     if (key in defaultAgent) defaultProvenance[key] = "default agent";
   }
-  const stage1 = mergeLayer(
-    AGENT_CONFIG_KEYS,
+  const stage1 = mergeLayer<AgentConfigReplacePart>(
+    AGENT_REPLACE_KEYS,
     defaultAgent,
     defaultProvenance,
     baseAgent,
     "channel agent",
   );
-  const stage2 = mergeLayer(
-    AGENT_CONFIG_KEYS,
+  const stage2 = mergeLayer<AgentConfigReplacePart>(
+    AGENT_REPLACE_KEYS,
     stage1.value,
     stage1.provenance,
     ownAgent,
     "channel agent",
   );
-  return { agent: stage2.value, provenance: stage2.provenance };
+  const sandbox1 = mergeSandboxLayer(
+    { value: defaultAgent.sandbox, source: defaultProvenance.sandbox },
+    baseAgent,
+    labels.base,
+  );
+  const sandbox2 = mergeSandboxLayer(sandbox1, ownAgent, labels.own);
+  const agent: AgentConfig = {
+    ...stage2.value,
+    ...(sandbox2.value !== undefined ? { sandbox: sandbox2.value } : {}),
+  };
+  const provenance: AgentProvenance = {
+    ...stage2.provenance,
+    ...(sandbox2.source !== undefined ? { sandbox: sandbox2.source } : {}),
+  };
+  return { agent, provenance };
+}
+
+/** sandbox の 1 段分のマージ (config.md §3.2)。段が sandbox を書いていなければ
+ * そのまま。`false` なら無効化。足す要素が書かれていればそれまでの srt 設定の配列に
+ * union する — 足す先が無い (それまでが省略 / `false`) なら設定ミスとして throw する。 */
+function mergeSandboxLayer(
+  current: {
+    value: SandboxRules | false | undefined;
+    source?: FieldSource | undefined;
+  },
+  layer: ChannelAgentConfig,
+  label: string,
+): {
+  value: SandboxRules | false | undefined;
+  source?: FieldSource | undefined;
+} {
+  if (!("sandbox" in layer)) return current;
+  const additions: SandboxLayer = layer.sandbox;
+  if (additions === undefined) return current;
+  if (additions === false) return { value: false, source: "channel agent" };
+  if (current.value === undefined || current.value === false) {
+    throw new Error(
+      `${label}.sandbox adds rules but the top-level agent.sandbox is disabled (set agent.sandbox to a rule file or inline rules first)`,
+    );
+  }
+  try {
+    return {
+      value: mergeSandboxAdditions(current.value, additions),
+      source: "channel agent",
+    };
+  } catch (err) {
+    throw new Error(
+      `${label}.sandbox: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
+  }
 }
 
 /** id からエントリを解決し、Channel 部分と Agent 部分をそれぞれマージした
@@ -237,6 +317,10 @@ export function resolveChannelConfig(
     defaultAgent,
     baseEntry.agent ?? {},
     own?.agent ?? {},
+    {
+      base: `channels[${baseEntry.channel}].agent`,
+      own: `channels[${own?.channel ?? id}].agent`,
+    },
   );
 
   return { channel: { ...part, agent }, provenance, agentProvenance };
@@ -317,7 +401,7 @@ export async function loadChannelConfigFile(
     throw new Error(`config file has no "channels" section: ${filePath}`);
   }
 
-  const defaultAgent = parseDefaultAgent(
+  const defaultAgent = await parseDefaultAgent(
     parsed.agent,
     filePath,
     env,
@@ -353,13 +437,18 @@ export async function loadChannelConfigFile(
 }
 
 /** トップレベル `agent` ブロック (全 Channel 共通の default Agent Config) を検証する。
- * 省略されていれば {} (何も上書きしない土台)。 */
-function parseDefaultAgent(
+ * 省略されていれば {} (何も上書きしない土台)。
+ *
+ * sandbox がファイルパスなら、skills と同じ基準 (設定ファイルのディレクトリ) で
+ * 絶対化し、ここで読んで検証・インライン化する (config.md §3.5)。メッセージごとに
+ * 読み直す必要はない — このローダの結果は mtime キャッシュされ、ファイルの typo は
+ * boot / dump の時点で落ちる。 */
+async function parseDefaultAgent(
   agentRaw: unknown,
   filePath: string,
   env: NodeJS.ProcessEnv,
   resolveEnv: boolean,
-): AgentConfig {
+): Promise<AgentConfig> {
   if (agentRaw === undefined) return {};
   const resolved = resolveEnv
     ? resolveAgentEnvRefs(agentRaw, env, "agent")
@@ -371,7 +460,19 @@ function parseDefaultAgent(
       .join("\n");
     throw new Error(`invalid agent config schema in ${filePath}:\n${issues}`);
   }
-  return result.data;
+  const { sandbox, ...rest } = result.data;
+  if (typeof sandbox !== "string") {
+    return { ...rest, ...(sandbox !== undefined ? { sandbox } : {}) };
+  }
+  const rulePath = absolutizePathRef(sandbox, dirname(filePath));
+  try {
+    return { ...rest, sandbox: await loadSandboxRuleFile(rulePath) };
+  } catch (err) {
+    throw new Error(
+      `agent.sandbox in ${filePath}: ${err instanceof Error ? err.message : String(err)}`,
+      { cause: err },
+    );
+  }
 }
 
 /** systemPrompt / context の値が "./" か "../" で始まる場合、設定ファイルがある
@@ -415,17 +516,31 @@ async function resolveFileReferences(
   };
 
   // インライン化後の値が実行時スキーマの形を守っていることの保証として再度 strict 検証する。
+  // sandbox はマージ済みの srt 設定 (srt schema で検証済み) で、ChannelConfigSchema 側の
+  // 「配列に足すだけ」の形とは違うため、再検証から外してそのまま付け直す。
   const { agent: _agent, ...channelPart } = channel;
+  const { sandbox, ...agentWithoutSandbox } = resolvedAgent;
   const validatedChannel = ChannelConfigSchema.safeParse({
     ...channelPart,
-    agent: resolvedAgent,
+    agent: agentWithoutSandbox,
   });
   if (!validatedChannel.success) {
     throw new Error(
       `resolved channel config failed validation (${yamlFilePath}): ${validatedChannel.error.message}`,
     );
   }
-  return { ...validatedChannel.data, agent: validatedChannel.data.agent ?? {} };
+  const { agent: validatedAgent = {}, ...validatedPart } =
+    validatedChannel.data;
+  // sandbox を外して検証したので validatedAgent.sandbox は常に undefined。型上は
+  // Channel 側の「配列に足すだけ」の形が残るため落としてから付け直す
+  const { sandbox: _unused, ...validatedAgentRest } = validatedAgent;
+  return {
+    ...validatedPart,
+    agent: {
+      ...validatedAgentRest,
+      ...(sandbox !== undefined ? { sandbox } : {}),
+    },
+  };
 }
 
 function isFileRef(value: string): boolean {

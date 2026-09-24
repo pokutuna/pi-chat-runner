@@ -1,0 +1,11 @@
+{
+  "network": {
+    "allowedDomains": [
+      "169.254.169.254:80",
+      "metadata.google.internal:80",
+      "oauth2.googleapis.com:443",
+      "aiplatform.googleapis.com:443",
+      "*.aiplatform.googleapis.com:443"
+    ]
+  }
+}

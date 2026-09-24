@@ -19,11 +19,13 @@ import { isAbsolute } from "node:path";
 
 import { z } from "zod";
 
-/** skills / extensions に書けるパス。絶対パス、または設定ファイルの場所からの
+import { type SandboxRules, SandboxRulesSchema } from "./sandbox-config.js";
+
+/** skills / extensions / sandbox に書けるパス。絶対パス、または設定ファイルの場所からの
  * 相対 (./ か ../ 始まり) のみ (config.md §3.5)。裸の相対パス ("foo/bar") は
  * 基準ディレクトリが曖昧になるため schema で弾く。相対パスの絶対化は
  * ConfigSource (config-source.ts resolveFileReferences) が行う。 */
-const PathRefSchema = z
+export const PathRefSchema = z
   .string()
   .refine(
     (value) =>
@@ -78,7 +80,24 @@ export const AgentConfigSchema = z
      * ${env.X:-default} 参照を書ける唯一の Agent Config フィールド (config.md §2.1)。
      * 解決は root-config.ts のロード時に行う。 */
     env: z.record(z.string(), z.string()).optional(),
+    /** pi を srt (sandbox-runtime) で包むルール (docs/design/runtime.md §5.5)。
+     * `false` | srt ネイティブ形式のファイルパス (JSON / YAML) | srt の設定そのものを
+     * インラインで書いたもの。省略 = 無効 (opt-in)。provider の到達先 (allowedDomains)
+     * も利用者が書く — Runner は network に何も足さない。ファイルはロード時に読んで
+     * 検証・インライン化する (config-source.ts)。Channel 側 (channels[].agent.sandbox)
+     * は形が違い、ここの設定が持つ配列に要素を足すだけ (channel-config.ts、
+     * config.md §3.2) */
+    sandbox: z
+      .union([z.literal(false), PathRefSchema, SandboxRulesSchema])
+      .optional(),
   })
   .strict();
 
-export type AgentConfig = z.infer<typeof AgentConfigSchema>;
+/** ファイル上の形 (sandbox がパス文字列のこともある)。 */
+export type AgentConfigInput = z.infer<typeof AgentConfigSchema>;
+
+/** ロード後の Agent Config。sandbox のファイル参照は読まれてインライン化済みで、
+ * `false` か正規化済みの srt 設定しか現れない。 */
+export type AgentConfig = Omit<AgentConfigInput, "sandbox"> & {
+  sandbox?: false | SandboxRules | undefined;
+};

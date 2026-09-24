@@ -179,6 +179,11 @@ interface CopyStats {
 /** 通常ファイル・ディレクトリのみをコピーする (socket 等の特殊ファイルを除外)。
  * コピー先の同名エントリは置き換える (上書き)。
  *
+ * サイズ 0 で書き込みビットのないファイルも除外する。srt (bubblewrap) は存在しない
+ * 保護対象パスへ bind mount するため、実行中だけ workdir に mode 0444 の空ファイルを
+ * 作る。flush がこれを archive に残すと、restore 後は通常のファイルとして残り続ける。
+ * 判定は srt 自身が後片付けで使う条件と同じで、保護対象のパス名には依存しない。
+ *
  * 計測は cp の filter に相乗りする — コピー後に改めて走査すると、archive が FUSE の
  * ときに stat の往復が二重になる。 */
 async function copyRegularEntry(
@@ -196,6 +201,7 @@ async function copyRegularEntry(
       const info = await lstat(source).catch(() => undefined);
       if (info === undefined) return false;
       if (info.isFile()) {
+        if (info.size === 0 && (info.mode & 0o222) === 0) return false;
         if (stats !== undefined) {
           stats.files += 1;
           stats.bytes += info.size;

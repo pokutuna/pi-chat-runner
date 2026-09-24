@@ -252,8 +252,33 @@ function buildAgentFields(
       source: src(true, "env"),
     });
   }
+  // sandbox は Channel が足した要素を合成した後の実効ルールを出す (config.md §3.2)。
+  // pretty では配列の件数だけに畳む — 全文は json モードで見る
+  fields.push({
+    label: "sandbox",
+    value: summarizeSandbox(agent.sandbox),
+    source: src(agent.sandbox !== undefined, "sandbox"),
+  });
 
   return fields;
+}
+
+/** pretty 出力用の sandbox 要約。無効なら "disabled"、有効なら配列ごとの件数。 */
+function summarizeSandbox(sandbox: AgentConfig["sandbox"]): string {
+  if (sandbox === undefined || sandbox === false) return "disabled";
+  const counts = [
+    `allowedDomains: ${sandbox.network.allowedDomains.length}`,
+    `deniedDomains: ${sandbox.network.deniedDomains.length}`,
+    `allowRead: ${sandbox.filesystem.allowRead?.length ?? 0}`,
+    `allowWrite: ${sandbox.filesystem.allowWrite.length}`,
+    `denyRead: ${sandbox.filesystem.denyRead.length}`,
+    `denyWrite: ${sandbox.filesystem.denyWrite.length}`,
+  ];
+  const credentials =
+    (sandbox.credentials?.envVars?.length ?? 0) +
+    (sandbox.credentials?.files?.length ?? 0);
+  if (credentials > 0) counts.push(`credentials: ${credentials}`);
+  return `enabled (${counts.join(", ")})`;
 }
 
 /** pretty 出力の左カラム幅 (config.md §5 の出力例に倣い、揃えて読みやすくする)。 */
@@ -397,6 +422,11 @@ function formatJson(
     env: {
       value: agent.env ?? null,
       source: asrc(agent.env !== undefined, "env"),
+    },
+    // Channel が足した要素を合成した後の実効ルール (config.md §3.2)。無効なら false
+    sandbox: {
+      value: agent.sandbox ?? false,
+      source: asrc(agent.sandbox !== undefined, "sandbox"),
     },
   };
 
