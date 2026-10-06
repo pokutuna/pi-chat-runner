@@ -9,8 +9,8 @@ importers:
   .:
     dependencies:
       '@anthropic-ai/sandbox-runtime':
-        specifier: 0.0.77
-        version: 0.0.77
+        specifier: 0.0.78
+        version: 0.0.78
       '@earendil-works/pi-coding-agent':
         specifier: ^0.85.1
         version: 0.85.1(ws@8.21.3)(zod@4.6.5)
@@ -94,8 +94,8 @@ packages:
     resolution: {integrity: sha512-p+CMKJ93HFmLkjXKlXiVGlMQEuRb6H0MokBSwUsX+S6BRX8eV5naFZpQJFfJHjRZY0Hmnqy1/r6UWl3x+19zYA==}
     engines: {node: '>=18'}
 
-  '@anthropic-ai/sandbox-runtime@0.0.77':
-    resolution: {integrity: sha512-uOe6kkAbo91r5shXXBxZ1DKbOpWmnXkNDDujXrFJRaHSG7D7s8b7Yfsu0pGDkYFgKZ2ECtVCNisl6pCYcaMF7A==}
+  '@anthropic-ai/sandbox-runtime@0.0.78':
+    resolution: {integrity: sha512-YAIcybXTp7MZkBjasnkR1E3yxnf7u6kUkyW0vZrtsAZ9tyJGMaugWETmquPZs0YvW0sR0VnZeMfS0gsN/wQiVQ==}
     engines: {node: '>=20.11.0'}
     hasBin: true
 
@@ -2764,7 +2764,7 @@ snapshots:
       ansi-styles: 6.2.3
       is-fullwidth-code-point: 5.1.0
 
-  '@anthropic-ai/sandbox-runtime@0.0.77':
+  '@anthropic-ai/sandbox-runtime@0.0.78':
     dependencies:
       '@pondwader/socks5-server': 1.0.10
       commander: 12.1.0
