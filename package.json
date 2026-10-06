@@ -43,7 +43,7 @@
     "@google-cloud/firestore": "^9.1.0",
     "@google/genai": "^2.22.0",
     "@slack/socket-mode": "^3.0.1",
-    "@slack/web-api": "^8.1.1",
+    "@slack/web-api": "^8.2.0",
     "better-sqlite3": "^13.0.3",
     "hono": "^4.13.12",
     "ink": "^7.1.1",
