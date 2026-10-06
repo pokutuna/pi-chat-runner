@@ -21,8 +21,8 @@ importers:
         specifier: ^2.22.0
         version: 2.22.0
       '@slack/socket-mode':
-        specifier: ^3.0.1
-        version: 3.0.1(undici@8.9.0)
+        specifier: ^3.1.0
+        version: 3.1.0(undici@8.9.0)
       '@slack/web-api':
         specifier: ^8.1.1
         version: 8.1.1
@@ -1178,18 +1178,26 @@ packages:
     resolution: {integrity: sha512-VGXhmmgsAo9shdQYh4tFDndd+7nsgp0Y5h0UPDaUp8K359pBasI6YdkMqFW3mCOxLQkq09qj7o7cq6f3DuXcJQ==}
     engines: {node: '>= 20', npm: '>=9.6.4'}
 
-  '@slack/socket-mode@3.0.1':
-    resolution: {integrity: sha512-7L4adgnJtQvQgo5cfIwqHG1QuR8mdZQ/WdMScNDp6uK644ZqnHDAa4rR+vZYfZFdJ5+obCqZQ66Dad8kcwJ4Jg==}
+  '@slack/socket-mode@3.1.0':
+    resolution: {integrity: sha512-F9T+FKbtsYRKV23X8l6WW1fx7ncqsMufg+HLA4ffHf/MvZSCvPunFw576ekmY0Q03kgTAIByTKDJxnM+wn1okg==}
     engines: {node: '>=20', npm: '>=9.6.4'}
     peerDependencies:
-      undici: ^7.0.0
+      undici: ^7.0.0 || ^8.0.0
 
   '@slack/types@3.1.0':
     resolution: {integrity: sha512-bTzqrO3lxJ5iWedo1eJKNAs1koyEhaTwKLJUkD3KETnPeQvD978AAE4jvWstUws8Gbbc4JR6iYE6F7XjE8UGmw==}
     engines: {node: '>= 20', npm: '>=9.6.4'}
 
+  '@slack/types@3.2.0':
+    resolution: {integrity: sha512-IN4gdtlzQt8UJoj+1v+qAHeR4TxHO0KMlIs841SFfDQAcFFnsrWaGsEAE4goxVt8O/JOAFaGGdrFTzhNBop/Fg==}
+    engines: {node: '>= 20', npm: '>=9.6.4'}
+
   '@slack/web-api@8.1.1':
     resolution: {integrity: sha512-am/z/LLbEC7gNQp6FpaGT0l4XnWqcXetpwdgZHzS7Nbb96q9R9QwWA3lo0ZXGuAHDkct0MvFnouzuc2Y4XNmow==}
+    engines: {node: '>= 20', npm: '>=9.6.4'}
+
+  '@slack/web-api@8.2.0':
+    resolution: {integrity: sha512-bIW8/8BLD/HLuHLIA2LfA7AhSokzui4swCbMJuwoRJxn/kzHVla6YEKLvN1nCFHK/DfX7g+4Wj3ess/ZSh/tWQ==}
     engines: {node: '>= 20', npm: '>=9.6.4'}
 
   '@smithy/core@3.34.1':
@@ -3620,20 +3628,33 @@ snapshots:
     dependencies:
       '@types/node': 26.6.4
 
-  '@slack/socket-mode@3.0.1(undici@8.9.0)':
+  '@slack/socket-mode@3.1.0(undici@8.9.0)':
     dependencies:
       '@slack/logger': 5.0.0
-      '@slack/web-api': 8.1.1
+      '@slack/web-api': 8.2.0
       '@types/node': 26.6.4
       eventemitter3: 5.0.4
       undici: 8.9.0
 
   '@slack/types@3.1.0': {}
 
+  '@slack/types@3.2.0': {}
+
   '@slack/web-api@8.1.1':
     dependencies:
       '@slack/logger': 5.0.0
       '@slack/types': 3.1.0
+      '@types/node': 26.6.4
+      '@types/retry': 0.12.5
+      eventemitter3: 5.0.4
+      p-queue: 6.6.2
+      p-retry: 4.6.2
+      retry: 0.13.1
+
+  '@slack/web-api@8.2.0':
+    dependencies:
+      '@slack/logger': 5.0.0
+      '@slack/types': 3.2.0
       '@types/node': 26.6.4
       '@types/retry': 0.12.5
       eventemitter3: 5.0.4
