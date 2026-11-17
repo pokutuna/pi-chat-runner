@@ -21,8 +21,8 @@ importers:
         specifier: ^2.22.0
         version: 2.22.0
       '@slack/socket-mode':
-        specifier: ^3.0.1
-        version: 3.0.1(undici@8.9.0)
+        specifier: ^3.2.0
+        version: 3.2.0(undici@8.9.0)
       '@slack/web-api':
         specifier: ^8.1.1
         version: 8.1.1
@@ -1201,18 +1201,26 @@ packages:
     resolution: {integrity: sha512-VGXhmmgsAo9shdQYh4tFDndd+7nsgp0Y5h0UPDaUp8K359pBasI6YdkMqFW3mCOxLQkq09qj7o7cq6f3DuXcJQ==}
     engines: {node: '>= 20', npm: '>=9.6.4'}
 
-  '@slack/socket-mode@3.0.1':
-    resolution: {integrity: sha512-7L4adgnJtQvQgo5cfIwqHG1QuR8mdZQ/WdMScNDp6uK644ZqnHDAa4rR+vZYfZFdJ5+obCqZQ66Dad8kcwJ4Jg==}
+  '@slack/socket-mode@3.2.0':
+    resolution: {integrity: sha512-G5cp8+C1tNmQy7f3RC+ZgXbUcGmSch4bKcwcv7bYVZF9JDLbQZH9mvBhSKIi2lnhFRF6WwMFubsMM8QwUyVATA==}
     engines: {node: '>=20', npm: '>=9.6.4'}
     peerDependencies:
-      undici: ^7.0.0
+      undici: ^7.0.0 || ^8.0.0
 
   '@slack/types@3.1.0':
     resolution: {integrity: sha512-bTzqrO3lxJ5iWedo1eJKNAs1koyEhaTwKLJUkD3KETnPeQvD978AAE4jvWstUws8Gbbc4JR6iYE6F7XjE8UGmw==}
     engines: {node: '>= 20', npm: '>=9.6.4'}
 
+  '@slack/types@3.3.0':
+    resolution: {integrity: sha512-11r2kM9Zy/UlaV6OwPibZueVlyNJ5xtHEHK/iYDnPLyhQcxRtsifNAwNhJ1Lm0nszW4jrWCHThXCHCNJC/hvqg==}
+    engines: {node: '>= 20', npm: '>=9.6.4'}
+
   '@slack/web-api@8.1.1':
     resolution: {integrity: sha512-am/z/LLbEC7gNQp6FpaGT0l4XnWqcXetpwdgZHzS7Nbb96q9R9QwWA3lo0ZXGuAHDkct0MvFnouzuc2Y4XNmow==}
+    engines: {node: '>= 20', npm: '>=9.6.4'}
+
+  '@slack/web-api@8.4.0':
+    resolution: {integrity: sha512-SZSa8Xqz0jkvGfw9lLKQt17u44Xi5+O2QRMFo6f2vTEP0fPS+ThxOR0++AwJAPOkf3PKxA7lLmrL9Y4Y2J693w==}
     engines: {node: '>= 20', npm: '>=9.6.4'}
 
   '@smithy/core@3.34.1':
@@ -2149,8 +2157,8 @@ packages:
     resolution: {integrity: sha512-r34yH/GlQpKZbU1BvFFqOjhISRo1MNx1tWYsYvmj6KIRHSPMT2+yHOEb1SG6NMvRoHRF0a07kCOox/9yakl1vg==}
     hasBin: true
 
-  postcss@8.5.32:
-    resolution: {integrity: sha512-LJlKCCAUFKOuZxipUdYw1NzIITEsPcgyOG9LkvRJvuKj/bRzbuRY0ARXvL0pWGpsZvn8jku+LMep2eU0seHp8g==}
+  postcss@8.5.33:
+    resolution: {integrity: sha512-RVHEU9/Pp1Fnjr/MpAJsZoADukCKhfIi15OunEYiGktIkYLkPVvC1sioWolGDS7XByMTx9m/IGbro0Js13zhnQ==}
     engines: {node: ^10 || ^12 || >=14}
 
   process-warning@5.0.0:
@@ -3553,20 +3561,33 @@ snapshots:
     dependencies:
       '@types/node': 26.6.6
 
-  '@slack/socket-mode@3.0.1(undici@8.9.0)':
+  '@slack/socket-mode@3.2.0(undici@8.9.0)':
     dependencies:
       '@slack/logger': 5.0.0
-      '@slack/web-api': 8.1.1
+      '@slack/web-api': 8.4.0
       '@types/node': 26.6.6
       eventemitter3: 5.0.4
       undici: 8.9.0
 
   '@slack/types@3.1.0': {}
 
+  '@slack/types@3.3.0': {}
+
   '@slack/web-api@8.1.1':
     dependencies:
       '@slack/logger': 5.0.0
       '@slack/types': 3.1.0
+      '@types/node': 26.6.6
+      '@types/retry': 0.12.5
+      eventemitter3: 5.0.4
+      p-queue: 6.6.2
+      p-retry: 4.6.2
+      retry: 0.13.1
+
+  '@slack/web-api@8.4.0':
+    dependencies:
+      '@slack/logger': 5.0.0
+      '@slack/types': 3.3.0
       '@types/node': 26.6.6
       '@types/retry': 0.12.5
       eventemitter3: 5.0.4
@@ -4469,7 +4490,7 @@ snapshots:
       sonic-boom: 4.2.1
       thread-stream: 4.2.0
 
-  postcss@8.5.32:
+  postcss@8.5.33:
     dependencies:
       nanoid: 3.3.20
       picocolors: 1.1.1
@@ -4827,7 +4848,7 @@ snapshots:
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
-      postcss: 8.5.32
+      postcss: 8.5.33
       rolldown: 1.1.8
       tinyglobby: 0.2.17
     optionalDependencies:
